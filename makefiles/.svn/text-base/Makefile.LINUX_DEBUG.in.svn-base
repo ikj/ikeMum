@@ -1,3 +1,0 @@
-CC      = mpicxx
-CFLAGS  = -O0 -Wall -I. -D DEBUG -D NO_ASSERT -D WITH_PARMETIS -D WITH_HYPRE
-CLIBS   = -lparmetis -lmetis -lHYPRE
