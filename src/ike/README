@@ -1,0 +1,50 @@
+Nov 28: 1. Slepc Eigen-solver was implemented and tested 
+           (eigenvalues are same as MATLAB, but eigenvectors show a small discrepancy)
+        2. Bug fix in the compressed matrix format: Rearrange column indices for 1D-style
+
+Dec 01: 1. Bug fix in the pseudo-arclength continuation method: Reduce the arclength just once if it was specified 
+
+Dec 10: 1. Dump a binary file if the Newton-solver cannot converge within given number of iterations
+        2. The initial guess for the third point can start from a binary file
+--- 2014 ---
+Jan 08: 1. Check turbulent scalars (both kine and omega) on Cv and Faces and reduce relaxation if negative values are found
+        2. Check turbuelnt viscosity at Faces and repeatedly reduce relaxation until no negative value found
+        3. Barrier functions for kine and omega
+Jan 29: 1. Add two new hook functions: initialHookNewton() and initialHookNewton_firstCall()
+        2. Add initialHook()
+Feb 12: 1. Arclength control algorithm based on the residual of the initial guess and the number of Newton iterations of the previous step.
+        2. The equations can be normalized by local values (rho, rhou, etc.) or reference values.
+           This helps to reduce the condition number of the linear system.
+        3. Add small diagonal to rho-part of the Jacobian matrix to make the ILU preconditioner happy and to reduce the condition number.
+        4. AMG preconditioner is now available (however, its performance is poor). 
+           Parallel ILU preconditioner is now available (this works better than the block Jacobi ILU for some cases).
+        5. You can use the old solution for the initial guess of the linear solve (Not recommended by the way) 
+           by setting useOldSolnAsInitGuess=TRUE in IkeWithPsALC.cpp
+        6. The code dumps out some information in Bifur_summary.csv at every bifurcation step.
+Feb 17: 1. Newton-iteration for the 2nd point can start from an initial guess from a binary file
+        2. Bug fix in updating the flow variables from a binary file
+        3. Bug fix in ramping maximum iterations for the iterative solver
+Feb 18: 1. Bug fix in calculating the arclength in runPsALC(): No longer shows errors in tangential-residual after 4 steps
+        2. Reduce the length of some warning messages so that they can be visualized in one line
+Feb 19: 1. You can input the initial residual and Newton iterations for arclength-control if the third point is initialized by a binary file.
+Feb 20: 1. You don't need to define USE_OLDSOLN_INIT_GUESS to activate the methods that provides an initial guess vector to Petsc: Now, it is default (but providing an initial guess is not recommended anyway).
+        2. Makefile update for Rembrandt (eigen-decomposition solver with Slepc)
+Feb 25: 1. Disable the old algorithm to add small value to the diagonal of the Jacobian matrix (Feb 12 (3)).
+           Instead, implement the Tikhonov regularization method
+Mar 2: 1. Tikhonov regularization method (still in development)
+       2. Watchdog method (still in development)
+Mar 5: 1. Generalized Newton's method by X.Wu
+       2. Trust-region regularization
+       3. More Newton's iteration below convergence by deltaQ criterion
+       4. Bug fix in backtracking
+Mar 6: 1. A-priori weight regularization is implimented
+Mar 7: 1. Bug fix in backtracking 
+          Optimal search in the Backtracking history
+       2. Add temporalHookNewton()
+Mar 11: 1. True residuals will be shown if the linear solver is not converged and PETSC_DEBUG_LEVEL>=1
+Mar 12: 1. Jacobian is recalculated just before saving it on a file if a stabilized Newton method is used.
+Mar 13: Bug fix in lambda0 while loading the first point
+Mar 15: Bug fix in calculating the norm of deltaQ when NcontrolEqns==0 (i.e., q1 passed to the Newton solver is equal to NULL)
+Mar 27: Bug fix in updating iterNewton when the third point starts from a binary file
+Apr 15: Few bug fix in JoeWithModels.cpp to fix memory deallocation errors at the end of Backward-Euler method
+
