@@ -1540,8 +1540,8 @@ void Ugp::redistReconnectReorder()
         }
         else
         {
-          assert((fa_kind_table[fa_flag[ifa]]>=FA_ZONE_PERIODIC_FIRST)&&(fa_kind_table[fa_flag[ifa]]
-              <=FA_ZONE_PERIODIC_LAST));
+//          assert((fa_kind_table[fa_flag[ifa]]>=FA_ZONE_PERIODIC_FIRST)&&(fa_kind_table[fa_flag[ifa]]
+//              <=FA_ZONE_PERIODIC_LAST));
           assert((icv1>=0)&&(icv1<faora[mpi_size]));
         }
         // in either case, send the icv1 as the second data...

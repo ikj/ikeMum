@@ -113,12 +113,12 @@ public:   // constructors/destructors
     kine   = NULL;          // registerScalar(kine, "kine", CV_DATA);
 
     // just to take a look at the residual field of energy
-    residField  = NULL;     registerScalar(residField,  "residField",  CV_DATA);
-    residField2 = NULL;     registerScalar(residField2, "residField2", CV_DATA); 
-    residField3 = NULL;     registerScalar(residField3, "residField3", CV_DATA); 
-    residField4 = NULL;     registerScalar(residField4, "residField4", CV_DATA); 
-    residField5 = NULL;     registerScalar(residField5, "residField5", CV_DATA); 
-    residField6 = NULL;     registerScalar(residField6, "residField6", CV_DATA); 
+    residField  = NULL;     registerScalar(residField,  "residField",  CV_DATA);  // Residual of RhoE
+    residField2 = NULL;     registerScalar(residField2, "residField2", CV_DATA);  // Residual of omega, nuSA, or eps
+    residField3 = NULL;     registerScalar(residField3, "residField3", CV_DATA);  // Residual of kine
+    residField4 = NULL;     registerScalar(residField4, "residField4", CV_DATA);  // Residual of ZMean
+    residField5 = NULL;     registerScalar(residField5, "residField5", CV_DATA);  // Residual of ZVar
+    residField6 = NULL;     registerScalar(residField6, "residField6", CV_DATA);  // Residual of CMean
 
     local_dt = NULL;        registerScalar(local_dt, "local_dt", CV_DATA);
 

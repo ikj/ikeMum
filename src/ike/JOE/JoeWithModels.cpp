@@ -83,10 +83,11 @@ void JoeWithModels::runForwardEuler()
   // Loop over time steps
   // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
 
-  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
+  if(checkParam("RESET_STEP"))
+	  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
 
   int done = 0;
-  if (nsteps == 0)    done = 1;
+  if ((nsteps >= 0)&&(step >= nsteps))  done = 1;
 
   if (initial_flowfield_output == "YES")
     writeData(0);
@@ -275,7 +276,8 @@ void JoeWithModels::runRK()
   // Loop over time steps
   // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
 
-  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
+  if(checkParam("RESET_STEP"))
+	  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
 
   int done = 0;
   if ((nsteps >= 0)&&(step >= nsteps))  done = 1;
@@ -473,6 +475,11 @@ void JoeWithModels::runRK()
     for (int iScal = 0; iScal < nScal; iScal++)
       updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
 
+// IKJ
+    for (int icv = 0; icv < ncv; icv++)
+    	residField[icv] = rhoE[icv] - rhoE0[icv];
+    updateCvDataG1G2(residField, REPLACE_DATA);
+
     // -------------------------------------------------------------------------------------------
     // update state properties: velocity, pressure, temperature, enthalpy, gamma and R
     // -------------------------------------------------------------------------------------------
@@ -641,11 +648,12 @@ void JoeWithModels::runBackwardEuler()
   //
   // -------------------------------------------------------------------------------------------
 
-  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
+  if(checkParam("RESET_STEP"))
+	  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
 
   int done = 0;
-  step = 0;
-  if (nsteps == 0)    done = 1;
+
+  if ((nsteps >= 0)&&(step >= nsteps))  done = 1;
 
   if (initial_flowfield_output == "YES")
     writeData(0);
@@ -1286,7 +1294,10 @@ void JoeWithModels::runBDF2()
       showResidue(Residual);
     }
 
-
+//IKJ
+    for(int icv=0; icv<ncv; ++icv)
+    	residField[icv] = rhs[icv][4];
+    updateCvDataG1G2(residField, REPLACE_DATA);
 
     temporalHook();
     dumpProbes(step, 0.0);
