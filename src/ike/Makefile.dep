@@ -1,6 +1,7 @@
 # Include files <file.h> dependencies for joe files
 
 UgpWithCvCompFlow_H = $(MUM_HOME)/src/ike/JOE/UgpWithCvCompFlow.h \
+                      $(MUM_HOME)/src/ike/JoeUgpWithCvCompFlow.h \
                       $(MiscUtils_H) \
                       $(tc_ved3d_H) \
                       $(UgpWithCv2_H) \

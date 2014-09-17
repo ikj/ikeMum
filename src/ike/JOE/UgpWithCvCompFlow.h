@@ -1800,6 +1800,9 @@ public:   // member functions
   }
 
 
+// Utilities developed for IKE but also useful in Joe
+#include "../JoeUgpWithCvCompFlow.h"
+
 };
 
 

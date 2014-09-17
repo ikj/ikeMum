@@ -10,9 +10,13 @@
 #include <assert.h>
 #endif
 
+#include <cstring>
+
 #include "MpiStuff.h"
 using namespace MpiStuff;
 using namespace std;
+
+using std::strlen;
 
 /**
  * MiscUtils 

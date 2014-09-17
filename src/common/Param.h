@@ -8,6 +8,10 @@
 #include <string>
 #include <sstream>
 
+#include <stdio.h>
+#include <cstring>
+using std::strlen;
+
 #ifdef NO_ASSERT
 #include <assert.h>
 #endif

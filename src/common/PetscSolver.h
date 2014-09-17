@@ -256,7 +256,6 @@ public:
     int nIter;
     double relTol, absTol, dTol;
 
-
     KSPGetIterationNumber(ksp,&nIter);
     KSPGetResidualNorm(ksp,&absTol);
 
@@ -264,7 +263,10 @@ public:
     double rel, abs, div;
     KSPGetTolerances(ksp, &rel, &abs, &div, &maxiter);
     lout(INFO_LO) << "tresholds 1: rel/abs/div/iter:\t" << rel << " " << abs << " " << div << " " << maxiter;
-    lout(INFO_LO) << "\tPETSC: iter/absResidual:\t" << nIter << "\t" << absTol << endl;
+    double bNorm = 1.0;
+    VecNorm(b_, NORM_2, &bNorm);
+    lout(INFO_LO) << "\tPETSC: rel/abs/iter:\t" << absTol/bNorm << " " << absTol << " " << nIter << endl;
+    // Note: absTol is (pre-conditioned) estimated norm, whereas bNorm is an exact norm
     //KSPView(ksp,PETSC_VIEWER_STDOUT_WORLD);
 
 
@@ -315,7 +317,11 @@ public:
     double rel, abs, div;
     KSPGetTolerances(ksp, &rel, &abs, &div, &maxiter);
     lout(INFO_LO) << "tresholds 2: rel/abs/div/iter:\t" << rel << " " << abs << " " << div << " " << maxiter;
-    lout(INFO_LO) << "\tPETSC: iter/absResidual:\t" << nIter << "\t" << absTol << endl;
+    double bNorm = 1.0;
+    VecNorm(b_, NORM_2, &bNorm);
+    lout(INFO_LO) << "\tPETSC: rel/abs/iter:\t" << absTol/bNorm << " " << absTol << " " << nIter << endl;
+    // Note: absTol is (pre-conditioned) estimated norm, whereas bNorm is an exact norm
+    //KSPView(ksp,PETSC_VIEWER_STDOUT_WORLD);
 
 
 

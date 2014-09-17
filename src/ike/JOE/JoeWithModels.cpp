@@ -6,6 +6,14 @@ void JoeWithModels::run()
   // read mesh or restart file
   initializeFromRestartFile(getStringParam("RESTART"));
 
+  if (checkParam("RESET_STEP")) {
+	  step = 0;
+	  if (mpi_rank == 0)
+		  cout << "RESET_STEP: " << step << endl;
+
+	  time = 0.0;
+  }
+
   // initialize models
   initialHookScalarRansTurbModel();
   initialHookScalarRansCombModel();
@@ -82,9 +90,6 @@ void JoeWithModels::runForwardEuler()
   // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
   // Loop over time steps
   // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-
-  if(checkParam("RESET_STEP"))
-	  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
 
   int done = 0;
   if ((nsteps >= 0)&&(step >= nsteps))  done = 1;
@@ -275,9 +280,6 @@ void JoeWithModels::runRK()
   // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
   // Loop over time steps
   // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-
-  if(checkParam("RESET_STEP"))
-	  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
 
   int done = 0;
   if ((nsteps >= 0)&&(step >= nsteps))  done = 1;
@@ -647,9 +649,6 @@ void JoeWithModels::runBackwardEuler()
   //   Loop over time steps
   //
   // -------------------------------------------------------------------------------------------
-
-  if(checkParam("RESET_STEP"))
-	  step = 0;   // set to zero, even if read from restart file, as for steady state time step doesn't matter
 
   int done = 0;
 

@@ -628,7 +628,6 @@ protected:
 	 *       2. If the string is empty, NO message will be shown
 	 */
 	void showMessageParallel(string& message);
-
 	void showMessageParallel(vector<string>& messageVector, const size_t maxMessageNum, char* messageVectorName = NULL);
 };
 

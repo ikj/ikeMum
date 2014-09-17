@@ -2,6 +2,10 @@
 #define UGP_H
 
 #include <iostream>
+
+#include <cstring>
+using std::strlen;
+
 #include "Adt.h"
 #include "Param.h"
 

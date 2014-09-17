@@ -1171,8 +1171,6 @@ void vecMinVec3d_AD(adouble *vRes, adouble *v1, adouble *v2) {
       vortMag[icv] = sqrt(2.0*vortMag[icv]);
     }
   }
-
-
 };
 
 
