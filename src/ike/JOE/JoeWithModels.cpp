@@ -198,6 +198,45 @@ void JoeWithModels::runForwardEuler()
       showResidue(Residual);
     }
 
+    // IKJ: For output display (Metric to see the convergence of the simulation)
+    for (int icv = 0; icv < ncv; icv++) {
+    	residField[icv]       = drhoE[icv];
+    	log10_resid_rhoE[icv] = log10(fabs(drhoE[icv]) + 1.0e-15);
+    }
+    for (int iScal = 0; iScal < nScal; iScal++)
+    	for (int icv = 0; icv < ncv; icv++)
+    		log10_resid_scalar0[icv] = log10(fabs(drhoScal[iScal][icv]) + 1.0e-15);
+    updateCvDataG1G2(residField,       REPLACE_DATA);
+    updateCvDataG1G2(log10_resid_rhoE, REPLACE_DATA);
+    if(nScal>0)
+    	updateCvDataG1G2(log10_resid_scalar0, REPLACE_DATA);
+
+    // IKJ
+    double myTotResid_rhs = 0.0;
+    double myTotResid_dq  = 0.0;
+    for (int icv = 0; icv < ncv; icv++) {
+    	double localTotResid_rhs = 0.0;
+
+    	localTotResid_rhs += fabs(drho[icv]);
+    	for (int i=0; i<3; i++)
+    		localTotResid_rhs += fabs(drhou[icv][i]);
+    	localTotResid_rhs += fabs(drhoE[icv]);
+
+    	double tmp = local_dt[icv]/cv_volume[icv];
+
+    	myTotResid_rhs +=       localTotResid_rhs;
+    	myTotResid_dq  += tmp * localTotResid_rhs;
+    }
+	for (int iScal = 0; iScal < nScal; iScal++)
+		for (int icv = 0; icv < ncv; icv++) {
+			double tmp = local_dt[icv]/cv_volume[icv];
+
+			myTotResid_rhs +=       fabs(drhoScal[iScal][icv]);
+			myTotResid_dq  += tmp * fabs(drhoScal[iScal][icv]);
+		}
+    MPI_Allreduce(&myTotResid_dq,  &totResid_dq,  1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+    MPI_Allreduce(&myTotResid_rhs, &totResid_rhs, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
     temporalHook();
 
     writeData(step);
@@ -477,11 +516,6 @@ void JoeWithModels::runRK()
     for (int iScal = 0; iScal < nScal; iScal++)
       updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
 
-// IKJ
-    for (int icv = 0; icv < ncv; icv++)
-    	residField[icv] = rhoE[icv] - rhoE0[icv];
-    updateCvDataG1G2(residField, REPLACE_DATA);
-
     // -------------------------------------------------------------------------------------------
     // update state properties: velocity, pressure, temperature, enthalpy, gamma and R
     // -------------------------------------------------------------------------------------------
@@ -532,6 +566,48 @@ void JoeWithModels::runRK()
 
       showResidue(Residual);
     }
+
+    // IKJ: For output display (Metric to see the convergence of the simulation)
+    for (int icv = 0; icv < ncv; icv++) {
+    	double tmpInverse = cv_volume[icv] / local_dt[icv];
+    	residField[icv]       = tmpInverse * (drhoE1[icv] + 4.0*drhoE2[icv] + drhoE3[icv]) / 6.0;
+    	log10_resid_rhoE[icv] = log10(fabs(residField[icv]) + 1.0e-15);
+    }
+    for (int iScal = 0; iScal < nScal; iScal++)
+    	for (int icv = 0; icv < ncv; icv++) {
+    		double tmpInverse = cv_volume[icv] / local_dt[icv];
+    		log10_resid_scalar0[icv] = log10(tmpInverse * (drhoScal1[iScal][icv] + 4.0*drhoScal2[iScal][icv] + drhoScal3[iScal][icv]) / 6.0 + 1.0e-15);
+    	}
+    updateCvDataG1G2(residField,       REPLACE_DATA);
+    updateCvDataG1G2(log10_resid_rhoE, REPLACE_DATA);
+    if(nScal>0)
+    	updateCvDataG1G2(log10_resid_scalar0, REPLACE_DATA);
+
+    // IKJ: Note -- Unlike in ForwardEuler, drho stuff was already scaled by tmp in RK
+    double myTotResid_dq  = 0.0;
+    double myTotResid_rhs = 0.0;
+    for (int icv = 0; icv < ncv; icv++) {
+    	double localTotResid_dq = 0.0;
+
+    	localTotResid_dq += fabs(drho1[icv] + 4.0*drho2[icv] + drho3[icv]) / 6.0;
+    	for (int i=0; i<3; i++)
+    		localTotResid_dq += fabs(drhou1[icv][i] + 4.0*drhou2[icv][i] + drhou3[icv][i]) / 6.0;
+    	localTotResid_dq += fabs(drhoE1[icv] + 4.0*drhoE2[icv] + drhoE3[icv]) / 6.0;
+
+    	double tmpInverse = cv_volume[icv] / local_dt[icv];
+
+    	myTotResid_rhs += tmpInverse * localTotResid_dq;
+    	myTotResid_dq  +=              localTotResid_dq;
+    }
+	for (int iScal = 0; iScal < nScal; iScal++)
+		for (int icv = 0; icv < ncv; icv++) {
+			double tmpInverse = cv_volume[icv] / local_dt[icv];
+
+			myTotResid_rhs += tmpInverse * fabs(drhoScal1[iScal][icv] + 4.0*drhoScal2[iScal][icv] + drhoScal3[iScal][icv]) / 6.0;
+			myTotResid_dq  +=              fabs(drhoScal1[iScal][icv] + 4.0*drhoScal2[iScal][icv] + drhoScal3[iScal][icv]) / 6.0;
+		}
+    MPI_Allreduce(&myTotResid_dq,  &totResid_dq,  1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+    MPI_Allreduce(&myTotResid_rhs, &totResid_rhs, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
 
     temporalHook();
 
@@ -862,6 +938,33 @@ void JoeWithModels::runBackwardEuler()
     for (int iScal = 0; iScal < nScal; iScal++)
     	for (int icv = 0; icv < ncv; icv++)
     		log10_resid_scalar0[icv] = log10(fabs(rhsScal[iScal][icv]/underRelax) + 1.0e-15);
+    updateCvDataG1G2(residField,       REPLACE_DATA);
+    updateCvDataG1G2(log10_resid_rhoE, REPLACE_DATA);
+    if(nScal>0)
+    	updateCvDataG1G2(log10_resid_scalar0, REPLACE_DATA);
+
+    // IKJ
+    double myTotResid_dq  = 0.0;
+    double myTotResid_rhs = 0.0;
+    for (int icv = 0; icv < ncv; icv++) {
+    	for(int i=0; i<5; ++i)
+    		myTotResid_dq += dq[icv][i];
+
+    	myTotResid_rhs += fabs(RHSrho[icv]);
+    	for (int i=0; i<3; i++)
+    		myTotResid_rhs += fabs(RHSrhou[icv][i]);
+    	myTotResid_rhs += fabs(RHSrhoE[icv]);
+    }
+	for (int iScal = 0; iScal < nScal; iScal++) {
+		double *phi = scalarTranspEqVector[iScal].phi;
+		for (int icv = 0; icv < ncv; icv++) {
+			myTotResid_dq  += fabs( (dScal[iScal][icv] - phi[icv]*dq[icv][0]) / (rho[icv] - dq[icv][0]) );
+			myTotResid_rhs += fabs(rhsScal[iScal][icv]);
+		}
+	}
+    MPI_Allreduce(&myTotResid_dq,  &totResid_dq,  1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+    MPI_Allreduce(&myTotResid_rhs, &totResid_rhs, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
 
     temporalHook();
     dumpProbes(step, 0.0);
@@ -1293,10 +1396,43 @@ void JoeWithModels::runBDF2()
       showResidue(Residual);
     }
 
-//IKJ
-    for(int icv=0; icv<ncv; ++icv)
+    // IKJ: For output display (Metric to see the convergence of the simulation)
+    for (int icv = 0; icv < ncv; icv++) {
     	residField[icv] = rhs[icv][4];
-    updateCvDataG1G2(residField, REPLACE_DATA);
+    	log10_resid_rhoE[icv] = log10(fabs(RHSrhoE[icv]) + 1.0e-15);
+    }
+    for (int iScal = 0; iScal < nScal; iScal++)
+    	for (int icv = 0; icv < ncv; icv++)
+    		log10_resid_scalar0[icv] = log10(fabs(rhsScal[iScal][icv]/underRelax) + 1.0e-15);
+    updateCvDataG1G2(residField,       REPLACE_DATA);
+    updateCvDataG1G2(log10_resid_rhoE, REPLACE_DATA);
+    if(nScal>0)
+    	updateCvDataG1G2(log10_resid_scalar0, REPLACE_DATA);
+
+    // IKJ
+    double myTotResid_rhs = 0.0;
+    double myTotResid_dq  = 0.0;
+    for (int icv = 0; icv < ncv; icv++) {
+    	myTotResid_rhs += fabs(RHSrho[icv]);
+    	for (int i=0; i<3; i++)
+    		myTotResid_rhs += fabs(RHSrhou[icv][i]);
+    	myTotResid_rhs += fabs(RHSrhoE[icv]);
+
+    	myTotResid_dq += fabs(rho[icv]- qn[icv][0]);
+    	for (int i=0; i<3; i++)
+    		myTotResid_dq += fabs(rhou[icv][i] - qn[icv][1+i]);
+    	myTotResid_dq += fabs(rhoE[icv] - qn[icv][4]);
+    }
+	for (int iScal = 0; iScal < nScal; iScal++) {
+		double *phi = scalarTranspEqVector[iScal].phi;
+		for (int icv = 0; icv < ncv; icv++) {
+			myTotResid_rhs += fabs(rhsScal[iScal][icv]);
+			myTotResid_dq  += fabs(phi[icv] - qnScal[iScal][icv]/qn[icv][0]);
+		}
+	}
+    MPI_Allreduce(&myTotResid_dq,  &totResid_dq,  1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+    MPI_Allreduce(&myTotResid_rhs, &totResid_rhs, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
 
     temporalHook();
     dumpProbes(step, 0.0);
@@ -2716,8 +2852,6 @@ void JoeWithModels::runBackwardEulerCoupled()
     
     for (int icv = 0; icv < ncv; icv++)                                     // prepare rhs and A
     {
-      residField[icv] = rhs[icv][4];
-
       for (int i = 0; i < 5+nScal; i++)                                     // relaxation
         rhs[icv][i] *= underRelax;
 
@@ -2781,6 +2915,40 @@ void JoeWithModels::runBackwardEulerCoupled()
 
       showResidue(Residual);
     }
+
+    // IKJ: For output display (Metric to see the convergence of the simulation)
+    for (int icv = 0; icv < ncv; icv++) {
+    	log10_resid_rhoE[icv] = log10(fabs(RHSrhoE[icv]) + 1.0e-15);
+    }
+    for (int iScal = 0; iScal < nScal; iScal++)
+    	for (int icv = 0; icv < ncv; icv++)
+    		log10_resid_scalar0[icv] = log10(fabs(rhs[icv][5+iScal]/underRelax) + 1.0e-15);
+    updateCvDataG1G2(residField,       REPLACE_DATA);
+    updateCvDataG1G2(log10_resid_rhoE, REPLACE_DATA);
+    if(nScal>0)
+    	updateCvDataG1G2(log10_resid_scalar0, REPLACE_DATA);
+
+    // IKJ
+    double myTotResid_dq  = 0.0;
+    double myTotResid_rhs = 0.0;
+    for (int icv = 0; icv < ncv; icv++) {
+    	for(int i=0; i<5; ++i)
+    		myTotResid_dq += dq[icv][i];
+
+    	myTotResid_rhs += fabs(RHSrho[icv]);
+    	for (int i=0; i<3; i++)
+    		myTotResid_rhs += fabs(RHSrhou[icv][i]);
+    	myTotResid_rhs += fabs(RHSrhoE[icv]);
+    }
+    for (int iScal = 0; iScal < nScal; iScal++) {
+    	double *phi = scalarTranspEqVector[iScal].phi;
+    	for (int icv = 0; icv < ncv; icv++) {
+    		myTotResid_dq  += fabs( (dq[icv][5+iScal] - phi[icv]*dq[icv][0]) / (rho[icv] - dq[icv][0]) );
+    		myTotResid_rhs += fabs(rhs[icv][5+iScal]);
+    	}
+    }
+    MPI_Allreduce(&myTotResid_dq,  &totResid_dq,  1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+    MPI_Allreduce(&myTotResid_rhs, &totResid_rhs, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
 
 
     temporalHook();

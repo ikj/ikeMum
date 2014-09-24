@@ -12,6 +12,13 @@ class JoeWithModels: virtual public UgpWithCvCompFlow
 public:
 	double *Residual;
 
+	double totResid_dq;
+	double totResid_rhs; // The calculation of Residual is dependent on the time-integration scheme.
+	                     // Thus, let's make an universal one.
+	                     // These values are purely (RHSrho, RHSrhou, RHSrhoE, rhsScal) from calcRhs().
+	                     // And thus, there is no scaling by local_dt/cv_volume
+	                     // (In some time-integration scheme such as backwardEuler, rhsScal can be scaled by relaxation)
+
 	// For output display (Metric to see the convergence of the simulation)
 	double *log10_resid_rhoE;
 	double *log10_resid_scalar0;
@@ -90,9 +97,12 @@ public:
   }
 
   void nonVirtualInit() {
-		// For output display (Metric to see the convergence of the simulation)
-		log10_resid_rhoE  = NULL;  		registerScalar(log10_resid_rhoE,  "LOG10_RESID_RHOE",  CV_DATA);
-		log10_resid_scalar0 = NULL;  	registerScalar(log10_resid_scalar0, "LOG10_RESID_SCALAR0", CV_DATA);
+	  totResid_dq  = 0.0;
+	  totResid_rhs = 0.0;
+
+	  // For output display (Metric to see the convergence of the simulation)
+	  log10_resid_rhoE  = NULL;  		registerScalar(log10_resid_rhoE,    "LOG10_RESID_RHOE",  CV_DATA);
+	  log10_resid_scalar0 = NULL;  	registerScalar(log10_resid_scalar0, "LOG10_RESID_SCALAR0", CV_DATA);
   }
 
   virtual void init()
