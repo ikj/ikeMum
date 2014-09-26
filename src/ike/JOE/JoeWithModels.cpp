@@ -1048,8 +1048,18 @@ void JoeWithModels::runBDF2()
   // some parameters
   //------------------------------------
   double underRelax = getDoubleParam("UNDER_RELAXATION", "0.9");
-  int mnNewton = getIntParam("N_NEWTON_ITER", "4");
   int bdf2_TVD_limiter = getIntParam("BDF2_TVD_LIMITER", "1");
+
+  if (!checkParam("NEWTON_SOLVER_TRESHOLDS"))
+  {
+    ParamMap::add("NEWTON_SOLVER_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-6");    // add default values
+    if (mpi_rank == 0)
+      cout << "WARNING: added keyword \"NEWTON_SOLVER_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-6\"" <<
+              " to parameter map!" << endl;
+  }
+  int    mnNewton       = getParam("NEWTON_SOLVER_TRESHOLDS")->getInt("MAX_ITER");
+  double absResidNewton = getParam("NEWTON_SOLVER_TRESHOLDS")->getDouble("ABS_RESID");
+  double relResidNewton = getParam("NEWTON_SOLVER_TRESHOLDS")->getDouble("REL_RESID");
 
   if (!checkParam("LINEAR_SOLVER_NS_TRESHOLDS"))
   {
@@ -1073,7 +1083,6 @@ void JoeWithModels::runBDF2()
   int intervalIncCFL = getParam("CFL_RAMP")->getInt("INTERVAL_ITER");
   double incCFL = getParam("CFL_RAMP")->getDouble("FACTOR_CFL");
   double maxCFL = getParam("CFL_RAMP")->getDouble("MAX_CFL");
-
 
   // -------------------------------------------------------------------------------------------
   // update state properties: velocity, pressure, temperature, enthalpy, gamma and R
@@ -1136,6 +1145,9 @@ void JoeWithModels::runBDF2()
       qnScal[iScal][icv] = rho[icv]*phi[icv];
   }
 
+  for(int i=0; i<5+nScal; ++i)
+	  Residual[i] = 1.0e20;
+
   while (done != 1)
   {
     step++;
@@ -1176,14 +1188,13 @@ void JoeWithModels::runBDF2()
     // start Newton iterations
     // ---------------------------------------------------------------------------------
 
-
     if ((mpi_rank == 0) && (step%check_interval == 0))
       printf("dt: %.6le\n", dt_min);
 
     relResidual[4] = 1.0e20;
 
     int pN = 0;
-    while ((pN < mnNewton) && (relResidual[4] > 1.0e-6))              // newton steps!!!
+    while ((pN < mnNewton) && (relResidual[4] > relResidNewton) && (pN == 0 || Residual[4] > absResidNewton))              // newton steps!!!
     {
       for (int i = 0; i < 5+nScal; i++)
         myResidual[i] = 0.0;
@@ -1222,27 +1233,35 @@ void JoeWithModels::runBDF2()
 
         double psi[5] = {1.0, 1.0, 1.0, 1.0, 1.0};
         //double psi[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
-        if (bdf2_TVD_limiter == 1)
-        {
-          double tvdR[5], minmod[5];
+        if (bdf2_TVD_limiter == 1) {
+        	bool tvdRzeroDemoninator = false;
+        	for(int i=0; i<5; ++i)
+        		if(qn[icv][0] == qnm1[icv][0]) {
+        			tvdRzeroDemoninator = true;
+        			break;
+        		}
 
-          tvdR[0] = (rho[icv]-    qn[icv][0])/(qn[icv][0]-qnm1[icv][0]);
-          tvdR[1] = (rhou[icv][0]-qn[icv][1])/(qn[icv][1]-qnm1[icv][1]);
-          tvdR[2] = (rhou[icv][1]-qn[icv][2])/(qn[icv][2]-qnm1[icv][2]);
-          tvdR[3] = (rhou[icv][2]-qn[icv][3])/(qn[icv][3]-qnm1[icv][3]);
-          tvdR[4] = (rhoE[icv]-   qn[icv][4])/(qn[icv][4]-qnm1[icv][4]);
-
-          for (int i=0; i<5; i++)
-          {
-            if (tvdR[i] > 0.0)
-            {
-              if (1.0 < fabs(tvdR[i]))    minmod[i] = 1.0;
-              else                        minmod[i] = tvdR[i];
-            }
-            else                          minmod[i] = 0.0;
-
-            psi[i] = pow(minmod[i]/max(1.0, fabs(tvdR[i])), 0.5);
-          }
+// Note: The following parts give ERROR at step ==2 due to psi[]'s that become NaN
+//        	if( !tvdRzeroDemoninator ) {
+//        		double tvdR[5], minmod[5];
+//
+//        		tvdR[0] = (rho[icv]-    qn[icv][0])/(qn[icv][0]-qnm1[icv][0]);
+//        		tvdR[1] = (rhou[icv][0]-qn[icv][1])/(qn[icv][1]-qnm1[icv][1]);
+//        		tvdR[2] = (rhou[icv][1]-qn[icv][2])/(qn[icv][2]-qnm1[icv][2]);
+//        		tvdR[3] = (rhou[icv][2]-qn[icv][3])/(qn[icv][3]-qnm1[icv][3]);
+//        		tvdR[4] = (rhoE[icv]-   qn[icv][4])/(qn[icv][4]-qnm1[icv][4]);
+//
+//        		for (int i=0; i<5; i++) {
+//        			if (tvdR[i] > 0.0) {
+//        				if (1.0 < fabs(tvdR[i]))    minmod[i] = 1.0;
+//        				else                        minmod[i] = tvdR[i];
+//        			}
+//        			else {
+//        				minmod[i] = 0.0;
+//        			}
+//        			psi[i] = pow(minmod[i]/max(1.0, fabs(tvdR[i])), 0.5);
+//        		}
+//        	}
         }
 
         rhs[icv][0] = underRelax*(RHSrho[icv]     - ((1.0+psi[0]*bdf2Alfa)*rho[icv]     - (1.0+psi[0]*bdf2Beta)*qn[icv][0] + psi[0]*bdf2Gamma*qnm1[icv][0])*tmp);
@@ -1272,7 +1291,6 @@ void JoeWithModels::runBDF2()
       }
 
       UpdateCvDataStateVec(dq);                                       // update dq since neighbors needed to compute RHS of scalars
-
 
       // ---------------------------------------------------------------------------------
       // solve linear system for the scalars
@@ -1358,19 +1376,17 @@ void JoeWithModels::runBDF2()
 
       calcRansTurbViscMuet();
 
-
-
       MPI_Allreduce(myResidual, Residual, 5+nScal, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
+      if (pN == 0)
+        for (int i=0; i<5+nScal; i++)
+          fstResidual[i] = Residual[i];
+
+      for (int i=0; i<5+nScal; i++)
+        relResidual[i] = Residual[i]/(fstResidual[i]+1.0e-10);
 
       if (mpi_rank == 0)
       {
-        if (pN == 0)
-          for (int i=0; i<5+nScal; i++)
-            fstResidual[i] = Residual[i];
-
-        for (int i=0; i<5+nScal; i++)
-          relResidual[i] = Residual[i]/(fstResidual[i]+1.0e-10);
-
         if (step%check_interval == 0)
         {
           printf("Newton step residual: %d:\t", pN+1);
@@ -1386,7 +1402,6 @@ void JoeWithModels::runBDF2()
     // =========================================================================================
     // calculate and show residual
     // =========================================================================================
-
 
     if (step%check_interval == 0)
     {
@@ -1432,7 +1447,6 @@ void JoeWithModels::runBDF2()
 	}
     MPI_Allreduce(&myTotResid_dq,  &totResid_dq,  1, MPI_DOUBLE, MPI_SUM, mpi_comm);
     MPI_Allreduce(&myTotResid_rhs, &totResid_rhs, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-
 
     temporalHook();
     dumpProbes(step, 0.0);

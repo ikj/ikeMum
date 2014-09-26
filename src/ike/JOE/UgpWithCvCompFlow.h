@@ -391,7 +391,14 @@ public:   // constructors/destructors
       cout << "    second order     : " << sndOrder << endl;
       cout << "    1st order scalars: " << stOrderScalar << endl;
       cout << "    gradient recon   : " << gradReconstr << ", value = " << gradreconstruction << endl;
-      cout << "    gradient limiter : " << limiterstr << ", value = " << limiterNavierS << endl;
+      cout << "    gradient limiter : " << limiterstr << ", value = ";
+//IKJ
+      switch(limiterNavierS) {
+      case NOLIMITER:            cout << "NOLIMITER"<<endl;            break;
+      case BARTH_JESPERSEN_MOD:  cout << "BARTH_JESPERSEN_MOD"<<endl;  break;
+      default:
+    	  cout << limiterNavierS << endl;  break;
+      }
       if (gradreconstruction == GRAD_SDWLS) 
         cout << "                     : " << "epsilonSDWLS = " << epsilonSDWLS << endl;
       cout << "TIME_INTEGRATION     : " << tIntName << endl;
@@ -609,7 +616,6 @@ public:   // member functions
     switch (linearSolverNS)
     {
       case PETSC_GMRES:
-
         // on the first time, instantiate the petsc solver...
         if (petscSolver == NULL)
         {
@@ -620,11 +626,9 @@ public:   // member functions
               nbocv_v_global[icv] = cvora[mpi_rank] + icv;
             updateCvDataG1(nbocv_v_global, REPLACE_DATA);
           }
-
           petscSolver = new PetscSolver(cvora, nbocv_i, nbocv_v, 5);
           petscSolver->setTresholds(zeroAbs, zeroRel, maxIter);
         }
-
         petscSolver->solveGMRES(Ap, phi, rhs, cvora, nbocv_i, nbocv_v, nbocv_v_global, 5);
 
         break;

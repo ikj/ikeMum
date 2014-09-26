@@ -284,10 +284,8 @@ public:
   void solveGMRES(double (*Ap)[5][5], double (*phi)[5], double (*rhs)[5],
       int *noora, int *nbono_i, int *nbono_v, int *nbono_v_gl, int m)
   {
-
     setLinSysForPetsc(Ap, rhs, noora, nbono_i, nbono_v, nbono_v_gl, m);
 
-    
     /*
     PC pc; // preconditioner context
     KSPGetPC(ksp,&pc);
@@ -322,8 +320,6 @@ public:
     lout(INFO_LO) << "\tPETSC: rel/abs/iter:\t" << absTol/bNorm << " " << absTol << " " << nIter << endl;
     // Note: absTol is (pre-conditioned) estimated norm, whereas bNorm is an exact norm
     //KSPView(ksp,PETSC_VIEWER_STDOUT_WORLD);
-
-
 
     int nno = noora[mpi_rank+1] - noora[mpi_rank];
     for (int ino = 0; ino < nno; ino++)
