@@ -55,7 +55,9 @@ enum MODIFIED_NEWTON {BASIC, SHAMANSKII, MODIFIED_SHAMANSKII};
 #define NEWTON_STATUS_FILENAME "Newton_converg.csv"
 #define LS_CONVERGENCE_FILENAME "LinearSystem_converg.csv"
 
+#ifndef EOF_ERROR_CHECK_CODE
 #define EOF_ERROR_CHECK_CODE 503
+#endif
 
 #define GRID_TOL 1.0e-9
 

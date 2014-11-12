@@ -21,6 +21,8 @@ using namespace logging;
 
 #define MAX_WARNING_MESSAGES_UGP 50
 
+#define USE_ARTIF_VISC
+
 //#define temp_reconstruction   // determine whether temperature or pressure reconstruction is used at faces
 //#define alpha_limiter         // determine if rho*Phi is limited based on rho or rho*Phi
 
@@ -36,7 +38,7 @@ using namespace logging;
 class UgpWithCvCompFlow : public UgpWithCv2Op, public ParamMap
 {
 public:   // constructors/destructors
-	bool turnOn;
+
   /**
    * standard constructor needed for Models that virtual inherits from UgpWithCvCompFlow
    */
@@ -370,43 +372,112 @@ public:   // constructors/destructors
 
     if (mpi_rank == 0)
     {
-      cout << "Gas properties         " << endl;
-      cout << "    GAMMA            : " << GAMMA << endl;
-      cout << "    R_GAS            : " << R_gas << endl;
-      cout << "    P_REF            : " << p_ref << endl;
-      cout << "    RHO_REF          : " << rho_ref << endl;
-      cout << "    T_REF            : " << T_ref << endl;
-      cout << "    SOS_REF          : " << sqrt(GAMMA*R_gas*T_ref) << endl;
-      cout << "Material properties    " << endl;
-      cout << "    MU_MODE          : " << viscMode << endl;
-      cout << "      mu_ref         : " << mu_ref << endl;
-      cout << "      mu_power_law   : " << mu_power_law << endl;
-      cout << "      SL_Tref        : " << SL_Tref << endl;
-      cout << "      SL_Sref        : " << SL_Sref << endl;
-      cout << "    Pr               : " << Pr << endl;
-      cout << "    PrTurb           : " << PrTurb << endl;
-      cout << "Body Force           : " << endl;
-      cout << "    gravity          : " << gravity[0] << " " << gravity[1] << " " << gravity[2] << endl;
-      cout << "Solver settings        " << endl;
-      cout << "    second order     : " << sndOrder << endl;
-      cout << "    1st order scalars: " << stOrderScalar << endl;
-      cout << "    gradient recon   : " << gradReconstr << ", value = " << gradreconstruction << endl;
-      cout << "    gradient limiter : " << limiterstr << ", value = ";
-//IKJ
-      switch(limiterNavierS) {
-      case NOLIMITER:            cout << "NOLIMITER"<<endl;            break;
-      case BARTH_JESPERSEN_MOD:  cout << "BARTH_JESPERSEN_MOD"<<endl;  break;
-      default:
-    	  cout << limiterNavierS << endl;  break;
-      }
-      if (gradreconstruction == GRAD_SDWLS) 
-        cout << "                     : " << "epsilonSDWLS = " << epsilonSDWLS << endl;
-      cout << "TIME_INTEGRATION     : " << tIntName << endl;
-      cout << "    nsteps           : " << nsteps << endl;
-      cout << "    timeStepMode     : " << timeStepMode << endl;
-      cout << "--------------------------------------------" << endl << endl;
+    	cout << "Gas properties         " << endl;
+    	cout << "    GAMMA            : " << GAMMA << endl;
+    	cout << "    R_GAS            : " << R_gas << endl;
+    	cout << "    P_REF            : " << p_ref << endl;
+    	cout << "    RHO_REF          : " << rho_ref << endl;
+    	cout << "    T_REF            : " << T_ref << endl;
+    	cout << "    SOS_REF          : " << sqrt(GAMMA*R_gas*T_ref) << endl;
+    	cout << "Material properties    " << endl;
+    	cout << "    MU_MODE          : " << viscMode << endl;
+    	cout << "      mu_ref         : " << mu_ref << endl;
+    	cout << "      mu_power_law   : " << mu_power_law << endl;
+    	cout << "      SL_Tref        : " << SL_Tref << endl;
+    	cout << "      SL_Sref        : " << SL_Sref << endl;
+    	cout << "    Pr               : " << Pr << endl;
+    	cout << "    PrTurb           : " << PrTurb << endl;
+    	cout << "Body Force           : " << endl;
+    	cout << "    gravity          : " << gravity[0] << " " << gravity[1] << " " << gravity[2] << endl;
+    	cout << "Solver settings        " << endl;
+    	cout << "    second order     : " << sndOrder << endl;
+    	cout << "    1st order scalars: " << stOrderScalar << endl;
+    	cout << "    gradient recon   : " << gradReconstr << ", value = " << gradreconstruction << endl;
+    	cout << "    gradient limiter : " << limiterstr << ", value = ";
+    	//IKJ
+    	switch(limiterNavierS) {
+    	case NOLIMITER:            cout << "NOLIMITER"<<endl;            break;
+    	case BARTH_JESPERSEN_MOD:  cout << "BARTH_JESPERSEN_MOD"<<endl;  break;
+    	default:
+    		cout << limiterNavierS << endl;  break;
+    	}
+    	if (gradreconstruction == GRAD_SDWLS)
+    		cout << "                     : " << "epsilonSDWLS = " << epsilonSDWLS << endl;
+    	cout << "TIME_INTEGRATION     : " << tIntName << endl;
+    	cout << "    nsteps           : " << nsteps << endl;
+    	cout << "    timeStepMode     : " << timeStepMode << endl;
+    	cout << "--------------------------------------------" << endl << endl;
     }
 
+#ifdef USE_ARTIF_VISC
+    // ----------------------------------------------------------------------------------------
+    // Artificial viscosity for shock-capturing
+    // ----------------------------------------------------------------------------------------
+    turnOnArtifVisc = false;  // Default = false
+
+    // Check if the user wants to use artificial viscosity for shock-capturing
+    string tempStr;
+
+    Param *pmy;
+    if (getParam(pmy, "ARTIFICIAL_VISCOSITY")) {
+    	// Example: ARTIFICIAL_VISCOSITY	 TURN_ON= YES  BULKVISC_ONLY= YES  SHOCK_ONLY= YES  SMOOTHSTEP_DIVERG_THRESH= 1.0e4  TYPE= STRAIN_BASE  COEFF= 3.25
+    	tempStr = getParam("ARTIFICIAL_VISCOSITY")->getString("TURN_ON");
+    	std::transform(tempStr.begin(), tempStr.end(), tempStr.begin(), ::toupper);
+    	if(tempStr.compare("YES")==0 || tempStr.compare("Y")==0)
+    		turnOnArtifVisc = true;
+    }
+
+    if(mpi_rank==0) {
+    	cout<<"ARTIFICIAL_VISCOSITY: TURN_ON = "<<turnOnArtifVisc;
+    	if(turnOnArtifVisc)
+    		cout<<" (TRUE)"<<endl;
+    	else
+    		cout<<" (FALSE)"<<endl;
+    }
+
+    // Default values
+    artifVisc_bulkViscOnly     = false;
+    artifVisc_shockOnly        = false;
+    artifVisc_smoothstepThresh = 1.0;
+    artifVisc_type             = "NONE";
+    artifVisc_coeff            = 0.0;
+
+    artifVisc_mag = NULL;
+
+    // Get the parameters for artificial viscosity
+    if(turnOnArtifVisc) {
+    	tempStr = getParam("ARTIFICIAL_VISCOSITY")->getString("BULKVISC_ONLY");
+    	std::transform(tempStr.begin(), tempStr.end(), tempStr.begin(), ::toupper);
+    	if(tempStr.compare("YES")==0 || tempStr.compare("Y")==0)
+    		artifVisc_bulkViscOnly = true;
+
+    	tempStr = getParam("ARTIFICIAL_VISCOSITY")->getString("SHOCK_ONLY");
+    	std::transform(tempStr.begin(), tempStr.end(), tempStr.begin(), ::toupper);
+    	if(tempStr.compare("YES")==0 || tempStr.compare("Y")==0)
+    		artifVisc_shockOnly = true;
+    	artifVisc_smoothstepThresh = getParam("ARTIFICIAL_VISCOSITY")->getDouble("SMOOTHSTEP_DIVERG_THRESH");
+
+    	artifVisc_type = getParam("ARTIFICIAL_VISCOSITY")->getString("TYPE");
+
+    	artifVisc_coeff = getParam("ARTIFICIAL_VISCOSITY")->getDouble("COEFF");
+
+    	if(mpi_rank==0) {
+    		cout<<"                      BULKVISC_ONLY = "<< artifVisc_bulkViscOnly << endl
+    			<<"                      SHOCK_ONLY    = "<< artifVisc_shockOnly << "  (SMOOTHSTEP_DIVERG_THRESH = "<< artifVisc_smoothstepThresh << ")" <<endl
+    			<<"                      TYPE          = "<< artifVisc_type <<endl
+    			<<"                      COEFF         = "<< artifVisc_coeff <<endl
+    			<<endl;
+    	}
+
+    	assert(artifVisc_mag == NULL);  	registerScalar(artifVisc_mag, "artifVisc_mag", CV_DATA);
+    	assert(strMag == NULL);         	registerScalar(strMag,        "strMag",        CV_DATA);
+    	assert(diverg == NULL);        		registerScalar(diverg,        "diverg",        CV_DATA);
+    }
+
+    // Statistics for artificial viscosity
+    artifViscMagMin = 0.0;
+    artifViscMagMax = 0.0;
+#endif
 
     // ----------------------------------------------------------------------------------------
     // parse any WRITE_DATA parameters...
@@ -511,6 +582,27 @@ public:   // member variables
   // For IKE
   // --------
   bool firstCall_JOEcalcViscousFluxScalar;
+
+#ifdef USE_ARTIF_VISC
+  // --------------------
+  // Artificial viscosity
+  // --------------------
+  // Artificial viscosity for shock-capturing: Parameters
+  bool turnOnArtifVisc;
+
+  bool artifVisc_bulkViscOnly;       // Bulk-viscosity only, or Add to the molecular viscosity
+  bool artifVisc_shockOnly;          // Do not apply to expansion wave (i.e. no artificial viscosity for positive divergence).
+  double artifVisc_smoothstepThresh; // If artifVisc_shockOnly is active, a smooth-step function is applied between (-artifVisc_smoothstepThresh < diverg <0.0).
+  string artifVisc_type;             // strain-magnitude based, divergence based
+  double artifVisc_coeff;            // This is the base for artificial viscosity: the artif-visc is multiplied by this.
+
+  // Artificial viscosity for shock-capturing: data for visualization
+  double* artifVisc_mag;
+
+  // Statistics for artificial viscosity
+  double artifViscMagMin;
+  double artifViscMagMax;
+#endif
 
   // ---------------------
   // Normal JOE variables
@@ -839,11 +931,19 @@ public:   // member functions
    * needs lsg_coeff0 and lsg_coeff1 ---> LS gradient coefficients
    *
    */
+#ifdef USE_ARTIF_VISC
+  virtual void addViscFlux(double *Frhou, double &FrhoE, double (*A0)[5], double (*A1)[5],
+      const double rho0, const double *u0, const double (&grad_u0)[3][3], const double h0, const double *grad_h0, const double T0, const double R0, const double gam0, const double kine0,
+      const double rho1, const double *u1, const double (&grad_u1)[3][3], const double h1, const double *grad_h1, const double T1, const double R1, const double gam1, const double kine1,
+      const double mul, const double mut, const double lambdaOverCp, const double kine_fa, const double *u_fa,
+      const double area, const double *nVec, const double smag, const double *sVec, const double artifBulkViscosity = 0.0);
+#else
   virtual void addViscFlux(double *Frhou, double &FrhoE, double (*A0)[5], double (*A1)[5],
       const double rho0, const double *u0, const double (&grad_u0)[3][3], const double h0, const double *grad_h0, const double T0, const double R0, const double gam0, const double kine0,
       const double rho1, const double *u1, const double (&grad_u1)[3][3], const double h1, const double *grad_h1, const double T1, const double R1, const double gam1, const double kine1,
       const double mul, const double mut, const double lambdaOverCp, const double kine_fa, const double *u_fa, 
       const double area, const double *nVec, const double smag, const double *sVec);
+#endif
   
   /**
    * loop over scalars and solve them
@@ -1539,59 +1639,198 @@ public:   // member functions
    *  Compute laminar viscosity mul_fa and heat conductivity lamOcp_fa at the faces.
    *  
    */
-  virtual void calcMaterialProperties()
-  {
-    if (mu_ref > 0.0)
-    {
-      if (viscMode == "SUTHERLAND")
-      {
-        // internal faces
-        for (int ifa = nfa_b; ifa < nfa; ifa++)
-        {
-          int icv0 = cvofa[ifa][0];
-          int icv1 = cvofa[ifa][1];
+  virtual void calcMaterialProperties() {
+	  if (mu_ref > 0.0) {
+		  if (viscMode == "SUTHERLAND") {
+			  // internal faces
+			  for (int ifa = nfa_b; ifa < nfa; ifa++) {
+				  int icv0 = cvofa[ifa][0];
+				  int icv1 = cvofa[ifa][1];
 
-          double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
-          vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
-          vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
-          double w0 = sqrt(vecDotVec3d(dx0, dx0));
-          double w1 = sqrt(vecDotVec3d(dx1, dx1));
+				  double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+				  vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+				  vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+				  double w0 = sqrt(vecDotVec3d(dx0, dx0));
+				  double w1 = sqrt(vecDotVec3d(dx1, dx1));
 
-          double temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
-          mul_fa[ifa] = mu_ref*pow(temperature/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temperature + SL_Sref);
-          lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-        }
-          
-          // boundary faces computed next in setBC
-      } 
-      else if (viscMode == "POWERLAW")
-      {
-        // internal faces
-        for (int ifa = nfa_b; ifa < nfa; ifa++)
-        {
-          int icv0 = cvofa[ifa][0];
-          int icv1 = cvofa[ifa][1];
+				  double temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
+				  mul_fa[ifa] = mu_ref*pow(temperature/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temperature + SL_Sref);
+				  lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+			  }
 
-          double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
-          vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
-          vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
-          double w0 = sqrt(vecDotVec3d(dx0, dx0));
-          double w1 = sqrt(vecDotVec3d(dx1, dx1));
-   
-          double temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
-          mul_fa[ifa] = mu_ref*pow(temperature/T_ref, mu_power_law);
-          lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-        }
-  
-        // boundary faces computed next in setBC
-      }
-      else
-      {
-        cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-        throw(-1);
-      }
-    }
+			  // boundary faces computed next in setBC
+		  }
+		  else if (viscMode == "POWERLAW") {
+			  // internal faces
+			  for (int ifa = nfa_b; ifa < nfa; ifa++)
+			  {
+				  int icv0 = cvofa[ifa][0];
+				  int icv1 = cvofa[ifa][1];
+
+				  double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+				  vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+				  vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+				  double w0 = sqrt(vecDotVec3d(dx0, dx0));
+				  double w1 = sqrt(vecDotVec3d(dx1, dx1));
+
+				  double temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
+				  mul_fa[ifa] = mu_ref*pow(temperature/T_ref, mu_power_law);
+				  lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+			  }
+
+			  // boundary faces computed next in setBC
+		  }
+		  else {
+			  cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+			  throw(-1);
+		  }
+	  }
+
+#ifdef USE_ARTIF_VISC
+	  if(turnOnArtifVisc) {
+		  calcArtifVisc(artifVisc_mag,
+				  artifVisc_bulkViscOnly, artifVisc_shockOnly,
+				  artifVisc_smoothstepThresh, artifVisc_type, artifVisc_coeff);
+	  }
+#endif
   }
+
+#ifdef USE_ARTIF_VISC
+  // \ Calculation of artificial viscosity.
+  // \ It takes the parameters only related to the artificial viscosity, but it can access to the all the member variables of UgpWithCvCompFlows
+  virtual void calcArtifVisc(double* artifVisc_mag,
+		  const bool artifVisc_bulkViscOnly, const bool artifVisc_shockOnly,
+		  const double artifVisc_smoothstepThresh, const string &artifVisc_type, const double artifVisc_coeff) {
+	  static bool firstCall = true;
+
+	  assert(diverg != NULL && strMag != NULL);
+	  assert(grad_rho != NULL); // grad_rho is not defined in a first-order calculation
+	  assert(artifVisc_mag != NULL);
+
+	  calcStrainRateAndDivergence();
+	  if(firstCall || !sndOrder)
+		  calcCv2Grad(grad_rho, rho, limiterNavierS, rho, epsilonSDWLS);
+	  MPI_Barrier(mpi_comm);
+
+	  double myArtifViscMagMin =  2.2e22;
+	  double myArtifViscMagMax = -2.2e22;
+
+	  // Calculate artifVisc_mag on the CV cells
+	  for(int icv=0; icv<ncv_g; ++icv) {
+		  // If SHOCK_ONLY, clip for expansion waves and weak shocks
+		  double clipFunc = 1.0;
+		  if(artifVisc_shockOnly) {
+			  if(diverg[icv] > 0.0) // expansion waves
+				  clipFunc = 0.0;
+			  else {
+				  if(diverg[icv] > artifVisc_smoothstepThresh) {
+					  double divergNormalized = -diverg[icv] / artifVisc_smoothstepThresh;
+					  clipFunc = 3.0*pow(divergNormalized, 2.0) - 2.0*pow(divergNormalized, 3.0);
+					  	  // A smooth-step function whose domain is between 0.0 and 1.0
+					  	  // (For details, search Wikipedia with "smoothstep")
+				  }
+			  }
+		  }
+		  if(clipFunc<0.0 || clipFunc>1.0)
+			  cout<<"WARNING UgpWithCvCompFlow::calcMaterialProperties(): The clip function is not in the correct range (0~1) = "<<clipFunc<<endl;
+
+		  // Calculate grid-size (currently MAX_BASE... You can also try the averages of the six grid-scales).
+		  // We are only considering the grid spacing projected in the shock normal direction (grad_rho direction)
+		  // in order to remove the span-wise grid spacing in a 2D calculation.
+		  double delta = 0.0;
+
+		  if(grad_rho != NULL) {
+			  double unitGradRho[3];
+			  double gradRhoMag = normVec3d(unitGradRho, grad_rho[icv]);
+			  if(gradRhoMag < 1.0e-12)  // Sometimes unitGradRho becomes NaN when gradRhoMag==0.0
+				  for(int i=0; i<3; ++i)
+					  unitGradRho[i] = 0.0;
+
+			  int foc_f = faocv_i[icv];
+			  int foc_l = faocv_i[icv+1]-1;
+			  for (int foc=foc_f; foc<=foc_l; foc++) {
+				  int ifa = faocv_v[foc];
+
+				  double nVec[3];
+				  double area = normVec3d(nVec, fa_normal[ifa]);
+				  double dx = cv_volume[icv] / area; // Approximated grid-spacing in the face-normal direction: works only for a hex mesh
+
+				  double dxProjected = fabs(dx * vecDotVec3d(unitGradRho, nVec));
+
+				  if( dxProjected<0.0 || isnan(dxProjected) ) {
+					  cerr<<"UgpWithCvCompFlow::calcMaterialProperties(): wrong dxProjected is calculated = "<<dxProjected<<endl;
+					  throw(-1);
+				  }
+
+//					  delta = max(delta, dxProjected);  // MAX_BASED
+				  delta += dxProjected;  // SUM_BASED
+			  }
+
+			  delta /= double(foc_l - foc_f + 1);
+		  } else { // If grad_rho is not defined, then you must find another (but inaccurate) method
+			  int foc_f = faocv_i[icv];
+			  int foc_l = faocv_i[icv+1]-1;
+			  for (int foc=foc_f; foc<=foc_l; foc++) {
+				  int ifa = faocv_v[foc];
+
+				  double nVec[3];
+				  double area = normVec3d(nVec, fa_normal[ifa]);
+				  double dx = cv_volume[icv] / area; // Approximated grid-spacing in the face-normal direction: works only for a hex mesh
+
+				  delta += dx;  // Note: MAX_BASE cannot work since it will only take the span-wise grid-spacing in most of the 2D calculations
+			  }
+
+			  delta /= double(foc_l - foc_f + 1);
+		  }
+
+		  // Calculate CV-based artificial viscosity
+		  if(artifVisc_type.compare("STRAIN_BASE") == 0)
+			  artifVisc_mag[icv] = artifVisc_coeff * rho[icv] * pow(delta, 2.0) * fabs(strMag[icv]) * clipFunc;
+		  else if(artifVisc_type.compare("DIVERG_BASE") == 0)
+			  artifVisc_mag[icv] = artifVisc_coeff * rho[icv] * pow(delta, 2.0) * fabs(diverg[icv]) * clipFunc;
+		  else {
+			  if(mpi_rank==0) cerr<<"UgpWithCvCompFlow::calcMaterialProperties(): artifVisc_type is not supported = "<<artifVisc_type<<endl;
+			  throw(-1);
+		  }
+
+		  // Check possible errors
+		  if( artifVisc_mag[icv] < 0.0 || isnan(artifVisc_mag[icv]) ) {
+			  cerr<<"UgpWithCvCompFlow::calcMaterialProperties(): artifVisc_mag becomes negative = "<<artifVisc_mag[icv]<<endl;
+			  throw(-1);
+		  }
+
+		  // Statistics
+		  myArtifViscMagMin = min(myArtifViscMagMin, artifVisc_mag[icv]);
+		  myArtifViscMagMax = max(myArtifViscMagMax, artifVisc_mag[icv]);
+	  }
+	  MPI_Allreduce(&myArtifViscMagMin, &artifViscMagMin, 1, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	  MPI_Allreduce(&myArtifViscMagMax, &artifViscMagMax, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+	  // Interpolate artifVisc_mag on the faces
+	  if(!artifVisc_bulkViscOnly) { // If the user DOES NOT want to add the artificial viscosity only on the bulk viscosity
+		  // internal faces
+		  for (int ifa = nfa_b; ifa < nfa; ifa++) {
+			  int icv0 = cvofa[ifa][0];
+			  int icv1 = cvofa[ifa][1];
+
+			  double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+			  vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+			  vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+			  double w0 = sqrt(vecDotVec3d(dx0, dx0));
+			  double w1 = sqrt(vecDotVec3d(dx1, dx1));
+
+			  if(mu_ref == 0)
+				  mul_fa[ifa] = 0.0;  // Make sure that the baseline viscosity is equal to zero for inviscid calculations
+
+			  mul_fa[ifa] += (w1*artifVisc_mag[icv0] + w0*artifVisc_mag[icv1]) / (w0+w1);
+		  }
+
+		  // boundary faces computed next in setBC
+	  }
+
+	  firstCall = false;
+  }
+#endif
   
   // \brief Compute for a given temperature, density and scalars: pressure, enthalpy, gas constant and ratio of specific heat
   virtual void calcThermoProp_T(double &p, double &h, double &R, double &gam, double &rho, double &T, double *Scal, int nScal)

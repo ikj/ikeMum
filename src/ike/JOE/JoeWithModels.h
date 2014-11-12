@@ -1,6 +1,9 @@
 #ifndef JOEWITHMODELS_H
 #define JOEWITHMODELS_H
 
+#include <locale>         // std::locale, std::toupper
+#include <algorithm>      // std::transform
+
 #include "MiscUtils.h"
 #include "tc_vec3d.h"
 
@@ -101,7 +104,7 @@ public:
 	  totResid_rhs = 0.0;
 
 	  // For output display (Metric to see the convergence of the simulation)
-	  log10_resid_rhoE  = NULL;  		registerScalar(log10_resid_rhoE,    "LOG10_RESID_RHOE",  CV_DATA);
+	  log10_resid_rhoE  = NULL;  	registerScalar(log10_resid_rhoE,    "LOG10_RESID_RHOE",  CV_DATA);
 	  log10_resid_scalar0 = NULL;  	registerScalar(log10_resid_scalar0, "LOG10_RESID_SCALAR0", CV_DATA);
   }
 

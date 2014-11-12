@@ -20,7 +20,9 @@
 #define WITH_PETSC
 #endif
 
+#ifndef ABSURDLY_BIG_NUMBER
 #define ABSURDLY_BIG_NUMBER 2.22e22
+#endif
 
 #ifndef MACHINE_EPS
 #define MACHINE_EPS 2.0e-16 // Note: machine epsilon for double precision = 1.11e-16

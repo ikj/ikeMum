@@ -10,12 +10,12 @@ using namespace logging;
 
 #include "petscksp.h"
 
-
+static bool ShowPetscMatrixOnScreenMatlab = false; // If this is true, the matrix will be shown on the screen in the MATLAB format
+                                                   // right after the matrix is constructed in setLinSysForPetsc()
 
 class PetscSolver
 {
 private:
-
   KSP ksp;        // linear solver context
   Vec x_, b_;     // solution, residual vector
   Mat A_;         // implicit operator matrix
@@ -85,6 +85,12 @@ public:
 
     MatAssemblyBegin(A_, MAT_FINAL_ASSEMBLY);
     MatAssemblyEnd(A_, MAT_FINAL_ASSEMBLY);
+
+	// Show matrix A_ on screen !
+	if(ShowPetscMatrixOnScreenMatlab) { // ShowPetscMatrixOnScreenMatlab is defined as a static variable at the beginning of this file and set as "false" by default
+		PetscViewerPushFormat(PETSC_VIEWER_STDOUT_WORLD, PETSC_VIEWER_ASCII_MATLAB);
+		MatView(A_,PETSC_VIEWER_STDOUT_WORLD);
+	}
   }
 
   void setLinSysForPetsc( double (*Ap)[5][5], double (*rhs)[5],
@@ -146,6 +152,12 @@ public:
 
     MatAssemblyBegin(A_, MAT_FINAL_ASSEMBLY);
     MatAssemblyEnd(A_, MAT_FINAL_ASSEMBLY);
+
+	// Show matrix A_ on screen !
+	if(ShowPetscMatrixOnScreenMatlab) { // ShowPetscMatrixOnScreenMatlab is defined as a static variable at the beginning of this file and set as "false" by default
+		PetscViewerPushFormat(PETSC_VIEWER_STDOUT_WORLD, PETSC_VIEWER_ASCII_MATLAB);
+		MatView(A_,PETSC_VIEWER_STDOUT_WORLD);
+	}
   }
 
    void setLinSysForPetscCoupled( double ***Ap, double **rhs,

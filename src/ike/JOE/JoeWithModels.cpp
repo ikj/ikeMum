@@ -992,6 +992,53 @@ void JoeWithModels::runBackwardEuler()
   temporalHook();
   finalHook();
 
+  if( checkParam("STORE_JACOBIAN") ) {
+	  // Write vectors
+	  char filenameXcv[50];
+	  sprintf(filenameXcv, "VectorXCVcoord.bin");
+	  int dimension = 3;
+	  double **xcvNew = NULL;
+	  getMem2D(&xcvNew, 0, ncv-1, 0, dimension-1, "JoeWithModels::runBackwardEuler():xcvNew", true);
+	  for(int icv=0; icv<ncv; ++icv) {
+		  for(int i=0; i<dimension; ++i)
+			  xcvNew[icv][i] = x_cv[icv][i];
+	  }
+	  MPI_Barrier(mpi_comm);
+	  writeJoe2DvectorBinaryParallel(filenameXcv, xcvNew, dimension, cvora, ncv);
+	  freeMem2D(xcvNew, 0, ncv-1, 0, dimension-1); 	xcvNew = NULL;
+
+	  char filenameRhs[50];
+	  sprintf(filenameRhs, "VectorRhsJoeBE.bin");
+	  writeJoeUncoupledNSrhsBinaryParallel(filenameRhs, RHSrho, RHSrhou, RHSrhoE, cvora, ncv);
+
+	  char filenameDiag[50];
+	  sprintf(filenameDiag, "VectorDiagonalJoeBE.bin");
+	  int nRowsPerBlock = 5;
+	  double **diagPart = NULL;
+	  getMem2D(&diagPart, 0, ncv-1, 0, nRowsPerBlock-1, "JoeWithModels::runBackwardEuler():diagPart", true);
+	  for(int icv=0; icv<ncv; ++icv) {
+		  double tmp = cv_volume[icv]/(local_dt[icv]);
+		  for(int i=0; i<nRowsPerBlock; ++i)
+			  diagPart[icv][i] = tmp;
+	  }
+	  MPI_Barrier(mpi_comm);
+	  writeJoe2DvectorBinaryParallel(filenameDiag, diagPart, nRowsPerBlock, cvora, ncv);
+	  freeMem2D(diagPart, 0, ncv-1, 0, nRowsPerBlock-1); 	diagPart = NULL;
+
+	  // Write matrices
+	  char filenameMatrix[50];
+	  sprintf(filenameMatrix, "JacobianJoeBE.bin");
+	  writeJoeUncoupledNSMatrixBinaryParallel(filenameMatrix, A, cvora, ncv, nbocv_i, nbocv_v_global);
+
+	  char filenameMatrixClearDiag[50];
+	  sprintf(filenameMatrixClearDiag, "JacobianClearDiagJoeBE.bin");
+	  writeJoeUncoupledNSMatrixClearDiagBinaryParallel(filenameMatrixClearDiag, A, cvora, ncv, nbocv_i, nbocv_v_global, cv_volume, local_dt);
+
+	  char filenameMatrixWeightedDiag[50];
+	  sprintf(filenameMatrixWeightedDiag, "JacobianWeightedDiagJoeBE.bin");
+	  writeJoeUncoupledNSMatrixWeightedDiagBinaryParallel(filenameMatrixWeightedDiag, A, cvora, ncv, nbocv_i, nbocv_v_global, cv_volume, local_dt);
+  }
+
   writeRestart();
   writeData(step);
 
@@ -1325,9 +1372,9 @@ void JoeWithModels::runBDF2()
           }
 
           rhsScal[iScal][icv] = underRelax*( rhsScal[iScal][icv]
-                                   -(  (1.0+psi*bdf2Alfa)*rhoPhi
+                                   -( (1.0+psi*bdf2Alfa)*rhoPhi
                                      - (1.0+psi*bdf2Beta)*qnScal[iScal][icv]
-                                         + psi*bdf2Gamma*qnm1Scal[iScal][icv])*tmp);
+                                       + psi*bdf2Gamma*qnm1Scal[iScal][icv]) * tmp );
 
           int noc_f = nbocv_i[icv];
           int noc_l = nbocv_i[icv + 1] - 1;
@@ -1529,8 +1576,13 @@ int JoeWithModels::calcRhs(double *rhs_rho, double (*rhs_rhou)[3], double *rhs_r
 	int CountReducedOrder = calcEulerFlux(rhs_rho, rhs_rhou, rhs_rhoE, rhs_rhoScal, A, AScal, flagImplicit);
 
 	// compute viscous Flux for NS
+#ifdef USE_ARTIF_VISC
+	if (mu_ref > 0.0 || turnOnArtifVisc)
+		calcViscousFluxNS(rhs_rho, rhs_rhou, rhs_rhoE, A, flagImplicit);
+#else
 	if (mu_ref > 0.0)
 		calcViscousFluxNS(rhs_rho, rhs_rhou, rhs_rhoE, A, flagImplicit);
+#endif
 
 	// add source terms to RHS of Navier-Stokes equations
 	sourceHook(rhs_rho, rhs_rhou, rhs_rhoE, A);
@@ -2138,256 +2190,270 @@ int JoeWithModels::calcEulerFlux(double *rhs_rho, double (*rhs_rhou)[3], double 
 
 void JoeWithModels::calcViscousFluxNS(double *rhs_rho, double (*rhs_rhou)[3], double *rhs_rhoE, double (*A)[5][5], int flagImplicit)
 {
-  double (*A0)[5];
-  double (*A1)[5];
+	double (*A0)[5];
+	double (*A1)[5];
 
-  if (flagImplicit)
-  {
-    A0 = new double[5][5];
-    A1 = new double[5][5];
+	if (flagImplicit)
+	{
+		A0 = new double[5][5];
+		A1 = new double[5][5];
 
-    for (int i = 0; i < 5; i++)
-      for (int j = 0; j < 5; j++)
-        A0[i][j] = A1[i][j] = 0.0;
-  }
-  else
-    A0 = A1 = NULL;
+		for (int i = 0; i < 5; i++)
+			for (int j = 0; j < 5; j++)
+				A0[i][j] = A1[i][j] = 0.0;
+	}
+	else
+		A0 = A1 = NULL;
 
-  double Frhou[3] = {0.0, 0.0, 0.0}, FrhoE = 0.0;
+	double Frhou[3] = {0.0, 0.0, 0.0}, FrhoE = 0.0;
 
-  // save the index of kine if defined
-  int kine_index = -1;
-  for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
-    if (strcmp(scalarTranspEqVector[iScal].getName(),"kine")==0)
-      kine_index = iScal;
+	// save the index of kine if defined
+	int kine_index = -1;
+	for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
+		if (strcmp(scalarTranspEqVector[iScal].getName(),"kine")==0)
+			kine_index = iScal;
 
-  // ====================================================================
-  // compute gradients
-  // ====================================================================
-  if (sndOrder != true)
-    calcCv2Grad(grad_u, vel, limiterNavierS, sos, epsilonSDWLS);
+	// ====================================================================
+	// compute gradients
+	// ====================================================================
+	if (sndOrder != true)
+		calcCv2Grad(grad_u, vel, limiterNavierS, sos, epsilonSDWLS);
 
-  calcCv2Grad(grad_enthalpy, enthalpy, limiterNavierS, enthalpy, epsilonSDWLS);
+	calcCv2Grad(grad_enthalpy, enthalpy, limiterNavierS, enthalpy, epsilonSDWLS);
 
-  // ====================================================================
-  // cycle through internal faces, assembling flux and matrix
-  // ====================================================================
-  for (int ifa = nfa_b; ifa < nfa; ifa++)
-  {
-    int icv0 = cvofa[ifa][0];
-    int icv1 = cvofa[ifa][1];
+	// ====================================================================
+	// cycle through internal faces, assembling flux and matrix
+	// ====================================================================
+	for (int ifa = nfa_b; ifa < nfa; ifa++)
+	{
+		int icv0 = cvofa[ifa][0];
+		int icv1 = cvofa[ifa][1];
 
-    int noc00, noc01, noc11, noc10;
-    if (flagImplicit)
-      getImplDependencyIndex(noc00, noc01, noc11, noc10, icv0, icv1);
+		int noc00, noc01, noc11, noc10;
+		if (flagImplicit)
+			getImplDependencyIndex(noc00, noc01, noc11, noc10, icv0, icv1);
 
-    // face unit normal and area...
-    double nVec[3] = {0.0, 0.0, 0.0};
-    double area = normVec3d(nVec, fa_normal[ifa]);
-    double sVec[3] = {0.0, 0.0, 0.0};
-    vecMinVec3d(sVec, x_cv[icv1], x_cv[icv0]);
-    double smag = normVec3d(sVec);
+		// face unit normal and area...
+		double nVec[3] = {0.0, 0.0, 0.0};
+		double area = normVec3d(nVec, fa_normal[ifa]);
+		double sVec[3] = {0.0, 0.0, 0.0};
+		vecMinVec3d(sVec, x_cv[icv1], x_cv[icv0]);
+		double smag = normVec3d(sVec);
 
-    double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
-    vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
-    vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
-    double w0 = sqrt(vecDotVec3d(dx0, dx0));
-    double w1 = sqrt(vecDotVec3d(dx1, dx1));
-    double ws = w0 + w1;
-    w0 /= ws;
-    w1 /= ws;
-    double uAux_fa[3] = { w1*vel[icv0][0]+ w0*vel[icv1][0],
-                          w1*vel[icv0][1]+ w0*vel[icv1][1],
-                          w1*vel[icv0][2]+ w0*vel[icv1][2]};
+		double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+		vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+		vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+		double w0 = sqrt(vecDotVec3d(dx0, dx0));
+		double w1 = sqrt(vecDotVec3d(dx1, dx1));
+		double ws = w0 + w1;
+		w0 /= ws;
+		w1 /= ws;
+		double uAux_fa[3] = { w1*vel[icv0][0]+ w0*vel[icv1][0],
+				w1*vel[icv0][1]+ w0*vel[icv1][1],
+				w1*vel[icv0][2]+ w0*vel[icv1][2]};
 
-    // kinetic energy, if defined
-    double kine0 = 0.0;
-    double kine1 = 0.0;
-    double kine_fa = 0.0;
-    if (kine_index > -1)
-    {
-      kine0 = scalarTranspEqVector[kine_index].phi[icv0];
-      kine1 = scalarTranspEqVector[kine_index].phi[icv1];
-      kine_fa = w1*kine0 + w0*kine1;
-    }
+		// kinetic energy, if defined
+		double kine0 = 0.0;
+		double kine1 = 0.0;
+		double kine_fa = 0.0;
+		if (kine_index > -1)
+		{
+			kine0 = scalarTranspEqVector[kine_index].phi[icv0];
+			kine1 = scalarTranspEqVector[kine_index].phi[icv1];
+			kine_fa = w1*kine0 + w0*kine1;
+		}
 
-    // calculate viscous flux
-    addViscFlux(Frhou, FrhoE, A0, A1,
-              rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0], kine0,
-              rho[icv1], vel[icv1], grad_u[icv1], enthalpy[icv1], grad_enthalpy[icv1], temp[icv1], RoM[icv1], gamma[icv1], kine1,
-              mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, uAux_fa,
-              area, nVec, smag, sVec);
+		// calculate viscous flux
+#ifdef USE_ARTIF_VISC
+		// If the user wants to have artificial bulk viscosity, pass the information to the addViscFlux() method
+		// (If the user wants to use artificial viscosity (not bulk only), it was already reflected in mul_fa)
+		double artifBulkViscosity = 0.0;
+		if(turnOnArtifVisc && artifVisc_bulkViscOnly)
+			artifBulkViscosity = w1*artifVisc_mag[icv0] + w0*artifVisc_mag[icv1];
 
-    if (flagImplicit)
-    {
-      for (int i=1; i<5; i++)
-      for (int j=0; j<5; j++)
-      {
-        A[noc00][i][j] -= A0[i][j];
-        A[noc01][i][j] -= A1[i][j];
-      }
+		addViscFlux(Frhou, FrhoE, A0, A1,
+				rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0], kine0,
+				rho[icv1], vel[icv1], grad_u[icv1], enthalpy[icv1], grad_enthalpy[icv1], temp[icv1], RoM[icv1], gamma[icv1], kine1,
+				mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, uAux_fa,
+				area, nVec, smag, sVec, artifBulkViscosity);
+#else
+		addViscFlux(Frhou, FrhoE, A0, A1,
+				rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0], kine0,
+				rho[icv1], vel[icv1], grad_u[icv1], enthalpy[icv1], grad_enthalpy[icv1], temp[icv1], RoM[icv1], gamma[icv1], kine1,
+				mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, uAux_fa,
+				area, nVec, smag, sVec);
+#endif
 
-      if (icv1 < ncv)  // if icv1 is internal...
-      {
-        for (int i=1; i<5; i++)
-        for (int j=0; j<5; j++)
-        {
-          A[noc11][i][j] += A1[i][j];
-          A[noc10][i][j] += A0[i][j];
-        }
-      }
-    }
+		if (flagImplicit)
+		{
+			for (int i=1; i<5; i++)
+				for (int j=0; j<5; j++)
+				{
+					A[noc00][i][j] -= A0[i][j];
+					A[noc01][i][j] -= A1[i][j];
+				}
 
-    // icv0 is always valid...
-    for (int i = 0; i < 3; i++)
-      rhs_rhou[icv0][i] -= Frhou[i];
-    rhs_rhoE[icv0] -= FrhoE;
+			if (icv1 < ncv)  // if icv1 is internal...
+			{
+				for (int i=1; i<5; i++)
+					for (int j=0; j<5; j++)
+					{
+						A[noc11][i][j] += A1[i][j];
+						A[noc10][i][j] += A0[i][j];
+					}
+			}
+		}
 
-    // icv1 can be ghost...
-    if (icv1 < ncv)
-    {
-      for (int i = 0; i < 3; i++)
-        rhs_rhou[icv1][i] += Frhou[i];
-      rhs_rhoE[icv1] += FrhoE;
-    }
-  }
+		// icv0 is always valid...
+		for (int i = 0; i < 3; i++)
+			rhs_rhou[icv0][i] -= Frhou[i];
+		rhs_rhoE[icv0] -= FrhoE;
+
+		// icv1 can be ghost...
+		if (icv1 < ncv)
+		{
+			for (int i = 0; i < 3; i++)
+				rhs_rhou[icv1][i] += Frhou[i];
+			rhs_rhoE[icv1] += FrhoE;
+		}
+	}
 
 
-  // ====================================================================
-  // cycle through boundary faces, assembling flux and matrix
-  // ====================================================================
-  for (list<FaZone>::iterator zone = faZoneList.begin(); zone != faZoneList.end(); zone++)
-  {
-    if (zone->getKind() == FA_ZONE_BOUNDARY)
-    {
-      Param *param;
-      if (getParam(param, zone->getName()))
-      {
-        // .............................................................................................
-        // SYMMETRY BOUNDARY CONDITION
-        // .............................................................................................
-	  if ((param->getString() == "SYMMETRY") || (param->getString() == "NOTHING"))
-                                {
-                                        if (kine_index > -1)
-                                        {
-                                                for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-                                                {
-                                                        int icv0 = cvofa[ifa][0];
-                                                        int icv1 = cvofa[ifa][1];
-                                                        assert( icv0 >= 0 );
-                                                        double nVec[3] = {0.0, 0.0, 0.0};
-                                                        double area = normVec3d(nVec, fa_normal[ifa]);
+	// ====================================================================
+	// cycle through boundary faces, assembling flux and matrix
+	// ====================================================================
+	for (list<FaZone>::iterator zone = faZoneList.begin(); zone != faZoneList.end(); zone++)
+	{
+		if (zone->getKind() == FA_ZONE_BOUNDARY)
+		{
+			Param *param;
+			if (getParam(param, zone->getName()))
+			{
+				// .............................................................................................
+				// SYMMETRY BOUNDARY CONDITION
+				// .............................................................................................
+				if ((param->getString() == "SYMMETRY") || (param->getString() == "NOTHING"))
+				{
+					if (kine_index > -1)
+					{
+						for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+						{
+							int icv0 = cvofa[ifa][0];
+							int icv1 = cvofa[ifa][1];
+							assert( icv0 >= 0 );
+							double nVec[3] = {0.0, 0.0, 0.0};
+							double area = normVec3d(nVec, fa_normal[ifa]);
 
-                                                        double *phi = scalarTranspEqVector[kine_index].phi;
-                                                        double kine_fa  = phi[icv1];
+							double *phi = scalarTranspEqVector[kine_index].phi;
+							double kine_fa  = phi[icv1];
 
-                                                        double tmp = 1.0/3.0*(rho[icv0] + rho[icv1])*kine_fa;
+							double tmp = 1.0/3.0*(rho[icv0] + rho[icv1])*kine_fa;
 
-                                                        for (int i = 0; i < 3; i++)
-                                                                rhs_rhou[icv0][i] -= tmp*fa_normal[ifa][i];
-                                                }
-                                        }
-                                }
+							for (int i = 0; i < 3; i++)
+								rhs_rhou[icv0][i] -= tmp*fa_normal[ifa][i];
+						}
+					}
+				}
 
-        
-        // .............................................................................................
-        // WALL BOUNDARY CONDITION
-        // .............................................................................................
-        else if (param->getString() == "WALL")
-        {
-          for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ++ifa) {
-          //for (int index = 0; index < zone->faVec.size(); ++index) {
-	    //int ifa = zone->faVec[index];
-            int icv0 = cvofa[ifa][0];
-            int icv1 = cvofa[ifa][1];
 
-            double nVec[3] = {0.0, 0.0, 0.0};
-            double area = normVec3d(nVec, fa_normal[ifa]);
-            double sVec[3] = {0.0, 0.0, 0.0};
-            vecMinVec3d(sVec, x_fa[ifa], x_cv[icv0]);
-            double smag = fabs(vecDotVec3d(sVec, nVec));  // project sVec to wall face normal
+				// .............................................................................................
+				// WALL BOUNDARY CONDITION
+				// .............................................................................................
+				else if (param->getString() == "WALL")
+				{
+					for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ++ifa) {
+						//for (int index = 0; index < zone->faVec.size(); ++index) {
+						//int ifa = zone->faVec[index];
+						int icv0 = cvofa[ifa][0];
+						int icv1 = cvofa[ifa][1];
 
-            double kine0 = 0.0;
-            double kine1 = 0.0;
-            double kine_fa = 0.0;
-            if (kine_index > -1)
-              kine0 = scalarTranspEqVector[kine_index].phi[icv0];
+						double nVec[3] = {0.0, 0.0, 0.0};
+						double area = normVec3d(nVec, fa_normal[ifa]);
+						double sVec[3] = {0.0, 0.0, 0.0};
+						vecMinVec3d(sVec, x_fa[ifa], x_cv[icv0]);
+						double smag = fabs(vecDotVec3d(sVec, nVec));  // project sVec to wall face normal
 
-            // calculate viscous flux
-            addViscFlux(Frhou, FrhoE, A0, NULL,
-                      rho[icv0],    vel[icv0],    grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0],    gamma[icv0],  kine0,
-                      rho[icv1],    vel[icv1],    grad_u[icv0], enthalpy[icv1], grad_enthalpy[icv0], temp[icv1], RoM[icv1],    gamma[icv1],  kine1,
-                      mul_fa[ifa], 0.0, lamOcp_fa[ifa], kine_fa, vel[icv1],
-                      area, nVec, smag, nVec);  /* <- use nVec here instead of sVec, to avoid inaccurate correction*/
+						double kine0 = 0.0;
+						double kine1 = 0.0;
+						double kine_fa = 0.0;
+						if (kine_index > -1)
+							kine0 = scalarTranspEqVector[kine_index].phi[icv0];
 
-            if (flagImplicit)
-            {
-              int noc00 = nbocv_i[icv0]; // icv0's diagonal
+						// calculate viscous flux
+						addViscFlux(Frhou, FrhoE, A0, NULL,
+								rho[icv0],    vel[icv0],    grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0],    gamma[icv0],  kine0,
+								rho[icv1],    vel[icv1],    grad_u[icv0], enthalpy[icv1], grad_enthalpy[icv0], temp[icv1], RoM[icv1],    gamma[icv1],  kine1,
+								mul_fa[ifa], 0.0, lamOcp_fa[ifa], kine_fa, vel[icv1],
+								area, nVec, smag, nVec);  /* <- use nVec here instead of sVec, to avoid inaccurate correction*/
 
-              for (int i=1; i<5; i++)
-                for (int j=0; j<5; j++)
-                  A[noc00][i][j] -= A0[i][j];
-            }
+						if (flagImplicit)
+						{
+							int noc00 = nbocv_i[icv0]; // icv0's diagonal
 
-            for (int i = 0; i < 3; i++)
-              rhs_rhou[icv0][i] -= Frhou[i];
-            rhs_rhoE[icv0] -= FrhoE;
-          }
-        }
-        // .............................................................................................
-        // OTHER BOUNDARY CONDITIONS
-        // .............................................................................................
-        else
-        {
-          for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ++ifa) {
-          //for (int index = 0; index < zone->faVec.size(); ++index) {
-	  //int ifa = zone->faVec[index];
-            int icv0 = cvofa[ifa][0];
-            int icv1 = cvofa[ifa][1];
+							for (int i=1; i<5; i++)
+								for (int j=0; j<5; j++)
+									A[noc00][i][j] -= A0[i][j];
+						}
 
-            double nVec[3] = {0.0, 0.0, 0.0};
-            double area = normVec3d(nVec, fa_normal[ifa]);
-            double sVec[3] = {0.0, 0.0, 0.0};
-            vecMinVec3d(sVec, x_fa[ifa], x_cv[icv0]);
-            double smag = normVec3d(sVec);
+						for (int i = 0; i < 3; i++)
+							rhs_rhou[icv0][i] -= Frhou[i];
+						rhs_rhoE[icv0] -= FrhoE;
+					}
+				}
+				// .............................................................................................
+				// OTHER BOUNDARY CONDITIONS
+				// .............................................................................................
+				else
+				{
+					for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ++ifa) {
+						//for (int index = 0; index < zone->faVec.size(); ++index) {
+						//int ifa = zone->faVec[index];
+						int icv0 = cvofa[ifa][0];
+						int icv1 = cvofa[ifa][1];
 
-            double kine0 = 0.0;
-            double kine1 = 0.0;
-            double kine_fa = 0.0;
-            if (kine_index > -1)
-            {
-              kine0 = scalarTranspEqVector[kine_index].phi[icv0];
-              kine1 = scalarTranspEqVector[kine_index].phi[icv1];
-              kine_fa = kine1;
-            }
+						double nVec[3] = {0.0, 0.0, 0.0};
+						double area = normVec3d(nVec, fa_normal[ifa]);
+						double sVec[3] = {0.0, 0.0, 0.0};
+						vecMinVec3d(sVec, x_fa[ifa], x_cv[icv0]);
+						double smag = normVec3d(sVec);
 
-            // calculate viscous flux
-            addViscFlux(Frhou, FrhoE, A0, NULL,
-                      rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0],  kine0,
-                      rho[icv1], vel[icv1], grad_u[icv0], enthalpy[icv1], grad_enthalpy[icv0], temp[icv1], RoM[icv1], gamma[icv1],  kine1,
-                      mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, vel[icv1],
-                      area, nVec, smag, sVec);
+						double kine0 = 0.0;
+						double kine1 = 0.0;
+						double kine_fa = 0.0;
+						if (kine_index > -1)
+						{
+							kine0 = scalarTranspEqVector[kine_index].phi[icv0];
+							kine1 = scalarTranspEqVector[kine_index].phi[icv1];
+							kine_fa = kine1;
+						}
 
-            if (flagImplicit)
-            {
-              int noc00 = nbocv_i[icv0]; // icv0's diagonal
+						// calculate viscous flux
+						addViscFlux(Frhou, FrhoE, A0, NULL,
+								rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0],  kine0,
+								rho[icv1], vel[icv1], grad_u[icv0], enthalpy[icv1], grad_enthalpy[icv0], temp[icv1], RoM[icv1], gamma[icv1],  kine1,
+								mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, vel[icv1],
+								area, nVec, smag, sVec);
 
-              for (int i=1; i<5; i++)
-                for (int j=0; j<5; j++)
-                  A[noc00][i][j] -= A0[i][j];
-            }
+						if (flagImplicit)
+						{
+							int noc00 = nbocv_i[icv0]; // icv0's diagonal
 
-            for (int i = 0; i < 3; i++)
-              rhs_rhou[icv0][i] -= Frhou[i];
-            rhs_rhoE[icv0] -= FrhoE;
-          }
-        }
-      }
-    }
-  }
+							for (int i=1; i<5; i++)
+								for (int j=0; j<5; j++)
+									A[noc00][i][j] -= A0[i][j];
+						}
 
-  if (A0  != NULL)  delete [] A0;
-  if (A1  != NULL)  delete [] A1;
+						for (int i = 0; i < 3; i++)
+							rhs_rhou[icv0][i] -= Frhou[i];
+						rhs_rhoE[icv0] -= FrhoE;
+					}
+				}
+			}
+		}
+	}
+
+	if (A0  != NULL)  delete [] A0;
+	if (A1  != NULL)  delete [] A1;
 }
 
 void JoeWithModels::setBC()
