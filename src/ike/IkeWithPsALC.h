@@ -406,7 +406,7 @@ public:
 	 */
 	void calcJacobian1DAD_calcRhs(double *rhsSingleArray, int &myCountReducedOrder, wallTimeJacCalc &myWTimeJacCalc,
 			const int icv, const int tag, const int nScal, const int debugLevel, const int NcontrolEqns,
-			const bool firstCall, bool &firstCallScalarTurb);
+			const bool firstCall, bool &firstCallScalarTurb, bool &firstCallScalarComb);
 
 	/*
 	 * Method: probeInCalcJacobian1DAD

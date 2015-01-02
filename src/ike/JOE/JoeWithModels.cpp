@@ -1577,7 +1577,12 @@ int JoeWithModels::calcRhs(double *rhs_rho, double (*rhs_rhou)[3], double *rhs_r
 
 	// compute viscous Flux for NS
 #ifdef USE_ARTIF_VISC
-	if (mu_ref > 0.0 || turnOnArtifVisc)
+	if(UgpWithCvCompFlow::turnOnArtifVisc) {
+		UgpWithCvCompFlow::calcArtifVisc(artifVisc_mag,
+				artifVisc_bulkViscOnly, artifVisc_shockOnly,
+				artifVisc_smoothstepThresh, artifVisc_type, artifVisc_coeff);
+	}
+	if (mu_ref > 0.0 || UgpWithCvCompFlow::turnOnArtifVisc)
 		calcViscousFluxNS(rhs_rho, rhs_rhou, rhs_rhoE, A, flagImplicit);
 #else
 	if (mu_ref > 0.0)

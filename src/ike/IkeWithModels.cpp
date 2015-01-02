@@ -25,6 +25,13 @@ void IkeWithModels_AD::init() {
 //		bvalScalar = NULL;
 	zofa = NULL;
 
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+	// These values are defined in the IkeUgpWithCvCompFlow.h file
+	myArtifViscMagMin_AD =  ABSURDLY_BIG_NUMBER;
+	myArtifViscMagMax_AD = -ABSURDLY_BIG_NUMBER;
+	myArtifViscSavedStep = -1;
+#endif
+
 #ifdef USE_DT_OVER_VOL_SCALING
 	// Local dt/dV
 	local_dtOverVol = NULL;	registerScalar(local_dtOverVol, "local_dtOverVol", CV_DATA);
@@ -907,6 +914,173 @@ void IkeWithModels_AD::calcMaterialProperties1D_AD(const int icvCenter, vector<i
 		}
 	}
 }
+
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+/*
+ * Method: calcArtifVisc1D_AD
+ * --------------------------
+ * Original code = UgpWithCvCompFlow::calcArtifVisc()
+ * Calculating artificial viscosity -- This method calculates the artifical viscosity at the cell center.
+ *                                     If user DON'T want to use bulk-visc only, also interpolate it on the faces.
+ *                                     (For the bulk-visc only mode, interpolation occurs later)
+ * It takes the parameters only related to the artificial viscosity,
+ * but it can access to the all the member variables of UgpWithCvCompFlows and UgpWithCvCompFlows_AD.
+ */
+void IkeWithModels_AD::calcArtifVisc1D_AD(const int icvCenter, ADscalar<REALQ> &artifViscMag_AD,
+		const bool artifVisc_bulkViscOnly, const bool artifVisc_shockOnly,
+		const double artifVisc_smoothstepThresh, const string &artifVisc_type, const double artifVisc_coeff) {
+	static bool firstCall = true;
+
+	assert(!diverg.empty() && !strMag.empty());
+//  Note: Unlike UgpWithCvCompFlow::calcArtifVisc(), we will not use the grad_rho based grid-size calculation.
+//	assert(!grad_rho.empty());
+	assert(!artifViscMag_AD.empty());
+
+	calcStrainRateAndDivergence1D_AD(icvCenter);
+
+//	if(!sndOrder && !grad_rho.empty())
+//		calcCv2Grad1D_AD(grad_rho, rho_AD, limiterNavierS, rho_AD, epsilonSDWLS);
+
+	// Calculate artifViscMag_AD in the CV cells
+	int noc_f = nbocv_i[icvCenter];
+	int noc_l = nbocv_i[icvCenter+1] - 1;
+	for (int noc = noc_f; noc <= noc_l; noc++) {
+		int icv = nbocv_v[noc];
+		// If SHOCK_ONLY, clip for expansion waves and weak shocks
+		adouble clipFunc = 1.0;
+		if(artifVisc_shockOnly) {
+			if(diverg[icv].value() > 0.0) // expansion waves
+				clipFunc = 0.0;
+			else {
+				if(diverg[icv].value() > artifVisc_smoothstepThresh) {
+					adouble divergNormalized = -diverg[icv] / artifVisc_smoothstepThresh;
+					clipFunc = 3.0*pow(divergNormalized, 2.0) - 2.0*pow(divergNormalized, 3.0);
+					// A smooth-step function whose domain is between 0.0 and 1.0
+					// (For details, search Wikipedia with "smoothstep")
+				}
+			}
+		}
+		if(clipFunc.value()<0.0 || clipFunc.value()>1.0)
+			cout<<"WARNING IkeWithModels_AD::calcArtifVisc1D_AD(): The clip function is not in the correct range (0~1) = "<<clipFunc.value()<<endl;
+
+		// Calculate grid-size.
+		double delta = 0.0;
+
+//		if(!grad_rho.empty()) {
+//			double grad_rho_ugp[3];
+//			for(int i=0; i<3; ++i)
+//				grad_rho_ugp[i] = grad_rho[icvCenter][i].value();
+//			double unitGradRho[3];
+//			double gradRhoMag = normVec3d(unitGradRho, grad_rho_ugp);
+//			if(gradRhoMag < 1.0e-12)  // Sometimes unitGradRho becomes NaN when gradRhoMag==0.0
+//				for(int i=0; i<3; ++i)
+//					unitGradRho[i] = 0.0;
+//
+//			int foc_f = faocv_i[icvCenter];
+//			int foc_l = faocv_i[icvCenter+1]-1;
+//			for (int foc=foc_f; foc<=foc_l; foc++) {
+//				int ifa = faocv_v[foc];
+//
+//				double nVec[3];
+//				double area = normVec3d(nVec, fa_normal[ifa]);
+//				double dx = cv_volume[icv] / area; // Approximated grid-spacing in the face-normal direction: works only for a hex mesh
+//
+//				double dxProjected = fabs(dx * vecDotVec3d(unitGradRho, nVec));
+//
+//				if( dxProjected<0.0 || isnan(dxProjected) ) {
+//					cerr<<"UgpWithCvCompFlow::calcMaterialProperties(): wrong dxProjected is calculated = "<<dxProjected<<endl;
+//					throw(-1);
+//				}
+//
+//				//					  delta = max(delta, dxProjected);  // MAX_BASED
+//				delta += dxProjected;  // SUM_BASED
+//			}
+//
+//			delta /= double(foc_l - foc_f + 1);
+//		} else { // If grad_rho is not defined, then you must find another (but inaccurate) method
+			double unitRhou[3];
+			double rhouMag = normVec3d(unitRhou, rhou[icv]);
+			assert(!isnan(rhouMag));
+			int countFaces = 0;
+
+			int foc_f = faocv_i[icv];
+			int foc_l = faocv_i[icv+1]-1;
+			for (int foc=foc_f; foc<=foc_l; foc++) {
+				int ifa = faocv_v[foc];
+
+				double nVec[3];
+				double area = normVec3d(nVec, fa_normal[ifa]);
+
+				double flowdirectInnerprod = fabs(vecDotVec3d(unitRhou, nVec));
+
+				if(fabs(rhouMag) < 1.0e-8 || flowdirectInnerprod > 2.0e-3) { // Note: cos(0.1 degrees) = 0.0017
+					double dx = cv_volume[icv] / area; // Approximated grid-spacing in the face-normal direction: works only for a hex mesh
+					delta += dx;  // Note: MAX_BASE cannot work since it will only take the span-wise grid-spacing in most of the 2D calculations
+					++countFaces;
+				}
+			}
+
+			delta /= double(countFaces);
+//		}
+
+		// Calculate CV-based artificial viscosity
+		if(artifVisc_type.compare("STRAIN_BASE") == 0) {
+			artifViscMag_AD[icv] = artifVisc_coeff * rho_AD[icv] * pow(delta, 2.0) * fabs(strMag[icv]) * clipFunc;
+			artifVisc_mag[icv]   = artifViscMag_AD[icv].value();
+		} else if(artifVisc_type.compare("DIVERG_BASE") == 0) {
+			artifViscMag_AD[icv] = artifVisc_coeff * rho_AD[icv] * pow(delta, 2.0) * fabs(diverg[icv]) * clipFunc;
+			artifVisc_mag[icv]   = artifViscMag_AD[icv].value();
+		} else {
+			if(mpi_rank==0) cerr<<"IkeWithModels_AD::calcArtifVisc1D_AD(): artifVisc_type is not supported = "<<artifVisc_type<<endl;
+			throw(-1);
+		}
+
+		if(step != myArtifViscSavedStep) {
+			myArtifViscSavedStep = step;
+			myArtifViscMagMin_AD =  ABSURDLY_BIG_NUMBER;
+			myArtifViscMagMax_AD = -ABSURDLY_BIG_NUMBER;
+		}
+		myArtifViscMagMin_AD = min(myArtifViscMagMin_AD, artifViscMag_AD[icv].value());
+		myArtifViscMagMax_AD = max(myArtifViscMagMax_AD, artifViscMag_AD[icv].value());
+
+		// Check possible errors
+		if( artifViscMag_AD[icv].value() < 0.0 || isnan(artifViscMag_AD[icv].value()) ) {
+			cerr<<"IkeWithModels_AD::calcArtifVisc1D_AD(): artifVisc_mag becomes negative = "<<artifViscMag_AD[icv].value()<<endl;
+			throw(-1);
+		}
+	}
+
+	// Interpolate artifVisc_mag on the faces
+	if(!artifVisc_bulkViscOnly) { // If the user DOES NOT want to add the artificial viscosity only on the bulk viscosity
+		int nofa_f = faocv_i[icvCenter];
+		int nofa_l = faocv_i[icvCenter+1]-1;
+		for (int foc = nofa_f; foc <= nofa_l; foc++) {
+			int ifa = faocv_v[foc];
+
+			// internal faces
+			if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
+				int icv0 = cvofa[ifa][0];
+				int icv1 = cvofa[ifa][1];
+
+				double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+				vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+				vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+				double w0 = sqrt(vecDotVec3d(dx0, dx0));
+				double w1 = sqrt(vecDotVec3d(dx1, dx1));
+
+				if(mu_ref == 0)
+					mul_fa[ifa] = 0.0;  // Make sure that the baseline viscosity is equal to zero for inviscid calculations
+
+				mul_fa[ifa] += (w1*artifViscMag_AD[icv0] + w0*artifViscMag_AD[icv1]) / (w0+w1);
+			}
+		}
+
+		// boundary faces computed next in setBC
+	}
+
+	firstCall = false;
+}
+#endif
 
 /*
  * Method: setBC1D_AD
@@ -2074,8 +2248,18 @@ int IkeWithModels_AD::calcRhs1D_AD(int icvCenter, REALA &rhs_rho, REALA rhs_rhou
 	int myCountReducedOrder = calcEulerFlux1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, rhs_rhoScal, rho, rhou, rhoE, A, AScal, flagImplicit);
 
 	// compute viscous Flux for NS
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+	if(UgpWithCvCompFlow::turnOnArtifVisc) {
+		calcArtifVisc1D_AD(icvCenter, artifViscMag_AD,
+				artifVisc_bulkViscOnly, artifVisc_shockOnly,
+				artifVisc_smoothstepThresh, artifVisc_type, artifVisc_coeff);
+	}
+	if (mu_ref > 0.0 || UgpWithCvCompFlow::turnOnArtifVisc)
+		calcViscousFluxNS1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, rho, rhou, rhoE, A, flagImplicit);
+#else
 	if (mu_ref > 0.0)
 		calcViscousFluxNS1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, rho, rhou, rhoE, A, flagImplicit);
+#endif
 
 	// add source terms to RHS of Navier-Stokes equations
 	sourceHook1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, A);
@@ -2812,11 +2996,25 @@ void IkeWithModels_AD::calcViscousFluxNS1D_AD(const int icvCenter, REALA &rhs_rh
 			}
 
 			// calculate viscous flux
+#ifdef USE_ARTIF_VISC
+		// If the user wants to have artificial bulk viscosity, pass the information to the addViscFlux() method
+		// (If the user wants to use artificial viscosity (not bulk only), it was already reflected in mul_fa)
+			REALQS artifBulkViscosity_AD = 0.0;
+			if(turnOnArtifVisc && artifVisc_bulkViscOnly)
+				artifBulkViscosity_AD = w1*artifViscMag_AD[icv0] + w0*artifViscMag_AD[icv1];
+
+			addViscFlux_AD(Frhou, FrhoE, A0, A1,
+					rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0], kine0,
+					rho[icv1], vel[icv1], grad_u[icv1], enthalpy[icv1], grad_enthalpy[icv1], temp[icv1], RoM[icv1], gamma[icv1], kine1,
+					mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, uAux_fa,
+					area, nVec, smag, sVec, artifBulkViscosity_AD);
+#else
 			addViscFlux_AD(Frhou, FrhoE, A0, A1,
 					rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0], kine0,
 					rho[icv1], vel[icv1], grad_u[icv1], enthalpy[icv1], grad_enthalpy[icv1], temp[icv1], RoM[icv1], gamma[icv1], kine1,
 					mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, uAux_fa,
 					area, nVec, smag, sVec);
+#endif
 
 			if (flagImplicit && icv0 < ncv && icv1 < ncv_g) {
 				for (int i=0; i<5; i++)
@@ -3164,8 +3362,13 @@ int IkeWithModels_AD::calcRhs1D_AD(int icvCenter, REALA &rhs_rho, REALA rhs_rhou
 	int myCountReducedOrder = calcEulerFlux1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, rhs_rhoScal, rho, rhou, rhoE, A, AScal, flagImplicit);
 
 	// compute viscous Flux for NS
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+	if (mu_ref > 0.0 || turnOnArtifVisc)
+		calcViscousFluxNS1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, rho, rhou, rhoE, A, flagImplicit);
+#else
 	if (mu_ref > 0.0)
 		calcViscousFluxNS1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, rho, rhou, rhoE, A, flagImplicit);
+#endif
 
 	// add source terms to RHS of Navier-Stokes equations
 	sourceHook1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, A);
@@ -3867,11 +4070,25 @@ void IkeWithModels_AD::calcViscousFluxNS1D_AD(const int icvCenter, REALA &rhs_rh
 			}
 
 			// calculate viscous flux
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+			// If the user wants to have artificial bulk viscosity, pass the information to the addViscFlux() method
+			// (If the user wants to use artificial viscosity (not bulk only), it was already reflected in mul_fa)
+			REALQS artifBulkViscosity_AD = 0.0;
+			if(turnOnArtifVisc && artifVisc_bulkViscOnly)
+				artifBulkViscosity_AD = w1*artifViscMag_AD[icv0] + w0*artifViscMag_AD[icv1];
+
+			addViscFlux_AD(Frhou, FrhoE, A0, A1,
+					rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0], kine0,
+					rho[icv1], vel[icv1], grad_u[icv1], enthalpy[icv1], grad_enthalpy[icv1], temp[icv1], RoM[icv1], gamma[icv1], kine1,
+					mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, uAux_fa,
+					area, nVec, smag, sVec, artifBulkViscosity_AD);
+#else
 			addViscFlux_AD(Frhou, FrhoE, A0, A1,
 					rho[icv0], vel[icv0], grad_u[icv0], enthalpy[icv0], grad_enthalpy[icv0], temp[icv0], RoM[icv0], gamma[icv0], kine0,
 					rho[icv1], vel[icv1], grad_u[icv1], enthalpy[icv1], grad_enthalpy[icv1], temp[icv1], RoM[icv1], gamma[icv1], kine1,
 					mul_fa[ifa], mut_fa[ifa], lamOcp_fa[ifa], kine_fa, uAux_fa,
 					area, nVec, smag, sVec);
+#endif
 
 			if (flagImplicit && icv0 < ncv && icv1 < ncv_g) {
 				for (int i=0; i<5; i++)

@@ -207,17 +207,15 @@ public:
 	}
 
 public:
-	// Two-layerd CSR struct
-	int *nbocv2_i;
-	vector<int> nbocv2_v;
+	// Two-layered CSR struct
+	// Note: nbocv2_i and nbocv2_v are moved to IkeUgpWithCvCompFlow.h
+//	int *nbocv2_i;
+//	vector<int> nbocv2_v;
 
 	// Global icv index
 	int *nbocv2_v_global;
 
 	// Boundary condition
-//	BOUNDARY_TYPE* btofa;
-//	BOUNDARY_TYPE_SCALAR** btofaScalar;
-//	double** bvalScalar;
 	FaZone** zofa;
 
 	vector<std::string> warningsVectorIkeModels1D; // If the simulation breaks down for some reasons,
@@ -429,6 +427,22 @@ protected:
 	 * Original code: calcMaterialProperties1D_AD in UgpWithCvCompFlowAD.h
 	 */
 	void calcMaterialProperties1D_AD(const int icvCenter, vector<int>& faInternal, vector<int>& faBoundary, ADscalar<REALQ> &rho, ADvector<REALQ> &rhou, ADscalar<REALQ> &rhoE);
+
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+	/*
+	 * Method: calcArtifVisc1D_AD
+	 * --------------------------
+	 * Original code = UgpWithCvCompFlow::calcArtifVisc()
+	 * Calculating artificial viscosity -- This method calculates the artifical viscosity at the cell center.
+	 *                                     If user DON'T want to use bulk-visc only, also interpolate it on the faces.
+	 *                                     (For the bulk-visc only mode, interpolation occurs later)
+	 * It takes the parameters only related to the artificial viscosity,
+	 * but it can access to the all the member variables of UgpWithCvCompFlows and UgpWithCvCompFlows_AD.
+	 */
+	void calcArtifVisc1D_AD(const int icvCenter, ADscalar<REALQ> &artifViscMag_AD,
+			const bool artifVisc_bulkViscOnly, const bool artifVisc_shockOnly,
+			const double artifVisc_smoothstepThresh, const string &artifVisc_type, const double artifVisc_coeff);
+#endif
 
 	/*
 	 * Method: setBC1D_AD

@@ -2,6 +2,7 @@
 #define UGPWITHCVCOMPFLOWAD_H
 
 #define USE_MEM_SAVING_ADVAR
+#define USE_ARTIF_VISC_WITH_MEM_SAVING  // Use artificial viscosity near shocks -- currently compatible only with the mem-saving mode
 #ifdef USE_MEM_SAVING_ADVAR
 	#include "../../ADvar.h"
 //	#define USE_CONDASSIGN
@@ -672,11 +673,19 @@ public:   // member functions
    * needs lsg_coeff0 and lsg_coeff1 ---> LS gradient coefficients
    *
    */
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
   virtual void addViscFlux_AD(REALQ *Frhou, REALQ &FrhoE, double (*A0)[5], double (*A1)[5],
-      REALQ rho0, REALQ *u0, REALQ (&grad_u0)[3][3], REALQ h0, REALQ *grad_h0, REALQ T0, REALQ R0, REALQ gam0, REALQS kine0,
-      REALQ rho1, REALQ *u1, REALQ (&grad_u1)[3][3], REALQ h1, REALQ *grad_h1, REALQ T1, REALQ R1, REALQ gam1, REALQS kine1,
-      REALQ mul, REALQS mut, REALQ lambdaOverCp, REALQS kine_fa, REALQ *u_fa,
-      REALX area, REALX *nVec, REALX smag, REALX *sVec);
+		  REALQ rho0, REALQ *u0, REALQ (&grad_u0)[3][3], REALQ h0, REALQ *grad_h0, REALQ T0, REALQ R0, REALQ gam0, REALQS kine0,
+		  REALQ rho1, REALQ *u1, REALQ (&grad_u1)[3][3], REALQ h1, REALQ *grad_h1, REALQ T1, REALQ R1, REALQ gam1, REALQS kine1,
+		  REALQ mul, REALQS mut, REALQ lambdaOverCp, REALQS kine_fa, REALQ *u_fa,
+		  REALX area, REALX *nVec, REALX smag, REALX *sVec, REALQ artifBulkViscosity = 0.0);
+#else
+  virtual void addViscFlux_AD(REALQ *Frhou, REALQ &FrhoE, double (*A0)[5], double (*A1)[5],
+		  REALQ rho0, REALQ *u0, REALQ (&grad_u0)[3][3], REALQ h0, REALQ *grad_h0, REALQ T0, REALQ R0, REALQ gam0, REALQS kine0,
+		  REALQ rho1, REALQ *u1, REALQ (&grad_u1)[3][3], REALQ h1, REALQ *grad_h1, REALQ T1, REALQ R1, REALQ gam1, REALQS kine1,
+		  REALQ mul, REALQS mut, REALQ lambdaOverCp, REALQS kine_fa, REALQ *u_fa,
+		  REALX area, REALX *nVec, REALX smag, REALX *sVec);
+#endif
 
    virtual void addViscFluxJacobians(double (*A0)[5], double (*A1)[5],
     REALQ rho0_AD, REALQ *u0_AD, REALQ (&grad_u0_AD)[3][3], REALQ h0_AD, REALQ *grad_h0_AD, REALQ T0_AD, REALQ R0_AD, REALQ gam0_AD, REALQS kine0_AD,

@@ -22,7 +22,7 @@ JOE = UgpWithCvCompFlow.o Scalars.o JoeWithModels.o
 ADJOINT = UgpWithCvCompFlowAD.o ScalarsAD.o JoeWithModelsAD.o  
 IKE = IkeWithPsALC.o IkeWithModels.o IkeUtilsAD.o # ike.o is not included on purpose since user can have own joe.cpp
 adjoint_H = UgpWithCvCompFlowAD.h JoeWithModelsAD.h 
-ike_H = IkeUgpWithCvCompFlow.h IkeWithPsALC.h IkeWithModels.h IkeUtilsAD.h MatComprsed.h PetscSolver2.h ADvar.h IkeTurbModel_KOM.h 
+ike_H = IkeUgpWithCvCompFlow.h IkeWithPsALC.h IkeWithModels.h IkeUtilsAD.h MatComprsed.h PetscSolver2.h ADvar.h IkeTurbModel_KOM.h IkeCombModel_FPVA_Coeff.h
 OBJS = $(addprefix $(MUM_HOME)/src/common/, $(COMMON))\
        $(addprefix $(MUM_HOME)/src/ike/JOE/, $(JOE))\
 			 $(addprefix $(MUM_HOME)/src/ike/JOE/ADJOINT_FILES/, $(ADJOINT))\

@@ -927,8 +927,9 @@ public:
     adouble Zm, Zv, Cm;
     Zm = -1.0; Zv = -1.0; Cm = -1.0;
     adouble (*weight)[2] = new adouble[3][2];
-    adouble x1_1, x2_1, x3_1;
-    adouble x1_n1,x2_n2,x3_n3;
+    adouble x1_1,  x2_1,  x3_1;
+    adouble x1_n1, x2_n2, x3_n3;
+    assert(x1 != NULL && x2 != NULL && x3 != NULL);
     x1_1 = x1[1];
     x2_1 = x2[1];
     x3_1 = x3[1];

@@ -475,8 +475,8 @@ public:   // constructors/destructors
     }
 
     // Statistics for artificial viscosity
-    artifViscMagMin = 0.0;
-    artifViscMagMax = 0.0;
+    artifViscMagMin =  2.22e22;
+    artifViscMagMax = -2.22e22;
 #endif
 
     // ----------------------------------------------------------------------------------------
@@ -1686,13 +1686,7 @@ public:   // member functions
 		  }
 	  }
 
-#ifdef USE_ARTIF_VISC
-	  if(turnOnArtifVisc) {
-		  calcArtifVisc(artifVisc_mag,
-				  artifVisc_bulkViscOnly, artifVisc_shockOnly,
-				  artifVisc_smoothstepThresh, artifVisc_type, artifVisc_coeff);
-	  }
-#endif
+	  // The part for calculating the artificial viscosity is moved to JoeWithModels.cpp -- Here, grad_u has not been calculated yet.
   }
 
 #ifdef USE_ARTIF_VISC
@@ -1732,19 +1726,46 @@ public:   // member functions
 			  }
 		  }
 		  if(clipFunc<0.0 || clipFunc>1.0)
-			  cout<<"WARNING UgpWithCvCompFlow::calcMaterialProperties(): The clip function is not in the correct range (0~1) = "<<clipFunc<<endl;
+			  cout<<"WARNING UgpWithCvCompFlow::calcArtifVisc(): The clip function is not in the correct range (0~1) = "<<clipFunc<<endl;
 
 		  // Calculate grid-size (currently MAX_BASE... You can also try the averages of the six grid-scales).
 		  // We are only considering the grid spacing projected in the shock normal direction (grad_rho direction)
 		  // in order to remove the span-wise grid spacing in a 2D calculation.
 		  double delta = 0.0;
 
-		  if(grad_rho != NULL) {
-			  double unitGradRho[3];
-			  double gradRhoMag = normVec3d(unitGradRho, grad_rho[icv]);
-			  if(gradRhoMag < 1.0e-12)  // Sometimes unitGradRho becomes NaN when gradRhoMag==0.0
-				  for(int i=0; i<3; ++i)
-					  unitGradRho[i] = 0.0;
+//		  if(grad_rho != NULL) {
+//			  double unitGradRho[3];
+//			  double gradRhoMag = normVec3d(unitGradRho, grad_rho[icv]);
+//			  if(gradRhoMag < 1.0e-12)  // Sometimes unitGradRho becomes NaN when gradRhoMag==0.0
+//				  for(int i=0; i<3; ++i)
+//					  unitGradRho[i] = 0.0;
+//
+//			  int foc_f = faocv_i[icv];
+//			  int foc_l = faocv_i[icv+1]-1;
+//			  for (int foc=foc_f; foc<=foc_l; foc++) {
+//				  int ifa = faocv_v[foc];
+//
+//				  double nVec[3];
+//				  double area = normVec3d(nVec, fa_normal[ifa]);
+//				  double dx = cv_volume[icv] / area; // Approximated grid-spacing in the face-normal direction: works only for a hex mesh
+//
+//				  double dxProjected = fabs(dx * vecDotVec3d(unitGradRho, nVec));
+//
+//				  if( dxProjected<0.0 || isnan(dxProjected) ) {
+//					  cerr<<"UgpWithCvCompFlow::calcMaterialProperties(): wrong dxProjected is calculated = "<<dxProjected<<endl;
+//					  throw(-1);
+//				  }
+//
+////					  delta = max(delta, dxProjected);  // MAX_BASED
+//				  delta += dxProjected;  // SUM_BASED
+//			  }
+//
+//			  delta /= double(foc_l - foc_f + 1);
+//		  } else { // If grad_rho is not defined, then you must find another (but inaccurate) method
+			  double unitRhou[3];
+			  double rhouMag = normVec3d(unitRhou, rhou[icv]);
+			  assert(!isnan(rhouMag));
+			  int countFaces = 0;
 
 			  int foc_f = faocv_i[icv];
 			  int foc_l = faocv_i[icv+1]-1;
@@ -1753,35 +1774,18 @@ public:   // member functions
 
 				  double nVec[3];
 				  double area = normVec3d(nVec, fa_normal[ifa]);
-				  double dx = cv_volume[icv] / area; // Approximated grid-spacing in the face-normal direction: works only for a hex mesh
 
-				  double dxProjected = fabs(dx * vecDotVec3d(unitGradRho, nVec));
+				  double flowdirectInnerprod = fabs(vecDotVec3d(unitRhou, nVec));
 
-				  if( dxProjected<0.0 || isnan(dxProjected) ) {
-					  cerr<<"UgpWithCvCompFlow::calcMaterialProperties(): wrong dxProjected is calculated = "<<dxProjected<<endl;
-					  throw(-1);
+				  if(fabs(rhouMag) < 1.0e-8 || flowdirectInnerprod > 2.0e-3) { // Note: cos(0.1 degrees) = 0.0017
+					  double dx = cv_volume[icv] / area; // Approximated grid-spacing in the face-normal direction: works only for a hex mesh
+					  delta += dx;  // Note: MAX_BASE cannot work since it will only take the span-wise grid-spacing in most of the 2D calculations
+					  ++countFaces;
 				  }
-
-//					  delta = max(delta, dxProjected);  // MAX_BASED
-				  delta += dxProjected;  // SUM_BASED
 			  }
 
-			  delta /= double(foc_l - foc_f + 1);
-		  } else { // If grad_rho is not defined, then you must find another (but inaccurate) method
-			  int foc_f = faocv_i[icv];
-			  int foc_l = faocv_i[icv+1]-1;
-			  for (int foc=foc_f; foc<=foc_l; foc++) {
-				  int ifa = faocv_v[foc];
-
-				  double nVec[3];
-				  double area = normVec3d(nVec, fa_normal[ifa]);
-				  double dx = cv_volume[icv] / area; // Approximated grid-spacing in the face-normal direction: works only for a hex mesh
-
-				  delta += dx;  // Note: MAX_BASE cannot work since it will only take the span-wise grid-spacing in most of the 2D calculations
-			  }
-
-			  delta /= double(foc_l - foc_f + 1);
-		  }
+			  delta /= double(countFaces);
+//		  }
 
 		  // Calculate CV-based artificial viscosity
 		  if(artifVisc_type.compare("STRAIN_BASE") == 0)
@@ -1789,13 +1793,13 @@ public:   // member functions
 		  else if(artifVisc_type.compare("DIVERG_BASE") == 0)
 			  artifVisc_mag[icv] = artifVisc_coeff * rho[icv] * pow(delta, 2.0) * fabs(diverg[icv]) * clipFunc;
 		  else {
-			  if(mpi_rank==0) cerr<<"UgpWithCvCompFlow::calcMaterialProperties(): artifVisc_type is not supported = "<<artifVisc_type<<endl;
+			  if(mpi_rank==0) cerr<<"UgpWithCvCompFlow::calcArtifVisc(): artifVisc_type is not supported = "<<artifVisc_type<<endl;
 			  throw(-1);
 		  }
 
 		  // Check possible errors
 		  if( artifVisc_mag[icv] < 0.0 || isnan(artifVisc_mag[icv]) ) {
-			  cerr<<"UgpWithCvCompFlow::calcMaterialProperties(): artifVisc_mag becomes negative = "<<artifVisc_mag[icv]<<endl;
+			  cerr<<"UgpWithCvCompFlow::calcArtifVisc(): artifVisc_mag becomes negative = "<<artifVisc_mag[icv]<<endl;
 			  throw(-1);
 		  }
 

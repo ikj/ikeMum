@@ -153,10 +153,27 @@
 	ADvector<adouble> grad_temp;     ///< temperature gradient der
 	ADvector<adouble> grad_enthalpy; ///< enthalpy gradient der
 
+	// Two-layered CSR struct: It used to be in IkeWithModels but was moved to here (Dec 2014)
+	int *nbocv2_i;
+	vector<int> nbocv2_v;
+
 	// For the memory saving ADvars ("1D-style")
 	vector<int> nbocv2_eachIcv;   // The 2-layered neighbors of an icv
 	vector<int> nbocv2ff_eachIcv; // The 2-layered neighbors of an icv including the fake cells
 	vector<int> fa2_eachIcv;      // The 2-layered faces of an icv
+
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+	// --------------------
+	// Artificial viscosity
+	// --------------------
+	// Artificial viscosity for shock-capturing: cell-centered value
+	ADscalar<adouble> artifViscMag_AD;
+
+	// Statistics for artificial viscosity: These values are updated in the IkeWithModel class
+	double myArtifViscMagMin_AD;
+	double myArtifViscMagMax_AD;
+	int myArtifViscSavedStep;
+#endif
 
 	class ScalarTranspEq_AD {
 	public:
@@ -180,6 +197,15 @@
 		char name[DATA_NAME_LEN];
 	};
 
+	/*
+	 * If the memory saving mode (so-called the 1D-style) is not used:
+	 *     If control parameters are used (i.e. NcontrolEqns != 0),
+	 *     the IkeWithPsALC_AD class will call IkeWithPsALC_AD::initialize_adoubles().
+	 *     That method first assigns an adouble variable for the control parameter
+	 *     and call this method.
+	 * Otherwise (1D-style):
+	 *     The IkeWithPsALC_AD class will call IkeWithPsALC_AD::initialize_adoubles(const int icvCenter, const int NcontrolEqns).
+	 */
 	virtual void initialize_adoubles() {
 		rho_AD.allocate(ncv_ggff);
 		rhou_AD.allocate(ncv_ggff);
@@ -336,6 +362,10 @@
 		muLam_AD.setName("muLam_AD");
 		LambdaOverCp_AD.setName("LambdaOverCp_AD");
 		chi_AD.setName("chi_AD"); ///<FPVA model functions
+
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+		artifViscMag_AD.setName("artifViscMag_AD");
+#endif
 
 		grad_rho.setName("grad_rho");      ///< density  gradient der
 		grad_u.setName("grad_u");     ///< velocity gradient tensor der
@@ -610,6 +640,11 @@
 		}
 	}
 
+	/*
+	 * Method: calcMaterialProperties_AD
+	 * ---------------------------------
+	 *
+	 */
 	virtual void calcMaterialProperties_AD(ADscalar<REALQ> &rho, ADvector<REALQ> &rhou, ADscalar<REALQ> &rhoE) {
 		if (mu_ref > 0.0) {
 			if (viscMode == "SUTHERLAND") {
@@ -1415,12 +1450,15 @@
 	 * but the implementation that works only for the ICVs stored in nbocv2ff
 	 * Original code = initialHookScalarRansCombModel_AD in UgpWithCvCompFlowAD.h
 	 */
-	virtual void initialHookScalarRansCombModel1D_AD(int loadtable, vector<int> &nbocv2ff) {
+	virtual void initialHookScalarRansCombModel1D_AD(int loadtable, vector<int> &nbocv2ff, bool &firstCall) {
 		for(size_t i=0; i<nbocv2ff.size(); ++i) {
 			int icv = nbocv2ff[i];
 			RoM[icv] = R_gas;
 			gamma[icv] = GAMMA;
 		}
+
+		if(firstCall)
+			firstCall = false;
 	}
 
 	/*
@@ -1507,7 +1545,14 @@
      * --------------------------------------
      * Original code: sourceHookRansTurbCoupled_AD in UgpWithCvCompFlowAD.h
      */
-    virtual void sourceHookRansTurbCoupled1D_AD(const int icv, adouble *rhs, double ***A, int flagImplicit) {/*empty*/}
+    virtual void sourceHookRansTurbCoupled1D_AD(const int icvCenter, adouble *rhs, double ***A, int flagImplicit) {/*empty*/}
+
+    /*
+     * Method: sourceHookRansCombCoupled1D_AD
+     * --------------------------------------
+     * Original code: sourceHookRansCombCoupled_AD in UgpWithCvCompFlowAD.h
+     */
+    virtual void sourceHookRansCombCoupled1D_AD(const int icvCenter, adouble *rhs, double ***A, int flagImplicit) {/*empty*/}
 
 #ifdef USE_MEM_SAVING_ADVAR
 	/*
@@ -1625,11 +1670,39 @@
     }
 
     /*
+     * Method: InterpolateAtCellCenterFromFaceValues_AD
+     * ------------------------------------------------
+     * Original code = InterpolateAtCellCenterFromFaceValues() in UgpWithCvCompFlow.h
+     *                 InterpolateAtCellCenterFromFaceValues() in UgpWithCvCompFlowAD.h
+     * (Note: The current version of UgpWithCvCompFlowAD.h doesn't support ADscalar)
+     */
+    adouble InterpolateAtCellCenterFromFaceValues_AD(ADscalar<adouble> &phi, int icv) {
+    	adouble phiC1 = 0.0;
+
+    	int foc_f = faocv_i[icv];
+    	int foc_l = faocv_i[icv + 1] - 1;
+    	for (int foc=foc_f; foc<=foc_l; foc++) {
+    		int ifa = faocv_v[foc];
+    		phiC1 += phi[ifa];
+    	}
+    	adouble phiC = phiC1/(double)(foc_l-foc_f+1);
+
+    	return phiC;
+    }
+
+    /*
      * Method: calcStrainRateAndDivergence1D_AD
      * ----------------------------------------
      * Original code = calcStrainRateAndDivergence_AD() in UgpWithCvCompFlowAD.h
      */
     virtual void calcStrainRateAndDivergence1D_AD(const int icvCenter) {
+    	// Prevent calling this method twice for an icvCenter: Note that this algorithm works only for the 1D-style
+    	static int myFlag = -1;
+    	if(myFlag == icvCenter && ncv > 1)
+    		return;  // If this method has been already called once for the current icvCenter, just return.
+    	myFlag = icvCenter;
+
+
 #ifdef USE_MEM_SAVING_ADVAR
     	if ((strMag.empty()) || (diverg.empty())) {
     		cout << "Error in calcStrainRateAndDivergence1D_AD() => Either strMag or diverg has not been registered!" << endl;
@@ -1820,7 +1893,10 @@
 	// =========================
 	//  MEMBER VARIABLES
 	// =========================
+
+	// --------------------
 	// Heat
+	// --------------------
 	double *lambda; // lambda will be allocated in the runPsALC() method
 	REALQ *lambda_AD;
 

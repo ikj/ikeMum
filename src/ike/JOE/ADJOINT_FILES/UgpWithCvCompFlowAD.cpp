@@ -385,87 +385,101 @@ return 0;
  *
  * ------------------------------------------------------------------------------------------
  */
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+void UgpWithCvCompFlow_AD::addViscFlux_AD(REALQ *Frhou, REALQ &FrhoE, double (*A0)[5], double (*A1)[5],
+     REALQ rho0,  REALQ *u0,  REALQ (&grad_u0)[3][3],  REALQ h0,  REALQ *grad_h0,  REALQ T0,  REALQ R0,  REALQ gam0,  REALQS kine0,
+     REALQ rho1,  REALQ *u1,  REALQ (&grad_u1)[3][3],  REALQ h1,  REALQ *grad_h1,  REALQ T1,  REALQ R1,  REALQ gam1,  REALQS kine1,
+     REALQ mul,  REALQS mut,  REALQ lambdaOverCp,  REALQS kine_fa,  REALQ *u_fa,
+     double area,  double *nVec,  double smag,  double *sVec, REALQ artifBulkViscosity)
+#else
 void UgpWithCvCompFlow_AD::addViscFlux_AD(REALQ *Frhou, REALQ &FrhoE, double (*A0)[5], double (*A1)[5],
      REALQ rho0,  REALQ *u0,  REALQ (&grad_u0)[3][3],  REALQ h0,  REALQ *grad_h0,  REALQ T0,  REALQ R0,  REALQ gam0,  REALQS kine0,
      REALQ rho1,  REALQ *u1,  REALQ (&grad_u1)[3][3],  REALQ h1,  REALQ *grad_h1,  REALQ T1,  REALQ R1,  REALQ gam1,  REALQS kine1,
      REALQ mul,  REALQS mut,  REALQ lambdaOverCp,  REALQS kine_fa,  REALQ *u_fa, 
      double area,  double *nVec,  double smag,  double *sVec)
+#endif
 {
-  REALX alpha = vecDotVec3d(nVec, sVec);
-  assert((alpha > 0.0) && (alpha < 1.000000001));
+	REALX alpha = vecDotVec3d(nVec, sVec);
+	assert((alpha > 0.0) && (alpha < 1.000000001));
 
-  REALQ grad_u_f[3][3];
-  for (int i=0; i<3; i++)
-    for (int j=0; j<3; j++)
-      grad_u_f[i][j] = 0.5*(grad_u0[i][j] + grad_u1[i][j]);
+	REALQ grad_u_f[3][3];
+	for (int i=0; i<3; i++)
+		for (int j=0; j<3; j++)
+			grad_u_f[i][j] = 0.5*(grad_u0[i][j] + grad_u1[i][j]);
 
 
-  REALX fCorr[3] = { nVec[0] - alpha*sVec[0], 
-                      nVec[1] - alpha*sVec[1],
-                      nVec[2] - alpha*sVec[2]};
+	REALX fCorr[3] = { nVec[0] - alpha*sVec[0],
+			nVec[1] - alpha*sVec[1],
+			nVec[2] - alpha*sVec[2]};
 
-  /*REALX fCorr[3] = { 0.0, 0.0, 0.0};
+	/*REALX fCorr[3] = { 0.0, 0.0, 0.0};
   alpha = 1.0;*/
 
-  
-  // ========================================================================
-  // momentum equation
-  // ========================================================================
 
-  REALQ muTotalMomentum = mul + mut;
-  REALQ tauij_nj[3];
+	// ========================================================================
+	// momentum equation
+	// ========================================================================
 
-  for (int i = 0; i < 3; i++)
-  {
-    tauij_nj[i] = muTotalMomentum * (alpha * (u1[i] - u0[i]) / smag
-                      + grad_u_f[i][0] * fCorr[0] + grad_u_f[0][i] * nVec[0]
-                      + grad_u_f[i][1] * fCorr[1] + grad_u_f[1][i] * nVec[1]
-                      + grad_u_f[i][2] * fCorr[2] + grad_u_f[2][i] * nVec[2]);
-  }
+	REALQ muTotalMomentum = mul + mut;
+	REALQ tauij_nj[3];
 
-  // viscosity times trace of strain rate tensor times 2/3...
-  REALQ tmp = 2.0 / 3.0 * muTotalMomentum * (grad_u_f[0][0] + grad_u_f[1][1] + grad_u_f[2][2]);
-  if (turbModel > NONE)
-    tmp += 1.0 / 3.0 * (rho0 + rho1) * kine_fa;  // and 2/3*rho*kine if turb model is on
+	for (int i = 0; i < 3; i++)
+	{
+		tauij_nj[i] = muTotalMomentum * (alpha * (u1[i] - u0[i]) / smag
+				+ grad_u_f[i][0] * fCorr[0] + grad_u_f[0][i] * nVec[0]
+				+ grad_u_f[i][1] * fCorr[1] + grad_u_f[1][i] * nVec[1]
+				+ grad_u_f[i][2] * fCorr[2] + grad_u_f[2][i] * nVec[2]);
+	}
 
-  tauij_nj[0] -= tmp * nVec[0];
-  tauij_nj[1] -= tmp * nVec[1];
-  tauij_nj[2] -= tmp * nVec[2];
+	// viscosity times trace of strain rate tensor times 2/3...
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+	REALQ tmp = 0.0;
+	if(turnOnArtifVisc && artifVisc_bulkViscOnly)
+		tmp = (2.0/3.0*muTotalMomentum + artifBulkViscosity) * (grad_u_f[0][0] + grad_u_f[1][1] + grad_u_f[2][2]);
+	else
+		tmp = (2.0/3.0*muTotalMomentum) * (grad_u_f[0][0] + grad_u_f[1][1] + grad_u_f[2][2]);
+#else
+	REALQ tmp = 2.0 / 3.0 * muTotalMomentum * (grad_u_f[0][0] + grad_u_f[1][1] + grad_u_f[2][2]);
+#endif
 
-  // subtract from momentum flux (require LHS form - see convective term above)...
-  Frhou[0] = -area * tauij_nj[0];
-  Frhou[1] = -area * tauij_nj[1];
-  Frhou[2] = -area * tauij_nj[2];
+	if (turbModel > NONE)
+		tmp += 1.0 / 3.0 * (rho0 + rho1) * kine_fa;  // and 2/3*rho*kine if turb model is on
+
+	tauij_nj[0] -= tmp * nVec[0];
+	tauij_nj[1] -= tmp * nVec[1];
+	tauij_nj[2] -= tmp * nVec[2];
+
+	// subtract from momentum flux (require LHS form - see convective term above)...
+	Frhou[0] = -area * tauij_nj[0];
+	Frhou[1] = -area * tauij_nj[1];
+	Frhou[2] = -area * tauij_nj[2];
 
 
-  // ========================================================================
-  // energy equation
-  // ========================================================================
+	// ========================================================================
+	// energy equation
+	// ========================================================================
 
-  REALQ keff = lambdaOverCp + mut / PrTurb;
-  REALQ enth = keff * (alpha * (h1 - h0) / smag
-                + 0.5 * ((grad_h0[0] + grad_h1[0]) * fCorr[0]
-                        +(grad_h0[1] + grad_h1[1]) * fCorr[1]
-                        +(grad_h0[2] + grad_h1[2]) * fCorr[2]));
+	REALQ keff = lambdaOverCp + mut / PrTurb;
+	REALQ enth = keff * (alpha * (h1 - h0) / smag
+			+ 0.5 * ((grad_h0[0] + grad_h1[0]) * fCorr[0]
+			                                           +(grad_h0[1] + grad_h1[1]) * fCorr[1]
+			                                                                              +(grad_h0[2] + grad_h1[2]) * fCorr[2]));
 
-  // model for triple correlation
-  REALQ psi = 0.0;
-  if (turbModel > NONE)
-    psi = muTotalMomentum * (alpha * (kine1 - kine0) / smag);
+	// model for triple correlation
+	REALQ psi = 0.0;
+	if (turbModel > NONE)
+		psi = muTotalMomentum * (alpha * (kine1 - kine0) / smag);
 
-  FrhoE = -area * (enth + tauij_nj[0] * u_fa[0] + tauij_nj[1] * u_fa[1] + tauij_nj[2] * u_fa[2] +psi);
+	FrhoE = -area * (enth + tauij_nj[0] * u_fa[0] + tauij_nj[1] * u_fa[1] + tauij_nj[2] * u_fa[2] +psi);
 
-  // TBD THIS INVOLVES SOME EXTRA WORK. SHOULD OPTIMIZE.
+	// TBD THIS INVOLVES SOME EXTRA WORK. SHOULD OPTIMIZE.
 
-    addViscFluxJacobians(A0, A1,
-    rho0, u0, grad_u0, h0, grad_h0, T0, R0, gam0, kine0,
-    rho1, u1, grad_u1, h1, grad_h1, T1, R1, gam1, kine1,
-    mul,  mut, lambdaOverCp, kine_fa, u_fa, 
-    area, nVec, smag, sVec);
-  
-
+	addViscFluxJacobians(A0, A1,
+			rho0, u0, grad_u0, h0, grad_h0, T0, R0, gam0, kine0,
+			rho1, u1, grad_u1, h1, grad_h1, T1, R1, gam1, kine1,
+			mul,  mut, lambdaOverCp, kine_fa, u_fa,
+			area, nVec, smag, sVec);
 }
-
 
 //--------------------------------------------------------------------------//
 //                                                                          //

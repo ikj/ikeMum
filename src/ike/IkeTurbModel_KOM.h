@@ -1097,8 +1097,8 @@ public:
 #endif
 
 	/*
-	 * Method: sourceHookScalarRansTurb_new_AD
-	 * ---------------------------------------
+	 * Method: sourceHookScalarRansTurb_new1D_AD
+	 * -----------------------------------------
 	 *
 	 */
 #ifdef USE_MEM_SAVING_ADVAR

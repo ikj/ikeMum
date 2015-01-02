@@ -799,6 +799,8 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 	initialHookScalarRansTurbModel(); // Calculate wallDist, connect the member variables (e.g. kine, omega, grad_kine, grad_omega) in the turbulence model to arrays
 	initialHookScalarRansCombModel(); // Update gamma and RoM
 
+	initHookPsALC();
+
 	// ------------
 	// First point
 	// ------------
@@ -901,7 +903,7 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 	rewriteQoI = true;
 	writeQoIOnFile(step, QoIfilename, NcontrolEqns, rewriteQoI);
 
-	initHookPsALC();
+//	initHookPsALC();
 
 //char filenameT[40];
 //sprintf(filenameT, "coordInfo%05d.bin\0", step);
@@ -3019,7 +3021,7 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 			}
 
 			//
-			double absResidMoreStepsBelowConv = getDoubleParam("MORE_STPES_ABS_RESID", "1.0e-15");
+			double absResidMoreStepsBelowConv = getDoubleParam("MORE_STEPS_ABS_RESID", "1.0e-15");
 			if(residNormTot <= absResidMoreStepsBelowConv)
 				done=true;
 
@@ -3551,7 +3553,7 @@ bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhs
 		// Calculate RHS
 		// +++++++++++++++++++++++++++++++++
 		calcJacobian1DAD_calcRhs(rhsSingleArray, myCountReducedOrder, myWTimeJacCalc, icv, tag, nScal, debugLevel, NcontrolEqns,
-				firstCall, firstCallScalarTurb);
+				firstCall, firstCallScalarTurb, firstCallScalarComb);
 
 		// +++++++++++++++++++++++++++++++++
 		// Calculate Jacobian
@@ -4313,7 +4315,7 @@ bool IkeWithPsALC_AD::calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleAr
  */
 void IkeWithPsALC_AD::calcJacobian1DAD_calcRhs(double *rhsSingleArray, int &myCountReducedOrder, wallTimeJacCalc &myWTimeJacCalc,
 		const int icv, const int tag, const int nScal, const int debugLevel, const int NcontrolEqns,
-		const bool firstCall, bool &firstCallScalarTurb) {
+		const bool firstCall, bool &firstCallScalarTurb, bool &firstCallScalarComb) {
 	double myWtime0 = MPI_Wtime();
 	double myWtime1;
 
@@ -4407,7 +4409,7 @@ void IkeWithPsALC_AD::calcJacobian1DAD_calcRhs(double *rhsSingleArray, int &myCo
 #ifdef USE_MEM_SAVING_ADVAR_1D_
 		initialHookScalarRansTurbModel1D_AD(nbocv2ff_eachIcv, firstCallScalarTurb); // This method must be called in order to get the adouble pointers, kine, grad_kine, kine_diff, omega, grad_omega, omega_diff, and omega
 
-		initialHookScalarRansCombModel1D_AD(0, nbocv2ff_eachIcv); // This method must be called in order to update gamma and RoM
+		initialHookScalarRansCombModel1D_AD(0, nbocv2ff_eachIcv, firstCallScalarComb); // This method must be called in order to update gamma and RoM
 #else
 		initialHookScalarRansTurbModel1D_AD(firstCallScalarTurb); // This method must be called in order to get the adouble pointers, kine, grad_kine, kine_diff, omega, grad_omega, omega_diff, and omega
 																  // This method also update wallDist in the ghost cells
@@ -6444,6 +6446,13 @@ void IkeWithPsALC_AD::initialize_adoubles(const int icvCenter, const int Ncontro
 
 	assert(kine == NULL);
 
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+	artifViscMag_AD.allocate(nbocv2ff_eachIcv, icvCenter);
+	// Initialize as zero
+	for(ADscalar<adouble>::iterator iter=artifViscMag_AD.begin(); iter!=artifViscMag_AD.end(); ++iter)
+		*iter = 0.0;
+#endif
+
 	// ----------------------------------------------------------------------------------------
 	// init memory for face-based data
 	// ----------------------------------------------------------------------------------------
@@ -6606,6 +6615,10 @@ void IkeWithPsALC_AD::destroy_adoubles(const int NcontrolEqns) {
 	rhoE_AD.clear();
 	rhou_AD.clear();
 	rho_AD.clear();
+
+#ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
+	artifViscMag_AD.clear();
+#endif
 
 	if(NcontrolEqns > 0) {
 		delete [] lambda_AD; 	lambda_AD = NULL;
@@ -9467,7 +9480,7 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 			//
 			int tag = mpi_rank;
 			calcJacobian1DAD_calcRhs(rhsForAD, myCountReducedOrder, myWTimeJacCalc, icv, tag, nScal, debugLevel, NcontrolEqns,
-					firstCall, firstCallScalarTurb);
+					firstCall, firstCallScalarTurb, firstCallScalarComb);
 
 			//
 			destroy_adoubles(NcontrolEqns);
@@ -9618,7 +9631,7 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 
 	if(debugLevel>0) {
 		calcResidualsFrom1Drhs(ResidNormal, rhsForNormal, 1);
-		showResidue2(ResidAD, true);
+		showResidue2(ResidNormal, true);
 	}
 	if(countNegative_Normal>0 && mpi_rank==0)
 		cout<<"     countNegative_Normal(="<<countNegative_Normal<<") > 0, but proceeds anyway"<<endl;
