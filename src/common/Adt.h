@@ -11,6 +11,9 @@
 //#define ADT_LIST_MAX 8192
 #define ADT_LIST_MAX 1000000
 
+using std::min;
+using std::max;
+
 template <class T>
 class AdtIndexCompare : public std::binary_function<T, T, bool> {
  private:
