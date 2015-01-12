@@ -5,6 +5,9 @@
 #include "JOE/ADJOINT_FILES/CombModel_FPVA_Coeff_AD.h"
 
 #ifdef USE_MEM_SAVING_ADVAR
+	#define USE_MEM_SAVING_ADVAR_1D_ // Note: Actually, USE_MEM_SAVING_ADVAR is defined in UgpWithCvCompFlowAD.h (thus, it is readable here)
+	                                 //       and USE_MEM_SAVING_ADVAR_1D_ is defined in IkeWithModels.h (thus, it is not readable here).
+	                                 //       You should make USE_MEM_SAVING_ADVAR_1D_ available here to use the 1D memory saving technique.
 	#include "ADvar.h"
 #endif
 
@@ -18,10 +21,10 @@ class IkeRansCombFPVA_Coeff_AD : virtual public UgpWithCvCompFlow_AD, public Ran
 public:   // member vars
 	string classID;
 
-	Chemtable myChemTable;
+//	Chemtable myChemTable;
 	bool chemtableAlreadyLoaded;
 
-#ifdef USE_MEM_SAVING_ADVAR
+#ifdef USE_MEM_SAVING_ADVAR_1D_
 	ADscalar<adouble>* ZMean;
 	ADscalar<adouble>* ZVar;
 	ADscalar<adouble>* CMean;
@@ -34,9 +37,9 @@ public:   // member vars
 	ADvector<adouble>* grad_ZVar;
 	ADvector<adouble>* grad_CMean;
 #else
-	adouble *ZMean, *ZVar, *CMean;
-	adouble *ZMean_diff, *ZVar_diff, *CMean_diff;
-	adouble (*grad_ZMean)[3], (*grad_ZVar)[3], (*grad_CMean)[3];
+//	adouble *ZMean, *ZVar, *CMean;
+//	adouble *ZMean_diff, *ZVar_diff, *CMean_diff;
+//	adouble (*grad_ZMean)[3], (*grad_ZVar)[3], (*grad_CMean)[3];
 #endif
 
 public:
@@ -116,9 +119,87 @@ public:
 		int nScal = scalarTranspEqVector.size();
 
 		for(int i=0; i<nScal ; i++) {
+			if(strcmp(scalarTranspEqVector_AD[i].name,"ZMean")==0){
+                if(ZMean != NULL) {
+                    cout<<"ERROR "<<classID<<"::initialHookScalarRansCombModel1D_AD(): ZMean is not NULL, icv="<<nbocv2ff[0]<<", mpi_rank="<<mpi_rank<<endl;
+			        throw(IKECOMBMODEL_FPVA_COEFF_ERROR_CODE);
+                }
+				assert(scalarTranspEqVector_AD[i].phi.size() == nbocv2ff.size());
+
+				ZMean      = &(scalarTranspEqVector_AD[i].phi) ;
+				grad_ZMean = &(scalarTranspEqVector_AD[i].grad_phi) ;
+				ZMean_diff = &(scalarTranspEqVector_AD[i].diff) ;
+				if(mpi_rank==0 && firstCallScalarComb)
+					cout<<"Connected Scalar Pointer "<<scalarTranspEqVector_AD[i].name<<endl;
+			}
+			if(strcmp(scalarTranspEqVector_AD[i].name,"ZVar")==0){
+				assert(ZVar == NULL);
+				assert(scalarTranspEqVector_AD[i].phi.size() == nbocv2ff.size());
+
+				ZVar      = &(scalarTranspEqVector_AD[i].phi) ;
+				grad_ZVar = &(scalarTranspEqVector_AD[i].grad_phi) ;
+				ZVar_diff = &(scalarTranspEqVector_AD[i].diff) ;
+				if(mpi_rank==0 && firstCallScalarComb)
+					cout<<"Connected Scalar Pointer "<<scalarTranspEqVector_AD[i].name<<endl;
+			}
+			if(strcmp(scalarTranspEqVector_AD[i].name,"CMean")==0){
+				assert(CMean == NULL);
+				assert(scalarTranspEqVector_AD[i].phi.size() == nbocv2ff.size());
+
+				CMean      = &(scalarTranspEqVector_AD[i].phi) ;
+				grad_CMean = &(scalarTranspEqVector_AD[i].grad_phi) ;
+				CMean_diff = &(scalarTranspEqVector_AD[i].diff) ;
+				if(mpi_rank==0 && firstCallScalarComb)
+					cout<<"Connected Scalar Pointer "<<scalarTranspEqVector_AD[i].name<<endl;
+			}
+		}
+
+		// I don't know if commenting this out will cause ERROR or not...
+		for(size_t i=0; i<nbocv2ff.size(); ++i) {
+			int icv = nbocv2ff[i];
+			RoM[icv] = UgpWithCvCompFlow::RoM[icv];
+			gamma[icv] = UgpWithCvCompFlow::gamma[icv];
+		}
+		if(firstCallScalarComb) {
+			for(size_t i=0; i<nbocv2ff.size(); ++i) {
+				int icv = nbocv2ff[i];
+				if(RoM[icv].value() <= 0.0 || isnan(RoM[icv].value())) {
+					cerr<<"ERROR "<<classID<<"::initialHookScalarRansCombModel1D_AD(): RoM["<<icv<<"]="<<RoM[icv]<<endl;
+					throw(IKECOMBMODEL_FPVA_COEFF_ERROR_CODE);
+				}
+
+				if(gamma[icv].value() <= 0.0 || isnan(gamma[icv].value())) {
+					cerr<<"ERROR "<<classID<<"::initialHookScalarRansCombModel1D_AD(): gamma["<<icv<<"]="<<gamma[icv]<<endl;
+					throw(IKECOMBMODEL_FPVA_COEFF_ERROR_CODE);
+				}
+			}
+		}
+
+		firstCallScalarComb = false;
+	}
+/*
+	virtual void initialHookScalarRansCombModel1D_AD(int loadtable, vector<int> &nbocv2ff, bool &firstCallScalarComb) {
+//		if(firstCall && loadtable==1) {
+//			myChemTable.Load(getStringParam("CHEMTABLE_FILE"));
+//
+//			Preference = getDoubleParam("REFERENCE_PRESSURE", "0.0");
+//			if (Preference == 0.0)
+//				Preference = myChemTable.GetReferencePressure();
+//		}
+		if(!chemtableAlreadyLoaded) {
+			if(mpi_rank==0)
+				cerr<<"ERROR " << classID<<"::initialHookScalarRansCombModel1D_AD(): chemTable has not been loaded by RansCombFPVA_Coeff::initialHookScalarRansCombModel()."<<endl
+				    <<"Note that "<<classID<<"::initialHookScalarRansCombModel() should call RansCombFPVA_Coeff::initialHookScalarRansCombModel()."<<endl;
+			throw(IKECOMBMODEL_FPVA_COEFF_ERROR_CODE);
+		}
+
+		// connect pointers
+		int nScal = scalarTranspEqVector.size();
+
+		for(int i=0; i<nScal ; i++) {
 #ifdef USE_MEM_SAVING_ADVAR
 			if(strcmp(scalarTranspEqVector_AD[i].name,"ZMean")==0){
-				assert(ZMean == NULL);
+                if(ZMean != NULL) cout<<"ERROR "<<classID<<"::initialHookScalarRansCombModel1D_AD(): ZMean is not NULL, icv="<<nbocv2ff[0]<<", mpi_rank="<<mpi_rank<<endl;
 				ZMean      = &(scalarTranspEqVector_AD[i].phi) ;
 				grad_ZMean = &(scalarTranspEqVector_AD[i].grad_phi) ;
 				ZMean_diff = &(scalarTranspEqVector_AD[i].diff) ;
@@ -186,6 +267,54 @@ public:
 
 		firstCallScalarComb = false;
 	}
+*/
+
+	/*
+	 * Method: finalHookScalarRansCombModel1D_AD()
+	 * -------------------------------------------
+	 *
+	 */
+	virtual void finalHookScalarRansCombModel1D_AD() {
+		// debug level
+		int debugLevel = getDebugLevel();
+
+		if(!(*ZMean).empty())
+			(*ZMean).clear();
+		ZMean = NULL;
+		if(!(*grad_ZMean).empty())
+			(*grad_ZMean).clear();
+		grad_ZMean = NULL;
+		if(!(*ZMean_diff).empty())
+			(*ZMean_diff).clear();
+		ZMean_diff = NULL;
+		if (debugLevel > 1 && mpi_rank == 0)
+			cout<<classID<<"::finalHookScalarRansCombModel1D_AD(): Reset ZMean-related pointers as NULL "<<endl;
+
+		if(!(*ZVar).empty())
+			(*ZVar).clear();
+		ZVar = NULL;
+		if(!(*grad_ZVar).empty())
+			(*grad_ZVar).clear();
+		grad_ZVar = NULL;
+		if(!(*ZVar_diff).empty())
+			(*ZVar_diff).clear();
+		ZVar_diff = NULL;
+		if (debugLevel > 1 && mpi_rank == 0)
+			cout<<classID<<"::finalHookScalarRansCombModel1D_AD(): Reset ZVar-related pointers as NULL "<<endl;
+
+		if(!(*CMean).empty())
+			(*CMean).clear();
+		CMean = NULL;
+		if(!(*grad_CMean).empty())
+			(*grad_CMean).clear();
+		grad_CMean = NULL;
+		if(!(*CMean_diff).empty())
+			(*CMean_diff).clear();
+		CMean_diff = NULL;
+		if (debugLevel > 1 && mpi_rank == 0)
+			cout<<classID<<"::finalHookScalarRansCombModel1D_AD(): Reset CMean-related pointers as NULL "<<endl;
+	}
+
 
 	/*
 	 * Method: initialHookScalarRansCombModel_AD()
@@ -451,9 +580,7 @@ public:
 		adouble zv = Scal[ZVar_Index];
 		adouble cm = Scal[CMean_Index];
 
-if(mpi_rank==0) cout<<classID<<"::calcThermoProp_T_AD(): calling myChemTable.LookupSelectedCoeff_AD()  ";
 		myChemTable.LookupSelectedCoeff_AD(R, T0, E0, GAMMA0, AGAMMA, zm, zv, cm);
-if(mpi_rank==0) cout<<"...OK"<<endl;
 		if (AGAMMA == 0.0)
 			h = E0 + R / (GAMMA0 - 1.0) * (T - T0) + R * T;
 		else
@@ -472,9 +599,7 @@ if(mpi_rank==0) cout<<"...OK"<<endl;
 		adouble zv = Scal[ZVar_Index];
 		adouble cm = Scal[CMean_Index];
 
-if(mpi_rank==0) cout<<classID<<"::calcThermoProp_T_AD(): calling myChemTable.LookupSelectedCoeff_AD()  ";
 		myChemTable.LookupSelectedCoeff_AD(R, T0, E0, GAMMA0, AGAMMA, zm, zv, cm);
-if(mpi_rank==0) cout<<"...OK"<<endl;
 		T = p / (rho * R);
 		if (AGAMMA == 0.0)
 			h = E0 + R / (GAMMA0 - 1.0) * (T - T0) + R * T;
@@ -511,6 +636,13 @@ if(mpi_rank==0) cout<<"...OK"<<endl;
 		if (mu_ref > 0.0) {
 			ComputeProperties_vis_AD(mul_fa[ifa], lamOcp_fa[ifa], temp[icv1], (*ZMean)[icv1], (*ZVar)[icv1], (*CMean)[icv1]);
 		}
+		
+//IKJ
+  if(mpi_rank==0 && ifa==227) {
+	  cout<<"IkeCombModel_FPVA_Coeff::ComputeBCProperties1D_T_AD(): ifa="<<ifa<<", icv1="<<icv1<<": enthalpy="<<enthalpy[icv1]<<endl;
+	  cout<<"                                                       ZMean="<<(*ZMean)[icv1]<<", ZVar="<<(*ZVar)[icv1]<<", CMean="<<(*CMean)[icv1]<<endl;
+  }
+
 	}
 
 	/*
@@ -617,19 +749,26 @@ if(mpi_rank==0) cout<<"...OK"<<endl;
 	 * -----------------------------------
 	 * Solve for Temperature by using Newton's method
 	 */
-	adouble SolveNewtonTemperature_H_AD(adouble R, adouble t0, adouble e0, adouble gamma0, adouble agamma, adouble h, adouble Tguess) {
-		static bool firstCall = true;
-		if(firstCall && mpi_rank==0)
-			cout<<"WARNING! "<<classID<<"::SolveNewtonTemperature_H_AD() is running an iterative method!"<<endl;
-		firstCall = false;
+	adouble SolveNewtonTemperature_H_AD(adouble R_given, adouble t0_given, adouble e0_given, adouble gamma0_given, adouble agamma_given, adouble h_given, adouble Tguess_given) {
+		adouble Tresidual_AD;
+
+		// The original code from Karthik uses only AD during the following Newton-iteration.
+		// However, if AD stores all the operations during the Newton-interation, the data can be gigantic.
+		// Thus, here we will just use normal double variables until the Newton iteration coverges, then convert the final operations to AD.
+		double R  = R_given.value();
+		double t0 = t0_given.value();
+		double e0 = e0_given.value();
+		double gamma0 = gamma0_given.value();
+		double agamma = agamma_given.value();
+		double h  = h_given.value();
+		double Tguess = Tguess_given.value();
 
 		int    itermax = 50, iter;
 		double errormax = 1.0e-7;
-		adouble Tresidual, hh, cpp, error;
+		double Tresidual, hh, cpp, error;
 
 		iter = 0;
-		do
-		{
+		while (iter < itermax) {
 			++iter;
 			if (agamma == 0.0)
 				hh = e0 + R / (gamma0 - 1.0) * (Tguess - t0) + R * Tguess;
@@ -640,19 +779,62 @@ if(mpi_rank==0) cout<<"...OK"<<endl;
 			Tresidual = Tguess - (hh - h) / cpp;
 
 			error = Tguess - Tresidual;
-			if (fabs(error) <= errormax)
-				return Tresidual;
+			if (fabs(error) <= errormax) {
+				adouble hh_AD, cpp_AD;
+				if (agamma == 0.0)
+					hh_AD = e0_given + R_given / (gamma0_given - 1.0) * (Tguess - t0_given) + R_given * Tguess;
+				else
+					hh_AD = e0_given + R_given / agamma_given * log(1.0 + agamma_given * (Tguess - t0_given) / (gamma0_given - 1.0)) + R_given * Tguess;
+				cpp_AD = R_given * (1.0 + 1.0 / (gamma0_given + agamma_given * (Tguess - t0_given) - 1.0));
+
+				Tresidual_AD = Tguess - (hh_AD - h_given) / cpp_AD;
+				return Tresidual_AD;
+			}
 
 			Tguess = Tresidual;
-
 		}
-		while (iter < itermax);
 
 		/* if the iteration has not converged, exit with error */
 		cerr << "ERROR " << classID<<"::SolveNewtonTemperature_H_AD(): Computation of temperature in Newton iteration has not converged: Tguess=" << Tguess + error
 				<< ", Tresidual=" << Tresidual << ", enthalpy=" << h << ", #iterations=" << iter << " ###" << endl;
 		throw(-1);
 	}
+//	adouble SolveNewtonTemperature_H_AD(adouble R, adouble t0, adouble e0, adouble gamma0, adouble agamma, adouble h, adouble Tguess) {
+//		static bool firstCall = true;
+//		if(firstCall && mpi_rank==0)
+//			cout<<"WARNING! "<<classID<<"::SolveNewtonTemperature_H_AD() is running an iterative method!"<<endl;
+//		firstCall = false;
+//
+//		int    itermax = 50, iter;
+//		double errormax = 1.0e-7;
+//		adouble Tresidual, hh, cpp, error;
+//
+//		iter = 0;
+//		do
+//		{
+//			++iter;
+//			if (agamma == 0.0)
+//				hh = e0 + R / (gamma0 - 1.0) * (Tguess - t0) + R * Tguess;
+//			else
+//				hh = e0 + R / agamma * log(1.0 + agamma * (Tguess - t0) / (gamma0 - 1.0)) + R * Tguess;
+//			cpp = R * (1.0 + 1.0 / (gamma0 + agamma * (Tguess - t0) - 1.0));
+//
+//			Tresidual = Tguess - (hh - h) / cpp;
+//
+//			error = Tguess - Tresidual;
+//			if (fabs(error) <= errormax)
+//				return Tresidual;
+//
+//			Tguess = Tresidual;
+//
+//		}
+//		while (iter < itermax);
+//
+//		/* if the iteration has not converged, exit with error */
+//		cerr << "ERROR " << classID<<"::SolveNewtonTemperature_H_AD(): Computation of temperature in Newton iteration has not converged: Tguess=" << Tguess + error
+//				<< ", Tresidual=" << Tresidual << ", enthalpy=" << h << ", #iterations=" << iter << " ###" << endl;
+//		throw(-1);
+//	}
 
 	/*
 	 * Method: ComputeProperties_vis_AD
@@ -719,24 +901,24 @@ if(mpi_rank==0) cout<<"...OK"<<endl;
 		}
 	}
 #else
-	void ComputeScalarDissipation_AD(adouble *chi_AD) {
-		if ((turbModel == KOM) || (turbModel == KOMSST)) {
-			int om_index = getScalarTransportIndex("omega");
-			for (int icv = 0; icv < ncv_gg; icv++)
-				chi_AD[icv] = Cchi * Cmu * scalarTranspEqVector_AD[om_index].phi[icv];
-		} else if (turbModel == KEPS) {
-			int epsi_index = getScalarTransportIndex("eps");
-			for (int icv = 0; icv < ncv_gg; icv++)
-				chi_AD[icv] = Cchi * scalarTranspEqVector_AD[epsi_index].phi[icv] / kine[icv];
-		} else if (turbModel == SA) {
-			calcVorticity();
-			for (int icv = 0; icv < ncv_gg; icv++)
-				chi_AD[icv] = Cchi * sqrt(Cmu) * vortMag[icv];
-		} else {
-			for (int icv = 0; icv < ncv_gg; icv++)
-				chi_AD[icv] = 0.0;
-		}
-	}
+//	void ComputeScalarDissipation_AD(adouble *chi_AD) {
+//		if ((turbModel == KOM) || (turbModel == KOMSST)) {
+//			int om_index = getScalarTransportIndex("omega");
+//			for (int icv = 0; icv < ncv_gg; icv++)
+//				chi_AD[icv] = Cchi * Cmu * scalarTranspEqVector_AD[om_index].phi[icv];
+//		} else if (turbModel == KEPS) {
+//			int epsi_index = getScalarTransportIndex("eps");
+//			for (int icv = 0; icv < ncv_gg; icv++)
+//				chi_AD[icv] = Cchi * scalarTranspEqVector_AD[epsi_index].phi[icv] / kine[icv];
+//		} else if (turbModel == SA) {
+//			calcVorticity();
+//			for (int icv = 0; icv < ncv_gg; icv++)
+//				chi_AD[icv] = Cchi * sqrt(Cmu) * vortMag[icv];
+//		} else {
+//			for (int icv = 0; icv < ncv_gg; icv++)
+//				chi_AD[icv] = 0.0;
+//		}
+//	}
 #endif
 
 	/*

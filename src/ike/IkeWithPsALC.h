@@ -1479,6 +1479,9 @@ protected:
 	double *RHSkine;
 	double *RHSomega;
 	double *RHSsa;
+    double *RHSZMean;
+    double *RHSZVar;
+    double *RHSCMean;
 
 	// Heat: lambda and lambda_AD were moved to the UgpWithCvCompFlow_AD class so that other functions can access to them
 	//       See the IkeUgpWithCvCompFlow.h file for the details

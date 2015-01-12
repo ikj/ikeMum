@@ -775,7 +775,7 @@ public:
 		for (size_t index = 0; index < faBoundary.size(); ++index) {
 			if (zoneArrayBoundary == NULL) {
 				cout << "Error in calcRansTurbViscMuet1D_AD => zoneArrayBoundary is NULL" << endl;
-				throw(-1);
+				throw(IKEWITHMODELS_ERROR_CODE);
 			}
 			int ifa = faBoundary[index];
 			FaZone* zone = zoneArrayBoundary[index];
@@ -860,7 +860,7 @@ public:
 		for (size_t index = 0; index < faBoundary.size(); ++index) {
 			if (zoneArrayBoundary == NULL) {
 				cout << "Error in calcRansTurbViscMuet1D_AD => zoneArrayBoundary is NULL" << endl;
-				throw(-1);
+				throw(IKEWITHMODELS_ERROR_CODE);
 			}
 			int ifa = faBoundary[index];
 			FaZone* zone = zoneArrayBoundary[index];
@@ -930,7 +930,7 @@ public:
 		for (size_t index = 0; index < faBoundary.size(); ++index) {
 			if (zoneArrayBoundary == NULL) {
 				cout << "Error in calcRansTurbViscMuet1D_AD => zoneArrayBoundary is NULL" << endl;
-				throw(-1);
+				throw(IKEWITHMODELS_ERROR_CODE);
 			}
 			int ifa = faBoundary[index];
 			FaZone* zone = zoneArrayBoundary[index];

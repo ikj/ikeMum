@@ -380,7 +380,6 @@ public:
       double *Species = getScalar(SpeciesName.c_str());  
       updateCvDataG1G2(Species, REPLACE_DATA);
     }    
-	  
   }
   
 #ifdef MIXING_VISCOSITY  
@@ -547,23 +546,33 @@ public:
   // \brief Compute for a given temperature the properties of the mixture at a face.
   virtual void ComputeBCProperties_T(FaZone *zone)
   {
-    ScalarTranspEq *eq;
-    eq = getScalarTransportData("ZMean");       double *zM_fa = eq->phi;
-    eq = getScalarTransportData("ZVar");        double *zV_fa = eq->phi;
-    eq = getScalarTransportData("CMean");       double *cM_fa = eq->phi;
+	  ScalarTranspEq *eq;
+	  eq = getScalarTransportData("ZMean");       double *zM_fa = eq->phi;
+	  eq = getScalarTransportData("ZVar");        double *zV_fa = eq->phi;
+	  eq = getScalarTransportData("CMean");       double *cM_fa = eq->phi;
 
-    for (int index = 0; index < zone->faVec.size(); ++index) {
-      int ifa = zone->faVec[index];
-      int icv1 = cvofa[ifa][1];
-      ComputeProperties_T(enthalpy[icv1],RoM[icv1],gamma[icv1],temp[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
-    }
-   if (mu_ref > 0.0)
-    {
-      for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++) {
-      int icv1 = cvofa[ifa][1];
-      ComputeProperties_vis(mul_fa[ifa],lamOcp_fa[ifa],temp[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
-      }
-    }
+	  for (int index = 0; index < zone->faVec.size(); ++index) {
+		  int ifa = zone->faVec[index];
+		  int icv1 = cvofa[ifa][1];
+		  ComputeProperties_T(enthalpy[icv1],RoM[icv1],gamma[icv1],temp[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
+	  }
+	  if (mu_ref > 0.0)
+	  {
+		  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++) {
+			  int icv1 = cvofa[ifa][1];
+			  ComputeProperties_vis(mul_fa[ifa],lamOcp_fa[ifa],temp[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
+		  }
+	  }
+
+//IKJ
+for (int index = 0; index < zone->faVec.size(); ++index) {
+  int ifa = zone->faVec[index];
+  int icv1 = cvofa[ifa][1];
+  if(mpi_rank==0 && ifa==227) {
+	  cout<<"CombModel_FPVA_Coeff::ComputeBCProperties_T(): ifa="<<ifa<<", icv1="<<icv1<<": enthalpy="<<enthalpy[icv1]<<endl;
+	  cout<<"                                               ZMean="<<zM_fa[icv1]<<", ZVar="<<zV_fa[icv1]<<", CMean="<<cM_fa[icv1]<<endl;
+  }
+}
   }
   
   // \brief Compute for a given enthalpy the properties of the mixture at a face.

@@ -1575,6 +1575,15 @@ int JoeWithModels::calcRhs(double *rhs_rho, double (*rhs_rhou)[3], double *rhs_r
 	// compute Euler Flux for NS and scalars
 	int CountReducedOrder = calcEulerFlux(rhs_rho, rhs_rhou, rhs_rhoE, rhs_rhoScal, A, AScal, flagImplicit);
 
+// IKJ
+if(mpi_rank==0) {
+	int icv = 0;
+	cout<<"JoeWithModels::calcRhs(): rhs from calcEulerFlux()"<<endl
+		<<"    rhs = "<<rhs_rho[icv]<<", "<<rhs_rhou[icv][0]<<", "<<rhs_rhou[icv][1]<<", "<<rhs_rhou[icv][2]<<rhs_rhoE[icv]<<", "
+		<<rhs_rhoScal[0][icv]<<", "<<rhs_rhoScal[1][icv]<<", "<<rhs_rhoScal[2][icv]<<endl
+		<<endl;
+}
+
 	// compute viscous Flux for NS
 #ifdef USE_ARTIF_VISC
 	if(UgpWithCvCompFlow::turnOnArtifVisc) {
@@ -1898,6 +1907,15 @@ int JoeWithModels::calcEulerFlux(double *rhs_rho, double (*rhs_rhou)[3], double 
 			throw(-11);
 		}
 
+// IKJ
+if(mpi_rank==0 && icv0==0 && ifa==51535) {
+	printf("-> JoeWithModels::calcEulerFlux(): INTERNAL ifa=%d, icv0=%d, icv1=%d, mpi_rank=%d\n", ifa, icv0, icv1, mpi_rank);
+	printf("                  Frho=%.4e, Frhou=(%.4e,%.4e,%.4e), FrhoE=%.4e\n", Frho, Frhou[0],Frhou[1],Frhou[2], FrhoE);
+	printf("                  rho0=%.6e, u0=(%.6e, %e, %e), p0=%.6e, T0=%.6e, h0=%e, R0=%e, gam0=%e, kineFA0=%e\n", rho0, u0[0], u0[1], u0[2], p0, T0, h0, R0, gam0, kineFA0);
+//	printf("                  rho1=%.4e, u1=(%.4e, %.4e, %.4e), p1=%.4e, T1=%.4e, h1=%.4e, R1=%.4e, gam1=%.4e, kineFA1=%.3e\n\n", rho1, u1[0], u1[1], u1[2], p1, T1, h1, R1, gam1, kineFA1);
+	cout<<"                  grad_rho[icv0]="<<grad_rho[icv0][0]<<", "<<grad_rho[icv0][1]<<", "<<grad_rho[icv0][2]<<endl;
+}
+
 		// icv0 is always valid...
 		rhs_rho[icv0] -= Frho;
 		for (int i = 0; i < 3; i++)
@@ -2009,10 +2027,18 @@ int JoeWithModels::calcEulerFlux(double *rhs_rho, double (*rhs_rhou)[3], double 
 						if(isNaN0(Frho) || isNaN0(Frhou[0]) || isNaN0(Frhou[1]) || isNaN0(Frhou[2]) || isNaN0(FrhoE)) {
 							printf("ERROR in JoeWithModels::calcEulerFlux(): NaN detected in flux at BOUNDARY (SYMM or WALL) ifa=%d(%.2e,%.2e,%.2e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
 							printf("         Details: mpi_rank=%d, icv0=%d(%.2e,%.2e,%.2e), icv1=%d(%.2e,%.2e,%.2e)\n", mpi_rank, icv0, x_cv[icv0][0],x_cv[icv0][1],x_cv[icv0][2], icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
-							printf("                  Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%3e\n", Frho, Frhou[0],Frhou[1],Frhou[2], FrhoE);
+							printf("                  Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%.3e\n", Frho, Frhou[0],Frhou[1],Frhou[2], FrhoE);
 							printf("                  rho=%.3e, vel=(%.3e, %.3e, %.3e), press=%.3e, temp=%.3e, enthalpy=%.3e, RoM=%.3e, gamma=%.3e, kineFA=%.3e\n", rho[icv1], vel[icv1][0], vel[icv1][1], vel[icv1][2], press[icv1], temp[icv1], enthalpy[icv1], RoM[icv1], gamma[icv1], kineFA);
 							throw(-11);
 						}
+
+// IKJ
+if(mpi_rank==0 && icv0==0 && ifa==227) {
+    printf("-> JoeWithModels::calcEulerFlux(): SYMM or WALL ifa=%d, icv0=%d, icv1=%d, mpi_rank=%d\n", ifa, icv0, icv1, mpi_rank);
+    printf("                  Frho=%.4e, Frhou=(%.4e,%.4e,%.4e), FrhoE=%.4e\n", Frho, Frhou[0],Frhou[1],Frhou[2], FrhoE);
+    printf("                  rho=%.4e, vel=(%.4e, %.3e, %.4e), press=%.4e, temp=%.4e, enthalpy=%.4e, RoM=%.4e, gamma=%.4e, kineFA=%.3e\n", rho[icv1], vel[icv1][0], vel[icv1][1], vel[icv1][2], press[icv1], temp[icv1], enthalpy[icv1], RoM[icv1], gamma[icv1], kineFA);
+}
+
 
 						if (flagImplicit)
 						{
@@ -2144,11 +2170,20 @@ int JoeWithModels::calcEulerFlux(double *rhs_rho, double (*rhs_rhou)[3], double 
 						if(isNaN0(Frho) || isNaN0(Frhou[0]) || isNaN0(Frhou[1]) || isNaN0(Frhou[2]) || isNaN0(FrhoE)) {
 							printf("ERROR in JoeWithModels::calcEulerFlux(): NaN detected in flux at BOUNDARY (HOOK, DIRI(CBC), NEUM) ifa=%d(%.2e,%.2e,%.2e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
 							printf("         Details: mpi_rank=%d, icv0=%d(%.2e,%.2e,%.2e), icv1=%d(%.2e,%.2e,%.2e)\n", mpi_rank, icv0, x_cv[icv0][0],x_cv[icv0][1],x_cv[icv0][2], icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
-							printf("                  Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%3e\n", Frho, Frhou[0],Frhou[1],Frhou[2], FrhoE);
+							printf("                  Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%.3e\n", Frho, Frhou[0],Frhou[1],Frhou[2], FrhoE);
 							printf("                  rho0=%.3e, u0=(%.3e, %.3e, %.3e), p0=%.3e, T0=%.3e, h0=%.3e, R0=%.3e, gam0=%.3e, kineFA0=%.3e\n", rho0, u0[0], u0[1], u0[2], p0, T0, h0, R0, gam0, kineFA0);
 							printf("                  rho=%.3e, vel=(%.3e, %.3e, %.3e), press=%.3e, temp=%.3e, enthalpy=%.3e, RoM=%.3e, gamma=%.3e, kineFA=%.3e\n", rho[icv1], vel[icv1][0], vel[icv1][1], vel[icv1][2], press[icv1], temp[icv1], enthalpy[icv1], RoM[icv1], gamma[icv1], kineFA1);
 							throw(-11);
 						}
+
+// IKJ
+if(mpi_rank==0 && icv0==0) {
+    printf("-> JoeWithModels::calcEulerFlux(): flux at BOUNDARY (HOOK, DIRI(CBC), NEUM) ifa=%d(%.2e,%.2e,%.2e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
+    printf("         Details: mpi_rank=%d, icv0=%d(%.2e,%.2e,%.2e), icv1=%d(%.2e,%.2e,%.2e)\n", mpi_rank, icv0, x_cv[icv0][0],x_cv[icv0][1],x_cv[icv0][2], icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
+    printf("                  Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%3e\n", Frho, Frhou[0],Frhou[1],Frhou[2], FrhoE);
+    printf("                  rho0=%.3e, u0=(%.3e, %.3e, %.3e), p0=%.3e, T0=%.3e, h0=%.3e, R0=%.3e, gam0=%.3e, kineFA0=%.3e\n", rho0, u0[0], u0[1], u0[2], p0, T0, h0, R0, gam0, kineFA0);
+    printf("                  rho=%.3e, vel=(%.3e, %.3e, %.3e), press=%.3e, temp=%.3e, enthalpy=%.3e, RoM=%.3e, gamma=%.3e, kineFA=%.3e\n", rho[icv1], vel[icv1][0], vel[icv1][1], vel[icv1][2], press[icv1], temp[icv1], enthalpy[icv1], RoM[icv1], gamma[icv1], kineFA1);
+}
 
 						if (flagImplicit)
 						{
@@ -2627,36 +2662,36 @@ void JoeWithModels::setBC()
         // SYMMETRY BOUNDARY CONDITION
         // .............................................................................................
         else if (param->getString() == "SYMMETRY")
-	  {
-          if ((first)&&(mpi_rank == 0))
-            cout << "Applying SYMMETRY            to zone: "<< zone->getName() << endl;
+        {
+        	if ((first)&&(mpi_rank == 0))
+        		cout << "Applying SYMMETRY            to zone: "<< zone->getName() << endl;
 
-          for (int index = 0; index < zone->faVec.size(); ++index) {
-	    int ifa = zone->faVec[index];
-	    //cout << mpi_rank<< " "<<ifa << endl;
-            int icv0 = cvofa[ifa][0];
-            int icv1 = cvofa[ifa][1];
+        	for (int index = 0; index < zone->faVec.size(); ++index) {
+        		int ifa = zone->faVec[index];
+        		//cout << mpi_rank<< " "<<ifa << endl;
+        		int icv0 = cvofa[ifa][0];
+        		int icv1 = cvofa[ifa][1];
 
-            //assert((icv0<ncv)&&(icv1>=ncv_gg)&&(icv1<ncv_ggf));
+        		//assert((icv0<ncv)&&(icv1>=ncv_gg)&&(icv1<ncv_ggf));
 
-            double nVec[3];
-            double area = normVec3d(nVec, fa_normal[ifa]);
+        		double nVec[3];
+        		double area = normVec3d(nVec, fa_normal[ifa]);
 
-            // flip u, APPROXIMATION ---> take velocity at the cell center
-            double u0[3] = {vel[icv0][0], vel[icv0][1], vel[icv0][2]};
+        		// flip u, APPROXIMATION ---> take velocity at the cell center
+        		double u0[3] = {vel[icv0][0], vel[icv0][1], vel[icv0][2]};
 
-            double un = vecDotVec3d(nVec, u0);
-            for (int i = 0; i < 3; i++)
-              vel[icv1][i] = u0[i] - 1.0*un*nVec[i];
-            //assert(fabs(vecDotVec3d(vel_bfa[ifa], nVec)) < 1.0e-10);
-	    
-            temp[icv1] = temp[icv0];
+        		double un = vecDotVec3d(nVec, u0);
+        		for (int i = 0; i < 3; i++)
+        			vel[icv1][i] = u0[i] - 1.0*un*nVec[i];
+        		//assert(fabs(vecDotVec3d(vel_bfa[ifa], nVec)) < 1.0e-10);
 
-            press[icv1] = press[icv0];
-          }
+        		temp[icv1] = temp[icv0];
 
-          setScalarBC(&(*zone));
-          ComputeBCProperties_T(&(*zone));
+        		press[icv1] = press[icv0];
+        	}
+
+        	setScalarBC(&(*zone));
+        	ComputeBCProperties_T(&(*zone));
         }
         // .............................................................................................
         // NEUMANN BOUNDARY CONDITION

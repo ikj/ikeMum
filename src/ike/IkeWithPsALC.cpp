@@ -99,6 +99,9 @@ void IkeWithPsALC_AD::init() {
 	RHSkine  = NULL;
 	RHSomega = NULL;
 	RHSsa    = NULL;
+    RHSZMean = NULL;
+    RHSZVar  = NULL;
+    RHSCMean = NULL;
 
 	// Sum of the source terms due to Barrier functions
 	myBarrierMassSourceSumJOE   = 0.0;
@@ -431,7 +434,19 @@ void IkeWithPsALC_AD::runPsALC() {
 		assert(RHSkine == NULL && RHSomega == NULL);
 		registerScalar(RHSkine,  "RHSKINE",  CV_DATA);
 		registerScalar(RHSomega, "RHSOMEGA", CV_DATA);
-	}
+	} else if(nScal==3) {
+		assert(RHSZMean == NULL && RHSZVar == NULL && RHSCMean == NULL);
+		registerScalar(RHSZMean, "RHSZMEAN", CV_DATA);
+		registerScalar(RHSZVar,  "RHSZVAR",  CV_DATA);
+		registerScalar(RHSCMean, "RHSCMEAN", CV_DATA);
+    } else if(nScal==5) {
+		assert(RHSkine == NULL && RHSomega == NULL && RHSZMean == NULL && RHSZVar == NULL && RHSCMean == NULL);
+		registerScalar(RHSkine,  "RHSKINE",  CV_DATA);
+		registerScalar(RHSomega, "RHSOMEGA", CV_DATA);
+		registerScalar(RHSZMean, "RHSZMEAN", CV_DATA);
+		registerScalar(RHSZVar,  "RHSZVAR",  CV_DATA);
+		registerScalar(RHSCMean, "RHSCMEAN", CV_DATA);
+    }
 
 	//---------------------
 	// QoI
@@ -3536,6 +3551,7 @@ bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhs
 	myBarrierMassSourceSum1D_AD   = 0.0; // Note: The barrier source term will be added to this variable in barrierSourceNS1D_AD()
 	myBarrierEnergySourceSum1D_AD = 0.0; // Note: The barrier source term will be added to this variable in barrierSourceNS1D_AD()
 
+	warningsVectorIkeUgp1D.clear();
 	warningsVectorIkeModels1D.clear(); // Note: If the simulation is about to break down for some reasons,
                                        //      there will be a massive amount of warning/error messages.
                                        //       Thus, this "vector<std::string> warningsVectorIkeModels1D" object
@@ -3655,6 +3671,7 @@ bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhs
 		destroy_adoubles(NcontrolEqns);
 
 		finalHookScalarRansTurbModel1D_AD();  // Reset internal pointers (e.g. kine, omega, etc) in a turb model
+		finalHookScalarRansCombModel1D_AD();  // Reset internal pointers (e.g. ZMean, Zvar, CMean, etc) in a turb model
 
 		delete [] indvec;
 
@@ -4513,6 +4530,20 @@ void IkeWithPsALC_AD::calcJacobian1DAD_calcRhs(double *rhsSingleArray, int &myCo
 		#endif
 	#endif
 #endif
+
+// IKJ
+if(mpi_rank==0 && icv<2) {
+	int icvCenter = icv;
+	int nScal = scalarTranspEqVector.size();
+	cout<<"IkeWithPsALC_AD::calcJacobian1DAD_calcRhs(): check for icv="<<icvCenter<<"("<<x_cv[icvCenter][0]<<","<<x_cv[icvCenter][0]<<")"<<endl;
+	cout<<"  rhs_rho_AD="<<rhs_rho_AD;
+	for(int i=0; i<3; ++i)
+		cout<<"  rhs_rhou_AD["<<i<<"]="<<rhs_rhou_AD[i];
+	cout<<"  rhs_rhoE_AD="<<rhs_rhoE_AD;
+	for(int j=0; j<nScal; ++j)
+		cout<<"  rhs_rhoScal_AD["<<j<<"]="<<rhs_rhoScal_AD[j];
+	cout<<endl;
+}
 
 		// Check wall-clock time
 		myWtime1 = MPI_Wtime();
@@ -6098,10 +6129,38 @@ int IkeWithPsALC_AD::calcRhsWithBarrier(double* rhs, const bool useBarrier) {
 	int countNegative = calcRhs(RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, A, AScal, false);
 	convertSeparatedRhsTo1Drhs(rhs, RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, nScal);
 
+// IKJ
+if(mpi_rank==0) {
+	int icv = 0;
+	int indexStart = icv*(5+nScal);
+
+	cout<<"> IkeWithPsALC_AD::calcRhsWithBarrier(): after calling calcRhs()"<<endl;
+	cout<<"  rhs = "<<rhs[indexStart];
+	for(int i=0; i<3; ++i) cout<<", "<<rhs[indexStart+1+i];
+	cout<<", "<<rhs[indexStart+4];
+	for(int i=0; i<3; ++i) cout<<", "<<rhs[indexStart+5+i];
+	cout<<endl
+		<<endl;
+}
+
 	if(useBarrier) {
 		barrierSourceNS(rhs);      // Add barrier functions
 		barrierSourceTurbScalars(rhs, nScal, iterNewton, residNormTotOld); // Add barrier functions
 	}
+
+// IKJ
+if(mpi_rank==0) {
+	int icv = 0;
+	int indexStart = icv*(5+nScal);
+
+	cout<<"> IkeWithPsALC_AD::calcRhsWithBarrier(): after calling barrierSourceTurbScalars()"<<endl;
+	cout<<"  rhs = "<<rhs[indexStart];
+	for(int i=0; i<3; ++i) cout<<", "<<rhs[indexStart+1+i];
+	cout<<", "<<rhs[indexStart+4];
+	for(int i=0; i<3; ++i) cout<<", "<<rhs[indexStart+5+i];
+	cout<<endl
+		<<endl;
+}
 
 #ifdef USE_LOCAL_VALUE_SCALING
 	for(int icv=0; icv<ncv; ++icv) {
@@ -6120,6 +6179,13 @@ int IkeWithPsALC_AD::calcRhsWithBarrier(double* rhs, const bool useBarrier) {
 	}
 #else
 	#ifdef USE_REF_VALUE_SCALING
+		if(RefFlowParams.rho_ref < MACHINE_EPS && mpi_rank==0) cout<<"WARNING IkeWithPsALC_AD::calcRhsWithBarrier(): RefFlowParams.rho_ref = "<<RefFlowParams.rho_ref<<" is not positive -- It will give a bad scaling for RHS"<<endl;
+		for(int i=0; i<3; ++i)
+			if(RefFlowParams.rhou_ref[i] < MACHINE_EPS && mpi_rank==0) cout<<"WARNING IkeWithPsALC_AD::calcRhsWithBarrier(): RefFlowParams.rhou_ref["<<i<<"] = "<<RefFlowParams.rhou_ref[i]<<" is not positive -- It will give a bad scaling for RHS"<<endl;
+		if(RefFlowParams.rhoE_ref < MACHINE_EPS && mpi_rank==0) cout<<"WARNING IkeWithPsALC_AD::calcRhsWithBarrier(): RefFlowParams.rhoE_ref = "<<RefFlowParams.rhoE_ref<<" is not positive -- It will give a bad scaling for RHS"<<endl;
+		for (int iScal = 0; iScal < nScal; iScal++)
+			if(RefFlowParams.scalar_ref[iScal] < MACHINE_EPS && mpi_rank==0) cout<<"WARNING IkeWithPsALC_AD::calcRhsWithBarrier(): RefFlowParams.scalar_ref["<<iScal<"] = "<<RefFlowParams.scalar_ref[iScal]<<" is not positive -- It will give a bad scaling for RHS"<<endl;
+
 		for(int icv=0; icv<ncv; ++icv) {
 			int indexStart = icv*(5+nScal);
 
@@ -6136,6 +6202,20 @@ int IkeWithPsALC_AD::calcRhsWithBarrier(double* rhs, const bool useBarrier) {
 	#endif
 #endif
 
+// IKJ
+if(mpi_rank==0) {
+	int icv = 0;
+	int indexStart = icv*(5+nScal);
+
+	cout<<"> IkeWithPsALC_AD::calcRhsWithBarrier(): after USE_LOCAL_VALUE_SCALING"<<endl;
+	cout<<"  rhs = "<<rhs[indexStart];
+	for(int i=0; i<3; ++i) cout<<", "<<rhs[indexStart+1+i];
+	cout<<", "<<rhs[indexStart+4];
+	for(int i=0; i<3; ++i) cout<<", "<<rhs[indexStart+5+i];
+	cout<<endl
+		<<endl;
+}
+
 	// Just for tecplot output: Since rhs is updated by barriers, RHSrho and etc. should be updated
 	convert1DrhsToSeparatedRhs(rhs);
 	if(nScal>0)
@@ -6148,6 +6228,21 @@ int IkeWithPsALC_AD::calcRhsWithBarrier(double* rhs, const bool useBarrier) {
 //	if(debugLevel>0 && mpi_rank==0) {
 //		printf("              >> Barrier: Total mass source = %.4e, Total energy source = %.4e \n", totBarrierMassSourceSumJOE, totBarrierEnergySourceSumJOE);
 //	}
+
+// IKJ
+int MAXicv = 2;
+if(mpi_rank==0) {
+	int nScal = scalarTranspEqVector.size();
+
+    for(int icvCenter=0; icvCenter<MAXicv; ++icvCenter) {
+        int indexStart = icvCenter*(5+nScal);
+        cout<<"IkeWithPsALC_AD::calcRhsWithBarrier(): check for icv="<<icvCenter<<endl;
+        for(int i=0; i<5+nScal; ++i)  
+            cout<<"  rhs["<<i<<"]="<<rhs[indexStart+i];
+        cout<<endl;
+    }
+}
+
 
 	/* Clear memory */
 	if (nScal > 0)
@@ -9419,6 +9514,8 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 
 	double* rhsForAD; // This will be allocated later since the size depends on "howToCalcJac"
 	double* rhsForNormal = new double [ncv*nVars];
+	for(int i=0; i<ncv*nVars; ++i)
+		rhsForNormal[i] = 0.0;
 
 	double *ResidAD     = new double [nVars];
 	double *ResidNormal = new double [nVars];
@@ -9443,6 +9540,8 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 		// UNIQUE-VARIABLE
 		//----------------
 		rhsForAD = new double[(5+nScal)*ncv];
+		for(int i=0; i<(5+nScal)*ncv; ++i)
+			rhsForAD[i] = 0.0;
 
 		// THE FOLLOWING SHOULD BE THE SAME AS calcJacobian1DAD
 		//-----------------------------------------------------
@@ -9456,7 +9555,7 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 		bool firstCallScalarTurb = true, firstCallScalarComb = true;
 
 		// Wall-time
-		double wtime0, wtime100;
+		double wtime0, wtime100, wtime1000, wtime10000;
 		myWTimeJacCalc.wallTimeRHSinit  = 0.0;
 		myWTimeJacCalc.wallTimeRHScalc  = 0.0;
 		myWTimeJacCalc.wallTimeRHSfinal = 0.0;
@@ -9467,6 +9566,13 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 		myBarrierMassSourceSum1D_AD   = 0.0; // Note: The barrier source term will be added to this variable in barrierSourceNS1D_AD()
 		myBarrierEnergySourceSum1D_AD = 0.0; // Note: The barrier source term will be added to this variable in barrierSourceNS1D_AD()
 
+// IKJ
+int ncv_old = ncv;
+if(ncv > 100) {
+	if(mpi_rank==0) cout<<"WARNING setting ncv = 100"<<endl;
+	ncv = 100;
+}
+
 		for(int icv=0; icv<ncv; ++icv) {
 			if(debugLevel>0 && mpi_rank==0 && ncv>=100) {
 				if(icv==0)
@@ -9474,6 +9580,14 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 				else if(icv==100) {
 					wtime100 = MPI_Wtime();
 					cout<<"     > Runtime for the first 100 RHS evaluations [sec] = "<<wtime100 - wtime0<<endl;
+				}
+				else if(icv==1000) {
+					wtime1000 = MPI_Wtime();
+					cout<<"     > Runtime for the first 1000 RHS evaluations [sec] = "<<wtime1000 - wtime0<<endl;
+				}
+				else if(icv==10000) {
+					wtime10000 = MPI_Wtime();
+					cout<<"     > Runtime for the first 10000 RHS evaluations [sec] = "<<wtime10000 - wtime0<<endl;
 				}
 			}
 
@@ -9486,11 +9600,14 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 			destroy_adoubles(NcontrolEqns);
 
 			finalHookScalarRansTurbModel1D_AD();  // Reset internal pointers (e.g. kine, omega, etc) in a turb model
+			finalHookScalarRansCombModel1D_AD();  // Reset internal pointers (e.g. ZMean, Zvar, CMean, etc) in a turb model
 
 			nbocv2_eachIcv.clear();
 			nbocv2ff_eachIcv.clear();
 			fa2_eachIcv.clear();
 		}
+
+ncv = ncv_old;
 
 		// Show some statistics to the user
 //		double totBarrierMassSourceSum1D_AD;
@@ -9625,6 +9742,13 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 	// To Do: calcRhsCoupled() is not working properly for some reasons
 	if(mpi_rank==0) cout<<endl<<"   2. RHS calculation by normal JOE (calcRhs)"<<endl;
 
+// IKJ
+int ncv_old = ncv;
+if(ncv > 100) {
+	if(mpi_rank==0) cout<<"WARNING setting ncv = 100"<<endl;
+	ncv = 100;
+}
+
 	bool useBarrier = true;
 	countNegative_Normal = calcRhsWithBarrier(rhsForNormal, useBarrier);
 	temporalHook(); // Call temporalHook() for the case that the user want to print out some statistics (on the screen)
@@ -9635,6 +9759,9 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 	}
 	if(countNegative_Normal>0 && mpi_rank==0)
 		cout<<"     countNegative_Normal(="<<countNegative_Normal<<") > 0, but proceeds anyway"<<endl;
+
+// IKJ
+ncv = ncv_old;
 
 	/* ~~~~~~~~~~~~~~~~~~~~~~~~ */
 	/* 3. Compare the two calcs */
@@ -9673,7 +9800,8 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 			printf("  WARNING! RHS vectors are not the same: error 1-norm = %.3e (> THRESHOLD=%.3e)\n", DiffAbs, tolCompatibility*((double) cvora[mpi_size])*MACHINE_EPS);
 			printf("           * POSSIBLE ERROR SOURCES: Hook functions, CPU boarder near a domain boundary, etc. \n");
 		}
-		if(debugLevel>1) { // If debugLevel is high, show the CV information
+//		if(debugLevel>1) { // If debugLevel is high, show the CV information
+		if(debugLevel>=0) { // If debugLevel is high, show the CV information
 			if(mpi_rank != 0) { int dummy_Recv; 	MPI_Status status; 	MPI_Recv(&dummy_Recv, 1, MPI_INT, mpi_rank-1, 313, mpi_comm, &status); }
 			if(mpi_rank == 0) {
 				cout<<"  ERROR DETAILS -- show the CVs whose errors are not negligible:"<<endl;
@@ -9682,16 +9810,18 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 					printf("var%d        ",i);
 				cout<<endl;
 			}
-			for(int icv=0; icv<ncv; ++icv) {
+//			for(int icv=0; icv<ncv; ++icv) {
+			for(int icv=0; icv<200; ++icv) {
 				double sumAbsErrors = 0.0;
 				int tempInt = nVars*icv;
-				for(int i=0; i<nVars; ++i)
-					sumAbsErrors += fabs(rhsForAD[tempInt+i]-rhsForNormal[tempInt+i]);
-				if(isNaN(sumAbsErrors) || (sumAbsErrors > 100.0*(double)nVars*MACHINE_EPS)) {
-					printf("  %3d   %5d   %10.3e %10.3e %10.3e",mpi_rank, icv, x_cv[icv][0], x_cv[icv][1], x_cv[icv][2]);
-					for(int i=0; i<nVars; ++i) {
+				for(int i=0; i<nVars-1; ++i)
+//					sumAbsErrors += fabs(rhsForAD[tempInt+i]-rhsForNormal[tempInt+i]);
+					sumAbsErrors += fabs( max(rhsForAD[tempInt+i]-rhsForNormal[tempInt+i], 1.0e-15) );
+//				if(isNaN(sumAbsErrors) || (sumAbsErrors > 100.0*(double)nVars*MACHINE_EPS)) {
+				if(isNaN(sumAbsErrors) || (sumAbsErrors > 1.0e-2*(double)nVars*MACHINE_EPS)) {
+					printf("  %3d   %5d   %10.3e %10.3e %10.3e", mpi_rank, icv, x_cv[icv][0], x_cv[icv][1], x_cv[icv][2]);
+					for(int i=0; i<nVars; ++i) 
 						printf(" %11.4e", rhsForAD[tempInt+i]-rhsForNormal[tempInt+i]);
-					}
 					cout<<endl;
 				}
 			}
@@ -9711,6 +9841,127 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 		if(mpi_rank==0) printf("  WARNING! countReducedCV_AD(=%d) and countNegative_Normal(=%d) are not the same \n", countReducedCV_AD, countNegative_Normal);
 		negligibleError = false;
 	}
+
+    if(!negligibleError) {
+        assert(RHSrho != NULL && RHSrhou != NULL && RHSrhoE != NULL);
+
+
+// IKJ
+    double my_x_min[2] = { ABSURDLY_BIG_NUMBER,  ABSURDLY_BIG_NUMBER};
+    double my_x_max[2] = {-ABSURDLY_BIG_NUMBER, -ABSURDLY_BIG_NUMBER};
+    for(int icv=0; icv<ncv; ++icv) {
+        my_x_min[0] = min(x_cv[icv][0], my_x_min[0]);
+        my_x_min[1] = min(x_cv[icv][1], my_x_min[1]);
+        my_x_max[0] = max(x_cv[icv][0], my_x_max[0]);
+        my_x_max[1] = max(x_cv[icv][1], my_x_max[1]);
+    }
+    double tot_x_min[2], tot_x_max[2];
+    MPI_Allreduce(my_x_min, tot_x_min, 2, MPI_DOUBLE, MPI_MIN, mpi_comm);
+    MPI_Allreduce(my_x_max, tot_x_max, 2, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+	if(mpi_rank != 0) { MPI_Status status; int dummy; MPI_Recv(&dummy, 1, MPI_INT, mpi_rank-1, 103, mpi_comm, &status); }
+
+	// 1. Open the file
+    string filename = "ERROR_AD_JOE.csv";
+    double threshold = 1.0e-9;
+	ofstream ofile;
+	if(mpi_rank == 0)
+		ofile.open(filename.c_str(), ios_base::out | ios_base::trunc);
+	else
+		ofile.open(filename.c_str(), ios_base::out | ios_base::app);
+
+	// 2. Write data on the file
+	if(mpi_rank==0) {
+        printf("  Write difference on %s for thereshold>=%e\n", filename.c_str(), threshold);
+
+        ofile<<"x_cv[0], x_cv[1], var, diffABS"<<endl;
+        for(int i=0; i<nVars; ++i) {
+            ofile<<tot_x_min[0]<<", "<<tot_x_min[1]<<", "<<i<<", 0.0"<<endl;
+            ofile<<tot_x_max[0]<<", "<<tot_x_max[1]<<", "<<i<<", 0.0"<<endl;
+        }
+        // dummyInt=step;				ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int)); // Note: if you simply use the "<<" operator, it will cause some problem due to bugs in a g++ library on linux
+	}
+	for(int icv=0; icv<ncv; ++icv) {
+		int tempInt = nVars*icv;
+		for(int i=0; i<nVars; ++i) {
+            double tempDiff = rhsForAD[tempInt+i] - rhsForNormal[tempInt+i];
+            if(fabs(tempDiff) >= threshold) 
+                ofile<<x_cv[icv][0]<<", "<<x_cv[icv][1]<<", "<<i<<", "<<fabs(tempDiff)<<endl;
+		}
+	}
+	// 3. Close the file
+	ofile.close();
+
+	if(mpi_rank < mpi_size-1) { int dummy; MPI_Send(&dummy, 1, MPI_INT, mpi_rank+1, 103, mpi_comm); }
+	MPI_Barrier(mpi_comm);
+
+
+    //
+        for(int icv=0; icv<ncv; ++icv) {
+			int tempInt = nVars*icv;
+
+            RHSrho[icv]  = rhsForAD[tempInt]   - rhsForNormal[tempInt];
+            for(int i=0; i<3; ++i)
+                RHSrhou[icv][i] = rhsForAD[tempInt+1+i]  - rhsForNormal[tempInt+1+i];
+            RHSrhoE[icv] = rhsForAD[tempInt+4] - rhsForNormal[tempInt+4];
+
+            if(nScal==1) {
+                RHSsa[icv]  = rhsForAD[tempInt+5] - rhsForNormal[tempInt+5];
+            } else if (nScal==2) {
+                RHSkine[icv]  = rhsForAD[tempInt+5] - rhsForNormal[tempInt+5];
+                RHSomega[icv] = rhsForAD[tempInt+6] - rhsForNormal[tempInt+6];
+            } else if (nScal==3) {
+                assert(RHSZMean != NULL && RHSZVar != NULL && RHSCMean != NULL);
+                RHSZMean[icv] = rhsForAD[tempInt+5] - rhsForNormal[tempInt+5];
+                RHSZVar[icv]  = rhsForAD[tempInt+6] - rhsForNormal[tempInt+6];
+                RHSCMean[icv] = rhsForAD[tempInt+7] - rhsForNormal[tempInt+7];
+            } else if (nScal==5) {
+                RHSkine[icv]  = rhsForAD[tempInt+5] - rhsForNormal[tempInt+5];
+                RHSomega[icv] = rhsForAD[tempInt+6] - rhsForNormal[tempInt+6];
+                RHSZMean[icv] = rhsForAD[tempInt+7] - rhsForNormal[tempInt+7];
+                RHSZVar[icv]  = rhsForAD[tempInt+8] - rhsForNormal[tempInt+8];
+                RHSCMean[icv] = rhsForAD[tempInt+9] - rhsForNormal[tempInt+9];
+            }
+        }
+
+        if(mpi_rank==0) {
+            printf("  SAVING the N-S difference between AD and JOE in RHSRHO, RHSRHOU, RHSRHOE\n");
+            if (nScal==1) 
+                printf("  SAVING the SA difference between AD and JOE in RHSSA\n");
+            else if (nScal==2) 
+                printf("  SAVING the KOm difference between AD and JOE in RHSKINE, RHSOMEGA\n");
+            else if (nScal==3) 
+                printf("  SAVING the FPVA difference between AD and JOE in RHSZMEAN, RHSZVAR, RHSCMEAN\n");
+            else if (nScal==5) 
+                printf("  SAVING the KOm and FPVA difference between AD and JOE in RHSKINE, RHSOMEGA, RHSZMEAN, RHSZVAR, RHSCMEAN\n");
+        }
+
+/*
+   	    updateCvDataG1G2(RHSrho,  REPLACE_DATA);
+   	    updateCvDataG1G2(RHSrhou, REPLACE_ROTATE_DATA);
+   	    updateCvDataG1G2(RHSrhoE, REPLACE_DATA);
+        if (nScal==1) {
+   	        updateCvDataG1G2(RHSsa,    REPLACE_DATA);
+        } else if (nScal==2) {
+    	    updateCvDataG1G2(RHSkine,  REPLACE_DATA);
+    	    updateCvDataG1G2(RHSomega, REPLACE_DATA);
+        } else if (nScal==3) {
+    	    updateCvDataG1G2(RHSZMean, REPLACE_DATA);
+    	    updateCvDataG1G2(RHSZVar,  REPLACE_DATA);
+    	    updateCvDataG1G2(RHSCMean, REPLACE_DATA);
+        } else if (nScal==5) {
+    	    updateCvDataG1G2(RHSkine,  REPLACE_DATA);
+    	    updateCvDataG1G2(RHSomega, REPLACE_DATA);
+    	    updateCvDataG1G2(RHSZMean, REPLACE_DATA);
+    	    updateCvDataG1G2(RHSZVar,  REPLACE_DATA);
+    	    updateCvDataG1G2(RHSCMean, REPLACE_DATA);
+        }
+*/
+        MPI_Barrier(mpi_comm);
+        
+        writeData(0);
+        MPI_Barrier(mpi_comm);
+    }
 
 	/* ~~~~~~~~~~~~ */
 	/* Clear memory */

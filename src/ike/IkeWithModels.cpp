@@ -764,155 +764,8 @@ int IkeWithModels_AD::calcResidual1D_AD(const int icvCenter,
 //	}
 
 	int CountReducedOrder = calcRhs1D_AD(icvCenter, rhs_rho_AD, rhs_rhou_AD, rhs_rhoE_AD, rhs_rhoScal_AD, rho_AD, rhou_AD, rhoE_AD, A, AScal, flagImplicit);
+
 	return CountReducedOrder;
-}
-
-/*
- * Method: calcStateVariables1D_AD
- * -------------------------------
- * Calculate state variables (vel, press, temp, enthalpy, sos) for the neighbors of icvCenter
- * Original code = calcStateVariables_AD() in UgpWithCvCompFlowAD.h
- */
-void IkeWithModels_AD::calcStateVariables1D_AD(const int icvCenter, ADscalar<REALQ> &rho, ADvector<REALQ> &rhou, ADscalar<REALQ> &rhoE) {
-	static bool alreadyErrorFound = false;
-
-	// Check if the 2-layer CSR structure has already been developed
-	assert(nbocv2_i != NULL && !nbocv2_v.empty());
-
-	// Check if gamma and RoM are non-zero: To save runtime, check this only if debugLevel > 0
-	int debugLevel = getDebugLevel();
-	if(debugLevel > 0) {
-		if (gamma[icvCenter].value()<MACHINE_EPS && mpi_rank==0) {
-			cout<<"ERROR! IkeWithModels_AD::calcStateVariables1D_AD(): gamma["<<icvCenter<<"] is zero or negative = "<<gamma[icvCenter].value()<<endl;
-			throw(IKEWITHMODELS_ERROR_CODE);
-		}
-		if (RoM[icvCenter].value()<MACHINE_EPS && mpi_rank==0) {
-			cout<<"ERROR! IkeWithModels_AD::calcStateVariables1D_AD(): RoM["<<icvCenter<<"] is zero or negative = "<<RoM[icvCenter].value()<<endl;
-			throw(IKEWITHMODELS_ERROR_CODE);
-		}
-	}
-	if(debugLevel > 1) {
-		if (fabs(gamma[icvCenter].value()-1.0)<MACHINE_EPS && !alreadyErrorFound && mpi_rank==0) {
-			cout<<"WARNING! IkeWithModels_AD::calcStateVariables1D_AD(): gamma["<<icvCenter<<"] is 1.0 (Thus, gamma-1.0=0.0, which can corrupt pressure)"<<endl;
-			cout<<"         Did you commit this intentionally?"<<endl;
-			alreadyErrorFound = true;
-		}
-	}
-
-	// Calculate state variables only for the 2-layer neighbors of icvCenter
-	int noc_f = nbocv2_i[icvCenter];
-	int noc_l = nbocv2_i[icvCenter+1] - 1;
-
-	for (int noc = noc_f; noc <= noc_l; noc++) {
-		int icv_nbr = nbocv2_v[noc];
-
-		if (rho[icv_nbr].value() <= 0.0) {
-//			cout << "WARNING! calcStateVariables1D_AD(): Negative density at xcv: " << x_cv[icv_nbr][0] << ", "<< x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << rho[icv_nbr].value() << endl;
-			std::stringstream ss;
-			ss<<"WARNING! calcStateVariables1D_AD(): Negative density at xcv: "
-			  << x_cv[icv_nbr][0] << ", "<< x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": "
-			  << rho[icv_nbr].value() << endl;
-			warningsVectorIkeModels1D.push_back(ss.str());
-		}
-
-		for (int i=0; i<3; i++)
-			vel[icv_nbr][i] = rhou[icv_nbr][i]/rho[icv_nbr];
-
-		REALQ kinecv = 0.0;
-		if (kine != NULL)
-			kinecv = (*kine)[icv_nbr];
-
-		REALQ pr = (gamma[icv_nbr]-1.0)*
-					(rhoE[icv_nbr] - 0.5*(rhou[icv_nbr][0]*rhou[icv_nbr][0]+rhou[icv_nbr][1]*rhou[icv_nbr][1]+rhou[icv_nbr][2]*rhou[icv_nbr][2])/rho[icv_nbr]
-					- rho[icv_nbr]*kinecv);
-
-		if (pr.value() <= 0.0) {
-//			cout << "WARNING! calcStateVariables1D_AD(): Negative pressure at xcv: " << x_cv[icv_nbr][0] << ", " << x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << pr.value()<<endl;
-//			if(debugLevel > 0)
-//				printf("                                    rhoE=%.3e, rho=%.3e, rhou=(%.3e,%.3e,%.3e), gamma=%.3e, kinecv=%.3e \n",
-//					rhoE[icv_nbr].value(), rho[icv_nbr].value(), rhou[icv_nbr][0].value(),rhou[icv_nbr][1].value(),rhou[icv_nbr][2].value(), gamma[icv_nbr].value(), kinecv.value());
-			std::stringstream ss;
-			ss<<"WARNING! calcStateVariables1D_AD(): Negative pressure at xcv: "
-			  << x_cv[icv_nbr][0] << ", " << x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << pr.value()<<endl;
-			if(debugLevel > 0) {
-				ss<<std::scientific;
-				ss<<std::setprecision(3);
-				ss<<"                                    rhoE="<<rhoE[icv_nbr].value()
-				  <<", rho="<<rho[icv_nbr].value()
-				  <<", rhou=("<<rhou[icv_nbr][0].value()<<","<<rhou[icv_nbr][1].value()<<","<<rhou[icv_nbr][2].value()<<")"
-				  <<", gamma="<<gamma[icv_nbr].value()
-				  <<", kinecv="<<kinecv.value()<<endl;
-			}
-			warningsVectorIkeModels1D.push_back(ss.str());
-		} else
-			press[icv_nbr] = pr;
-
-		temp[icv_nbr] = press[icv_nbr]/(rho[icv_nbr]*RoM[icv_nbr]);
-		enthalpy[icv_nbr] = gamma[icv_nbr]*RoM[icv_nbr]/(gamma[icv_nbr]-1.0)*temp[icv_nbr];
-		sos[icv_nbr] = sqrt(gamma[icv_nbr]*press[icv_nbr]/rho[icv_nbr]);
-	}
-}
-
-/*
- * Method: calcMaterialProperties1D_AD
- * -----------------------------------
- * Calculate material properties (mul_fa, lamOcp_fa) only for the 1-layer neighboring faces of icvCenter
- * Original code: calcMaterialProperties1D_AD in UgpWithCvCompFlowAD.h
- */
-void IkeWithModels_AD::calcMaterialProperties1D_AD(const int icvCenter, vector<int>& faInternal, vector<int>& faBoundary, ADscalar<REALQ> &rho, ADvector<REALQ> &rhou, ADscalar<REALQ> &rhoE) {
-	if (mu_ref > 0.0) {
-		if (viscMode == "SUTHERLAND") {
-			// internal faces
-			for (size_t index = 0; index < faInternal.size(); index++) {
-				int ifa = faInternal[index];
-				if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
-					 /* Note: 0 ~ nfa_b-1           : boundary faces
-					  *       nfa_b ~ nfa_bpi-1     :
-					  *       nfa_bpi ~ nfa-1       :
-					  *       nfa ~ nfa_b2          : additional boundary faces between g1:f2 cvs
-					  *       nfa_b2 ~ nfa_b2g-1    : faces between g1:g1 cvs
-					  *       nfa_b2g-1 ~ nfa_b2gg-1: faces between g1:g2 cvs
-					  */
-					int icv0 = cvofa[ifa][0];
-					int icv1 = cvofa[ifa][1];
-
-					double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
-					vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
-					vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
-					double w0 = sqrt(vecDotVec3d(dx0, dx0));
-					double w1 = sqrt(vecDotVec3d(dx1, dx1));
-
-					REALQ temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
-					mul_fa[ifa] = mu_ref*pow(temperature/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temperature + SL_Sref);
-					lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-				}
-			}
-			// boundary faces computed next in setBC
-		} else if (viscMode == "POWERLAW") {
-			// internal faces
-			for (size_t index = 0; index < faInternal.size(); index++) {
-				int ifa = faInternal[index];
-				if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
-					int icv0 = cvofa[ifa][0];
-					int icv1 = cvofa[ifa][1];
-
-					double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
-					vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
-					vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
-					double w0 = sqrt(vecDotVec3d(dx0, dx0));
-					double w1 = sqrt(vecDotVec3d(dx1, dx1));
-
-					REALQ temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
-					mul_fa[ifa] = mu_ref*pow(temperature/T_ref, mu_power_law);
-					lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-				}
-			}
-			// boundary faces computed next in setBC
-		} else {
-			cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-			throw(-1);
-		}
-	}
 }
 
 #ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
@@ -1377,156 +1230,34 @@ int IkeWithModels_AD::calcResidual1D_AD(const int icvCenter,
 //	}
 
 	int CountReducedOrder = calcRhs1D_AD(icvCenter, rhs_rho_AD, rhs_rhou_AD, rhs_rhoE_AD, rhs_rhoScal_AD, rho_AD, rhou_AD, rhoE_AD, A, AScal, flagImplicit);
+
+// IKJ
+if(mpi_rank==0 && icvCenter<2) {
+	int nScal = scalarTranspEqVector.size();
+    ADscalar<adouble>* ZMean = NULL;
+    ADscalar<adouble>* ZVar  = NULL;
+    ADscalar<adouble>* CMean = NULL;
+
+    for(int iScal=0; iScal<nScal; ++iScal) {
+        if(iScal == getScalarTransportIndex("ZMean"))
+    		ZMean = &(scalarTranspEqVector_AD[iScal].phi) ;
+        if(iScal == getScalarTransportIndex("ZVar"))
+		    ZVar  = &(scalarTranspEqVector_AD[iScal].phi) ;
+        if(iScal == getScalarTransportIndex("CMean"))
+		    CMean = &(scalarTranspEqVector_AD[iScal].phi) ;
+    }
+    assert(ZMean != NULL && ZVar != NULL && CMean != NULL);
+
+    cout<<"IkeWithModels_AD::calcResidual1D_AD(): check for icv="<<icvCenter<<endl
+        <<"  rho="<<rho[icvCenter]<<", rhou="<<rhou[icvCenter][0]<<", rhov="<<rhou[icvCenter][1]<<", rhoE="<<rhoE[icvCenter]<<", ZMean="<<(*ZMean)[icvCenter]<<", Zvar="<<(*ZVar)[icvCenter]<<", CMean="<<(*CMean)[icvCenter]<<endl
+        <<"  press="<<press[icvCenter]<<", temp="<<temp[icvCenter]<<endl
+        <<"  rhs_rhou_AD[1]="<<rhs_rhou_AD[1]<<endl;
+}
+
+
 	return CountReducedOrder;
 }
 
-/*
- * Method: calcStateVariables1D_AD
- * -------------------------------
- * Calculate state variables (vel, press, temp, enthalpy, sos) for the neighbors of icvCenter
- * Original code = calcStateVariables_AD() in UgpWithCvCompFlowAD.h
- */
-void IkeWithModels_AD::calcStateVariables1D_AD(const int icvCenter, REALQ *rho, REALQ (*rhou)[3], REALQ *rhoE) {
-	static bool alreadyErrorFound = false;
-
-	// Check if the 2-layer CSR structure has already been developed
-	assert(nbocv2_i != NULL && !nbocv2_v.empty());
-
-	// Check if gamma and RoM are non-zero: To save runtime, check this only if debugLevel > 0
-	int debugLevel = getDebugLevel();
-	if(debugLevel > 0) {
-		if (gamma[icvCenter].value()<MACHINE_EPS && mpi_rank==0) {
-			cout<<"ERROR! IkeWithModels_AD::calcStateVariables1D_AD(): gamma["<<icvCenter<<"] is zero or negative = "<<gamma[icvCenter].value()<<endl;
-			throw(IKEWITHMODELS_ERROR_CODE);
-		}
-		if (RoM[icvCenter].value()<MACHINE_EPS && mpi_rank==0) {
-			cout<<"ERROR! IkeWithModels_AD::calcStateVariables1D_AD(): RoM["<<icvCenter<<"] is zero or negative = "<<RoM[icvCenter].value()<<endl;
-			throw(IKEWITHMODELS_ERROR_CODE);
-		}
-	}
-	if(debugLevel > 1) {
-		if (fabs(gamma[icvCenter].value()-1.0)<MACHINE_EPS && !alreadyErrorFound && mpi_rank==0) {
-			cout<<"WARNING! IkeWithModels_AD::calcStateVariables1D_AD(): gamma["<<icvCenter<<"] is 1.0 (Thus, gamma-1.0=0.0, which can corrupt pressure)"<<endl;
-			cout<<"         Did you commit this intentionally?"<<endl;
-			alreadyErrorFound = true;
-		}
-	}
-
-	// Calculate state variables only for the 2-layer neighbors of icvCenter
-	int noc_f = nbocv2_i[icvCenter];
-	int noc_l = nbocv2_i[icvCenter+1] - 1;
-	for (int noc = noc_f; noc <= noc_l; noc++) {
-		int icv_nbr = nbocv2_v[noc];
-
-		if (rho[icv_nbr].value() <= 0.0) {
-//			cout << "WARNING! calcStateVariables1D_AD(): Negative density at xcv: " << x_cv[icv_nbr][0] << ", "<< x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << rho[icv_nbr].value() << endl;
-			std::stringstream ss;
-			ss<<"WARNING! calcStateVariables1D_AD(): Negative density at xcv: "
-			  << x_cv[icv_nbr][0] << ", "<< x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": "
-			  << rho[icv_nbr].value() << endl;
-			warningsVectorIkeModels1D.push_back(ss.str());
-		}
-
-		for (int i=0; i<3; i++)
-			vel[icv_nbr][i] = rhou[icv_nbr][i]/rho[icv_nbr];
-
-		REALQ kinecv = 0.0;
-
-#ifdef USE_MEM_SAVING_ADVAR // note: USE_MEM_SAVING_ADVAR is defined in UgpWithCvCompFlow.h
-		if (kine != NULL)
-			kinecv = (*kine)[icv_nbr];
-#else
-		if (kine != NULL)
-			kinecv = kine[icv_nbr];
-#endif
-
-		REALQ pr = (gamma[icv_nbr]-1.0)*
-					(rhoE[icv_nbr] - 0.5*(rhou[icv_nbr][0]*rhou[icv_nbr][0]+rhou[icv_nbr][1]*rhou[icv_nbr][1]+rhou[icv_nbr][2]*rhou[icv_nbr][2])/rho[icv_nbr]
-					- rho[icv_nbr]*kinecv);
-		if (pr.value() <= 0.0) {
-			std::stringstream ss;
-			ss<<"WARNING! calcStateVariables1D_AD(): Negative pressure at xcv: "
-			  << x_cv[icv_nbr][0] << ", " << x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << pr.value()<<endl;
-			if(debugLevel > 0) {
-				ss<<std::scientific;
-				ss<<std::setprecision(3);
-				ss<<"                                    rhoE="<<rhoE[icv_nbr].value()
-				  <<", rho="<<rho[icv_nbr].value()
-				  <<", rhou=("<<rhou[icv_nbr][0].value()<<","<<rhou[icv_nbr][1].value()<<","<<rhou[icv_nbr][2].value()<<")"
-				  <<", gamma="<<gamma[icv_nbr].value()
-				  <<", kinecv="<<kinecv.value()<<endl;
-			}
-			warningsVectorIkeModels1D.push_back(ss.str());
-		} else
-			press[icv_nbr] = pr;
-
-		temp[icv_nbr] = press[icv_nbr]/(rho[icv_nbr]*RoM[icv_nbr]);
-		enthalpy[icv_nbr] = gamma[icv_nbr]*RoM[icv_nbr]/(gamma[icv_nbr]-1.0)*temp[icv_nbr];
-		sos[icv_nbr] = sqrt(gamma[icv_nbr]*press[icv_nbr]/rho[icv_nbr]);
-	}
-}
-
-/*
- * Method: calcMaterialProperties1D_AD
- * -----------------------------------
- * Calculate material properties (mul_fa, lamOcp_fa) only for the 1-layer neighboring faces of icvCenter
- * Original code: calcMaterialProperties1D_AD in UgpWithCvCompFlowAD.h
- */
-void IkeWithModels_AD::calcMaterialProperties1D_AD(const int icvCenter, vector<int>& faInternal, vector<int>& faBoundary, REALQ *rho, REALQ (*rhou)[3], REALQ *rhoE) {
-	if (mu_ref > 0.0) {
-		if (viscMode == "SUTHERLAND") {
-			// internal faces
-			for (size_t index = 0; index < faInternal.size(); index++) {
-				int ifa = faInternal[index];
-				if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
-					 /* Note: 0 ~ nfa_b-1           : boundary faces
-					  *       nfa_b ~ nfa_bpi-1     :
-					  *       nfa_bpi ~ nfa-1       :
-					  *       nfa ~ nfa_b2          : additional boundary faces between g1:f2 cvs
-					  *       nfa_b2 ~ nfa_b2g-1    : faces between g1:g1 cvs
-					  *       nfa_b2g-1 ~ nfa_b2gg-1: faces between g1:g2 cvs
-					  */
-					int icv0 = cvofa[ifa][0];
-					int icv1 = cvofa[ifa][1];
-
-					double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
-					vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
-					vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
-					double w0 = sqrt(vecDotVec3d(dx0, dx0));
-					double w1 = sqrt(vecDotVec3d(dx1, dx1));
-
-					REALQ temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
-					mul_fa[ifa] = mu_ref*pow(temperature/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temperature + SL_Sref);
-					lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-				}
-			}
-			// boundary faces computed next in setBC
-		} else if (viscMode == "POWERLAW") {
-			// internal faces
-			for (size_t index = 0; index < faInternal.size(); index++) {
-				int ifa = faInternal[index];
-				if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
-					int icv0 = cvofa[ifa][0];
-					int icv1 = cvofa[ifa][1];
-
-					double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
-					vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
-					vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
-					double w0 = sqrt(vecDotVec3d(dx0, dx0));
-					double w1 = sqrt(vecDotVec3d(dx1, dx1));
-
-					REALQ temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
-					mul_fa[ifa] = mu_ref*pow(temperature/T_ref, mu_power_law);
-					lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-				}
-			}
-			// boundary faces computed next in setBC
-		} else {
-			cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-			throw(-1);
-		}
-	}
-}
 
 /*
  * Method: setBC1D_AD
@@ -2247,6 +1978,19 @@ int IkeWithModels_AD::calcRhs1D_AD(int icvCenter, REALA &rhs_rho, REALA rhs_rhou
 	// compute Euler Flux for NS and scalars
 	int myCountReducedOrder = calcEulerFlux1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, rhs_rhoScal, rho, rhou, rhoE, A, AScal, flagImplicit);
 
+// IKJ
+if(mpi_rank==0 && icvCenter==0) {
+	int icv = icvCenter;
+
+	cout<<"IkeWithModels_AD::calcRhs1D_AD(): rhs from calcEulerFlux1D_AD()"<<endl;
+	cout<<"    rhs = "<<rhs_rho;
+	for(int i=0; i<3; ++i) cout<<", "<<rhs_rhou[i];
+	cout<<", "<<rhs_rhoE;
+	for(int i=0; i<3; ++i) cout<<", "<<rhs_rhoScal[i];
+	cout<<endl
+		<<endl;
+}
+
 	// compute viscous Flux for NS
 #ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
 	if(UgpWithCvCompFlow::turnOnArtifVisc) {
@@ -2670,6 +2414,16 @@ int IkeWithModels_AD::calcEulerFlux1D_AD(const int icvCenter, REALA &rhs_rho, RE
 				throw(IKEWITHMODELS_ERROR_CODE);
 			}
 
+
+//IKJ
+if(mpi_rank==0 && icv0==0 && ifa==51535) {
+	printf("=> IkeWithModels_AD::calcEulerFlux1D_AD: INTERNAL ifa=%d  icvCenter=%d, mpi_rank=%d\n", ifa, icvCenter, mpi_rank);
+	printf("               Frho=%.6e, Frhou=(%.4e,%.4e,%.4e), FrhoE=%.4e\n", Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
+	printf("               rho0=%.6e, u0=(%.6e, %e, %e), p0=%.6e, T0=%.6e, h0=%e, R0=%e, gam0=%e, kineFA0=%e\n", rho0.value(), u0[0].value(), u0[1].value(), u0[2].value(), p0.value(), T0.value(), h0.value(), R0.value(), gam0.value(), kineFA0.value());
+	cout<<"               grad_rho[icv0]="<<grad_rho[icv0][0]<<", "<<grad_rho[icv0][1]<<", "<<grad_rho[icv0][2]<<endl;
+//	printf("               rho1=%.4e, u1=(%.4e, %.4e, %.4e), p1=%.4e, T1=%.4e, h1=%.4e, R1=%.4e, gam1=%.4e, kineFA1=%.3e\n", rho1.value(), u1[0].value(), u1[1].value(), u1[2].value(), p1.value(), T1.value(), h1.value(), R1.value(), gam1.value(), kineFA1.value());	printf("\n");
+}
+
 			// .............................................................................................
 			// calculate implicit matrix using HLLC
 			// .............................................................................................
@@ -2749,13 +2503,23 @@ int IkeWithModels_AD::calcEulerFlux1D_AD(const int icvCenter, REALA &rhs_rho, RE
 
 						if(isNaN(rhs_rho.value()) || isNaN(rhs_rhou[0].value()) || isNaN(rhs_rhou[1].value()) || isNaN(rhs_rhou[2].value()) || isNaN(rhs_rhoE.value())) {
 							printf("Error in IkeWithModels_AD::calcEulerFlux1D_AD: NaN detected in flux at boundary (SYMM or WALL) ifa=%d(%.2e,%.2e,%.2e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
-							printf("      Details: mpi_rank=%d, icvCenter=%d, Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%3e\n", mpi_rank, icvCenter, Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
+							printf("      Details: mpi_rank=%d, icvCenter=%d, Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%.3e\n", mpi_rank, icvCenter, Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
 							printf("               icv1=%d(%.2e,%.2e,%.2e) \n", icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
 							printf("               rho=%.3e, vel=(%.3e, %.3e, %.3e), press=%.3e, temp=%.3e, enthalpy=%.3e, RoM=%.3e, gamma=%.3e, kineFA=%.3e\n", rho[icv1].value(), vel[icv1][0].value(),vel[icv1][1].value(),vel[icv1][2].value(), press[icv1].value(), temp[icv1].value(), enthalpy[icv1].value(), RoM[icv1].value(), gamma[icv1].value(), kineFA.value());
 							printf("\n");
 							freeMemForCalcEulerFlux1D_AD(Apl, Ami, AplScal, AmiScal, FrhoScal, Scalar0, Scalar1, ScalCV0, ScalCV1, ScalConvTerm, nScal);
 							throw(IKEWITHMODELS_ERROR_CODE);
 						}
+
+//IKJ
+if(mpi_rank==0 && icv0==0 && ifa==227) {
+    printf("=> IkeWithModels_AD::calcEulerFlux1D_AD: SYMM or WALL ifa=%d  icvCenter=%d, mpi_rank=%d\n", ifa, icvCenter, mpi_rank);
+    printf("               Frho=%.6e, Frhou=(%.4e,%.4e,%.4e), FrhoE=%.4e\n", Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
+    printf("               rho=%.6e, vel=(%.6e, %e, %e), press=%.6e, temp=%.6e, enthalpy=%e, RoM=%e, gamma=%e, kineFA=%e\n", rho[icv1].value(), vel[icv1][0].value(),vel[icv1][1].value(),vel[icv1][2].value(), press[icv1].value(), temp[icv1].value(), enthalpy[icv1].value(), RoM[icv1].value(), gamma[icv1].value(), kineFA.value());
+    printf("\n");
+}
+
+
 
 						if (flagImplicit && icv0 < ncv) {
 							calcEulerFluxMatrices_HLLC_AD(Apl, NULL, AplScal, AmiScal,
@@ -2876,7 +2640,7 @@ int IkeWithModels_AD::calcEulerFlux1D_AD(const int icvCenter, REALA &rhs_rho, RE
 
 						if(isNaN(rhs_rho.value()) || isNaN(rhs_rhou[0].value()) || isNaN(rhs_rhou[1].value()) || isNaN(rhs_rhou[2].value()) || isNaN(rhs_rhoE.value())) {
 							printf("Error in IkeWithModels_AD::calcEulerFlux1D_AD: NaN detected in flux at boundary (HOOK, DIRI(CBC), NEUM) ifa=%d(%.2e,%.2e,%.2e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
-							printf("      Details: mpi_rank=%d, icvCenter=%d, Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%3e\n", mpi_rank, icvCenter, Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
+							printf("      Details: mpi_rank=%d, icvCenter=%d, Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%.3e\n", mpi_rank, icvCenter, Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
 							printf("               icv1=%d(%.2e,%.2e,%.2e) \n", icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
 							printf("               rho0=%.3e, u0=(%.3e, %.3e, %.3e), p0=%.3e, T0=%.3e, h0=%.3e, R0=%.3e, gam0=%.3e, kineFA0=%.3e\n", rho0.value(), u0[0].value(), u0[1].value(), u0[2].value(), p0.value(), T0.value(), h0.value(), R0.value(), gam0.value(), kineFA0.value());
 							printf("               rho=%.3e, vel=(%.3e, %.3e, %.3e), press=%.3e, temp=%.3e, enthalpy=%.3e, RoM=%.3e, gamma=%.3e, kineFA=%.3e\n", rho[icv1].value(), vel[icv1][0].value(),vel[icv1][1].value(),vel[icv1][2].value(), press[icv1].value(), temp[icv1].value(), enthalpy[icv1].value(), RoM[icv1].value(), gamma[icv1].value(), kineFA1.value());
@@ -2884,6 +2648,17 @@ int IkeWithModels_AD::calcEulerFlux1D_AD(const int icvCenter, REALA &rhs_rho, RE
 							freeMemForCalcEulerFlux1D_AD(Apl, Ami, AplScal, AmiScal, FrhoScal, Scalar0, Scalar1, ScalCV0, ScalCV1, ScalConvTerm, nScal);
 							throw(IKEWITHMODELS_ERROR_CODE);
 						}
+
+if(mpi_rank==0 && icv0==0) {
+    printf("=> IkeWithModels_AD::calcEulerFlux1D_AD: flux at boundary (HOOK, DIRI(CBC), NEUM) ifa=%d(%.2e,%.2e,%.2e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
+    printf("      Details: mpi_rank=%d, icvCenter=%d, Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%3e\n", mpi_rank, icvCenter, Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
+    printf("               icv1=%d(%.2e,%.2e,%.2e) \n", icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
+    printf("               rho0=%.3e, u0=(%.3e, %.3e, %.3e), p0=%.3e, T0=%.3e, h0=%.3e, R0=%.3e, gam0=%.3e, kineFA0=%.3e\n", rho0.value(), u0[0].value(), u0[1].value(), u0[2].value(), p0.value(), T0.value(), h0.value(), R0.value(), gam0.value(), kineFA0.value());
+    printf("               rho=%.3e, vel=(%.3e, %.3e, %.3e), press=%.3e, temp=%.3e, enthalpy=%.3e, RoM=%.3e, gamma=%.3e, kineFA=%.3e\n", rho[icv1].value(), vel[icv1][0].value(),vel[icv1][1].value(),vel[icv1][2].value(), press[icv1].value(), temp[icv1].value(), enthalpy[icv1].value(), RoM[icv1].value(), gamma[icv1].value(), kineFA1.value());
+    printf("\n");
+}
+
+
 
 						if (flagImplicit && icv0 < ncv) {
 							calcEulerFluxMatrices_HLLC_AD(Apl, NULL, AplScal, AmiScal,

@@ -33,12 +33,12 @@
 //#define USE_DT_OVER_VOL_SCALING
 #define DT_OVER_VOL_MAX 1.0e20
 
-#ifdef USE_MEM_SAVING_ADVAR
-#define USE_MEM_SAVING_ADVAR_1D_ // Note: Actually, USE_MEM_SAVING_ADVAR is defined in UgpWithCvCompFlowAD.h
-#ifdef USE_MEM_SAVING_ADVAR_1D_
-	#include "ADvar.h"
-#endif
-#endif
+//#ifdef USE_MEM_SAVING_ADVAR
+//#define USE_MEM_SAVING_ADVAR_1D_ // Note: Actually, USE_MEM_SAVING_ADVAR is defined in UgpWithCvCompFlowAD.h
+//#ifdef USE_MEM_SAVING_ADVAR_1D_
+//	#include "ADvar.h"
+//#endif
+//#endif
 
 /*
  * Bug report:
@@ -244,60 +244,6 @@ private:
 	 */
 	void clear();
 
-public:
-#ifdef USE_MEM_SAVING_ADVAR_1D_
-	/*
-	 * Method: boundaryHook1D_AD
-	 * -------------------------
-	 * Original code = boundaryHook_AD() in JoeWithModelsAD.h
-	 */
-	virtual void boundaryHook1D_AD(const int ifa, ADscalar<REALQ> &T_fa, ADvector<REALQ> &vel_fa, ADscalar<REALQ> &p_fa, FaZone *zone) {/* empty */}
-
-	/*
-	 * Method: boundaryHook1D_AD
-	 * -------------------------
-	 * Original code = boundaryHook() in JoeWithModels.h
-	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
-	 */
-	virtual void boundaryHook1D(const int ifa, ADscalar<REALQ> &T_fa, ADvector<REALQ> &vel_fa, ADscalar<REALQ> &p_fa, FaZone *zone) {/* empty */}
-#endif
-
-	/*
-	 * Method: boundaryHook1D_AD
-	 * -------------------------
-	 * Original code = boundaryHook_AD() in JoeWithModelsAD.h
-	 */
-	virtual void boundaryHook1D_AD(const int ifa, REALQ *T_fa, REALQ (*vel_fa)[3], REALQ *p_fa, FaZone *zone) {/* empty */}
-
-	/*
-	 * Method: boundaryHook1D_AD
-	 * -------------------------
-	 * Original code = boundaryHook() in JoeWithModels.h
-	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
-	 */
-	virtual void boundaryHook1D(const int ifa, double *T_fa, double (*vel_fa)[3], double *p_fa, FaZone *zone) {/* empty */}
-
-	/*
-	 * Method: sourceHook1D_AD
-	 * -----------------------
-	 * Original code = sourceHook_AD() in JoeWithModelsAD.h
-	 */
-	virtual void sourceHook1D_AD(const int icvCenter, REALA &rhs_rho, REALA rhs_rhou[3], REALA &rhs_rhoE, double (*A)[5][5]) {/* empty */}
-
-	/*
-	 * Method: sourceHookRansTurb1D_AD
-	 * -------------------------------
-	 * Original code = sourceHookRansTurb_AD() in JoeWithModelsAD.h
-	 */
-	virtual void sourceHookRansTurb1D_AD(const int icvCenter, REALA &rhs_rho, REALA rhs_rhou[3], REALA &rhs_rhoE, double (*A)[5][5]) {/* empty */}
-
-	/*
-	 * Method: sourceHookRansComb1D_AD
-	 * -------------------------------
-	 * Original code = sourceHookRansComb_AD() in JoeWithModelsAD.h
-	 */
-	virtual void sourceHookRansComb1D_AD(const int icvCenter, REALA &rhs_rho, REALA rhs_rhou[3], REALA &rhs_rhoE, double (*A)[5][5]) {/* empty */}
-
 protected:
 	/*
 	 * Method: getReferenceParams
@@ -412,21 +358,6 @@ protected:
 	int calcResidual1D_AD(const int icvCenter,
 			REALA &rhs_rho_AD, REALA rhs_rhou_AD[3],REALA &rhs_rhoE_AD, REALAS *rhs_rhoScal_AD,
 			ADscalar<REALQ> &rho_AD, ADvector<REALQ> &rhou_AD, ADscalar<REALQ> &rhoE_AD, double (*A)[5][5], double ***AScal, int flagImplicit);
-	/*
-	 * Method: calcStateVariables1D_AD
-	 * -------------------------------
-	 * Calculate state variables (vel, press, temp, enthalpy, sos) for the neighbors of icvCenter
-	 * Original code = calcStateVariables_AD() in UgpWithCvCompFlowAD.h
-	 */
-	void calcStateVariables1D_AD(const int icvCenter, ADscalar<REALQ> &rho, ADvector<REALQ> &rhou, ADscalar<REALQ> &rhoE);
-
-	/*
-	 * Method: calcMaterialProperties1D_AD
-	 * -----------------------------------
-	 * Calculate material properties (mul_fa, lamOcp_fa) only for the 1-layer neighboring faces of icvCenter
-	 * Original code: calcMaterialProperties1D_AD in UgpWithCvCompFlowAD.h
-	 */
-	void calcMaterialProperties1D_AD(const int icvCenter, vector<int>& faInternal, vector<int>& faBoundary, ADscalar<REALQ> &rho, ADvector<REALQ> &rhou, ADscalar<REALQ> &rhoE);
 
 #ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
 	/*
@@ -468,22 +399,6 @@ protected:
 	int calcResidual1D_AD(const int icvCenter,
 			REALA &rhs_rho_AD, REALA rhs_rhou_AD[3], REALA &rhs_rhoE_AD, REALAS *rhs_rhoScal_AD,
 			REALQ *rho_AD, REALQ (*rhou_AD)[3], REALQ *rhoE_AD, double (*A)[5][5], double ***AScal, int flagImplicit);
-
-	/*
-	 * Method: calcStateVariables1D_AD
-	 * -------------------------------
-	 * Calculate state variables (vel, press, temp, enthalpy, sos) only for the 2-layer neighbors of icvCenter
-	 * Original code = calcStateVariables_AD() in UgpWithCvCompFlowAD.h
-	 */
-	void calcStateVariables1D_AD(const int icvCenter, REALQ *rho, REALQ (*rhou)[3], REALQ *rhoE);
-
-	/*
-	 * Method: calcMaterialProperties1D_AD
-	 * -----------------------------------
-	 * Calculate material properties (mul_fa, lamOcp_fa) only for the 1-layer neighboring faces of icvCenter
-	 * Original code: calcMaterialProperties1D_AD in UgpWithCvCompFlowAD.h
-	 */
-	void calcMaterialProperties1D_AD(const int icvCenter, vector<int>& faInternal, vector<int>& faBoundary, REALQ *rho, REALQ (*rhou)[3], REALQ *rhoE);
 
 	/*
 	 * Method: setBC1D_AD

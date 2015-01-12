@@ -11,6 +11,15 @@
 //#define IKEUGPWITHCVCOMPFLOW_H_
 
 #ifdef USE_MEM_SAVING_ADVAR
+#define USE_MEM_SAVING_ADVAR_1D_ // Note: Actually, USE_MEM_SAVING_ADVAR is defined in UgpWithCvCompFlowAD.h
+#ifdef USE_MEM_SAVING_ADVAR_1D_
+	#include "ADvar.h"
+#endif
+#endif
+
+#define IKEUGPWITHCVCOMPLOW_ERROR_CODE -2
+
+#ifdef USE_MEM_SAVING_ADVAR
 	// =========================
 	//  REFERENCE VALUES
 	// =========================
@@ -161,6 +170,14 @@
 	vector<int> nbocv2_eachIcv;   // The 2-layered neighbors of an icv
 	vector<int> nbocv2ff_eachIcv; // The 2-layered neighbors of an icv including the fake cells
 	vector<int> fa2_eachIcv;      // The 2-layered faces of an icv
+
+
+	vector<std::string> warningsVectorIkeUgp1D; // If the simulation breaks down for some reasons,
+			                                    // it will dump out a massive amount of warning/error messages.
+			                                    // Thus, this object stores the (only) warning messages so that
+			                                    // the user can manipulate the amount of messages that should be
+			                                    // printed out on the screen.
+
 
 #ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
 	// --------------------
@@ -1377,6 +1394,66 @@
 	// =========================
 	//  HOOK FUNCTIONS
 	// =========================
+#ifdef USE_MEM_SAVING_ADVAR_1D_
+	/*
+	 * Method: boundaryHook1D_AD
+	 * -------------------------
+	 * Original code = boundaryHook_AD() in JoeWithModelsAD.h
+	 */
+	virtual void boundaryHook1D_AD(const int ifa, ADscalar<REALQ> &T_fa, ADvector<REALQ> &vel_fa, ADscalar<REALQ> &p_fa, FaZone *zone) {/* empty */}
+
+	/*
+	 * Method: boundaryHook1D_AD
+	 * -------------------------
+	 * Original code = boundaryHook() in JoeWithModels.h
+	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
+	 */
+	virtual void boundaryHook1D(const int ifa, ADscalar<REALQ> &T_fa, ADvector<REALQ> &vel_fa, ADscalar<REALQ> &p_fa, FaZone *zone) {/* empty */}
+#endif
+
+	/*
+	 * Method: boundaryHook1D_AD
+	 * -------------------------
+	 * Original code = boundaryHook_AD() in JoeWithModelsAD.h
+	 */
+	virtual void boundaryHook1D_AD(const int ifa, REALQ *T_fa, REALQ (*vel_fa)[3], REALQ *p_fa, FaZone *zone) {/* empty */}
+
+	/*
+	 * Method: boundaryHook1D_AD
+	 * -------------------------
+	 * Original code = boundaryHook() in JoeWithModels.h
+	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
+	 */
+	virtual void boundaryHook1D(const int ifa, double *T_fa, double (*vel_fa)[3], double *p_fa, FaZone *zone) {/* empty */}
+
+	/*
+	 * Method: sourceHook1D_AD
+	 * -----------------------
+	 * Original code = sourceHook_AD() in JoeWithModelsAD.h
+	 */
+	virtual void sourceHook1D_AD(const int icvCenter, REALA &rhs_rho, REALA rhs_rhou[3], REALA &rhs_rhoE, double (*A)[5][5]) {/* empty */}
+
+	/*
+	 * Method: sourceHookRansTurb1D_AD
+	 * -------------------------------
+	 * Original code = sourceHookRansTurb_AD() in JoeWithModelsAD.h
+	 */
+	virtual void sourceHookRansTurb1D_AD(const int icvCenter, REALA &rhs_rho, REALA rhs_rhou[3], REALA &rhs_rhoE, double (*A)[5][5]) {/* empty */}
+
+	/*
+	 * Method: sourceHookScalarRansTurb_new1D_AD
+	 * ------------------------------------------
+	 * Original code: sourceHookScalarRansTurb_new_AD in UgpWithCvCompFlowAD.h
+	 */
+    virtual void sourceHookScalarRansTurb_new1D_AD(const int icvCenter, adouble &rhs, double *A, const string &name, int flagImplicit) { /*empty*/ }
+
+    /*
+     * Method: sourceHookRansTurbCoupled1D_AD
+     * --------------------------------------
+     * Original code: sourceHookRansTurbCoupled_AD in UgpWithCvCompFlowAD.h
+     */
+    virtual void sourceHookRansTurbCoupled1D_AD(const int icvCenter, adouble *rhs, double ***A, int flagImplicit) {/*empty*/}
+
 #ifdef USE_MEM_SAVING_ADVAR
 	/*
 	 * Method: boundaryHookScalarRansTurb_AD
@@ -1394,41 +1471,7 @@
 	virtual void sourceHookScalarRansTurb_new_AD(ADscalar<adouble>& rhs, double *A, const string &name, int flagImplicit) {
 		/* empty */
 	}
-
-	/*
-	 * Method: sourceHookScalarRansTurb_new_AD
-	 * ---------------------------------------
-	 *
-	 */
-	virtual void boundaryHookScalarRansComb_AD(ADscalar<adouble>& phi_ph, FaZone *zone, const string &name)  {
-		/* empty */
-	}
-	/*
-	 * Method: sourceHookScalarRansComb_new_AD
-	 * ---------------------------------------
-	 *
-	 */
-	virtual void sourceHookScalarRansComb_new_AD(ADscalar<adouble>& rhs, double *A, const string &name, int flagImplicit)  {
-		/* empty */
-	}
 #endif
-
-	/*
-	 * Method: initialHookScalarRansCombModel1D_AD
-	 * -------------------------------------------
-	 * This method is doing the exact same thing as initialHookScalarRansCombModel_AD()
-	 * but has extra consideration that makes this method run only at the first call
-	 * Original code = initialHookScalarRansCombModel_AD in UgpWithCvCompFlowAD.h
-	 */
-	virtual void initialHookScalarRansCombModel1D_AD(int loadtable, bool &firstCall) {
-		if(firstCall) {
-			for (int icv = 0; icv < ncv_ggff; icv++) {
-				RoM[icv] = R_gas;
-				gamma[icv] = GAMMA;
-			}
-			firstCall = false;
-		}
-	}
 
 	/*
 	 * Method: initialHookScalarRansTurbModel1D_AD()
@@ -1443,24 +1486,6 @@
 	}
 
 #ifdef USE_MEM_SAVING_ADVAR
-	/*
-	 * Method: initialHookScalarRansCombModel1D_AD
-	 * -------------------------------------------
-	 * This method is doing the exact same thing as initialHookScalarRansCombModel_AD()
-	 * but the implementation that works only for the ICVs stored in nbocv2ff
-	 * Original code = initialHookScalarRansCombModel_AD in UgpWithCvCompFlowAD.h
-	 */
-	virtual void initialHookScalarRansCombModel1D_AD(int loadtable, vector<int> &nbocv2ff, bool &firstCall) {
-		for(size_t i=0; i<nbocv2ff.size(); ++i) {
-			int icv = nbocv2ff[i];
-			RoM[icv] = R_gas;
-			gamma[icv] = GAMMA;
-		}
-
-		if(firstCall)
-			firstCall = false;
-	}
-
 	/*
 	 * Method: initialHookScalarRansTurbModel1D_AD()
 	 * ---------------------------------------------
@@ -1490,27 +1515,12 @@
     virtual void boundaryHookScalarRansTurb1D_AD(const int ifa, adouble *phi_ph, FaZone *zone, const string &scalName)  {/*empty*/}
 
 	/*
-	 * Method: boundaryHookScalarRansComb1D_AD
-	 * ---------------------------------------
-	 * Original code = boundaryHookScalarRansComb_AD in UgpWithCvCompFlowAD.h
-	 */
-    virtual void boundaryHookScalarRansComb1D_AD(const int ifa, adouble *phi_ph, FaZone *zone, const string &scalName)  {/*empty*/}
-
-	/*
 	 * Method: boundaryHookScalarRansTurb1D
 	 * ------------------------------------
 	 * Original code = boundaryHookScalarRansTurb_AD() in IkeUgpWithCvCompFlow.h and boundaryHookScalarRansTurb() in UgpWithCvCompFlowAD.h
 	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
 	 */
     virtual void boundaryHookScalarRansTurb1D(const int ifa, double *phi_ph, FaZone *zone, const string &scalName)  {/*empty*/}
-
-	/*
-	 * Method: boundaryHookScalarRansComb1D
-	 * ------------------------------------
-	 * Original code = boundaryHookScalarRansComb1D_AD in IkeUgpWithCvCompFlow.h and boundaryHookScalarRansComb() in UgpWithCvCompFlowAD.h
-	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
-	 */
-    virtual void boundaryHookScalarRansComb1D(const int ifa, double *phi_ph, FaZone *zone, const string &scalName)  {/*empty*/}
 
 	/*
 	 * Method: diffusivityHookScalarRansTurb1D_AD
@@ -1520,32 +1530,11 @@
     virtual void diffusivityHookScalarRansTurb1D_AD(const int ifa, FaZone* zone, const string &name)  {/*empty*/}
 
 	/*
-	 * Method: diffusivityHookScalarRansComb1D_AD
-	 * ------------------------------------------
-	 * Original code: diffusivityHookScalarRansComb_AD in UgpWithCvCompFlowAD.h
-	 */
-    virtual void diffusivityHookScalarRansComb1D_AD(const int ifa, FaZone* zone, const string &name)  {/*empty*/}
-
-	/*
-	 * Method: sourceHookScalarRansTurb_new1D_AD
-	 * ------------------------------------------
-	 * Original code: sourceHookScalarRansTurb_new_AD in UgpWithCvCompFlowAD.h
-	 */
-    virtual void sourceHookScalarRansTurb_new1D_AD(const int icvCenter, adouble &rhs, double *A, const string &name, int flagImplicit) { /*empty*/ }
-
-	/*
 	 * Method: sourceHookScalarRansComb_new1D_AD
 	 * ------------------------------------------
 	 * Original code: sourceHookScalarRansComb_new_AD in UgpWithCvCompFlowAD.h
 	 */
     virtual void sourceHookScalarRansComb_new1D_AD(const int icvCenter, adouble &rhs, double *A, const string &name, int flagImplicit)  {/*empty*/}
-
-    /*
-     * Method: sourceHookRansTurbCoupled1D_AD
-     * --------------------------------------
-     * Original code: sourceHookRansTurbCoupled_AD in UgpWithCvCompFlowAD.h
-     */
-    virtual void sourceHookRansTurbCoupled1D_AD(const int icvCenter, adouble *rhs, double ***A, int flagImplicit) {/*empty*/}
 
     /*
      * Method: sourceHookRansCombCoupled1D_AD
@@ -1554,6 +1543,7 @@
      */
     virtual void sourceHookRansCombCoupled1D_AD(const int icvCenter, adouble *rhs, double ***A, int flagImplicit) {/*empty*/}
 
+
 #ifdef USE_MEM_SAVING_ADVAR
 	/*
 	 * Method: boundaryHookScalarRansTurb1D_AD
@@ -1561,15 +1551,6 @@
 	 * Original code = boundaryHookScalarRansTurb_AD() in UgpWithCvCompFlowAD.h
 	 */
     virtual void boundaryHookScalarRansTurb1D_AD(const int ifa, ADscalar<adouble>& phi_ph, FaZone *zone, const string &scalName)  {
-		/* empty */
-    }
-
-	/*
-	 * Method: boundaryHookScalarRansComb1D_AD
-	 * ---------------------------------------
-	 * Original code = boundaryHookScalarRansComb_AD in UgpWithCvCompFlowAD.h
-	 */
-    virtual void boundaryHookScalarRansComb1D_AD(const int ifa, ADscalar<adouble>& phi_ph, FaZone *zone, const string &scalName)  {
 		/* empty */
     }
 
@@ -1583,16 +1564,6 @@
 		/* empty */
     }
 
-	/*
-	 * Method: boundaryHookScalarRansComb1D
-	 * ------------------------------------
-	 * Original code = boundaryHookScalarRansComb1D_AD in IkeUgpWithCvCompFlow.h and boundaryHookScalarRansComb() in UgpWithCvCompFlowAD.h
-	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
-	 */
-    virtual void boundaryHookScalarRansComb1D(const int ifa, ADscalar<adouble>& phi_ph, FaZone *zone, const string &scalName)  {
-		/* empty */
-    }
-
     /*
      * Method: sourceHookRansTurbCoupled1D_AD
      * --------------------------------------
@@ -1603,9 +1574,443 @@
     }
 #endif
 
+    // ----------------------------------
+    //  combustion combustion combustion
+    // ----------------------------------
+#ifdef USE_MEM_SAVING_ADVAR
+	/*
+	 * Method: boundaryHookScalarRansComb_AD
+	 * -------------------------------------
+	 *
+	 */
+	virtual void boundaryHookScalarRansComb_AD(ADscalar<adouble>& phi_ph, FaZone *zone, const string &name)  {
+		/* empty */
+	}
+#endif
+
+	/*
+	 * Method: boundaryHookScalarRansComb1D_AD
+	 * ---------------------------------------
+	 * Original code = boundaryHookScalarRansComb_AD in UgpWithCvCompFlowAD.h
+	 */
+    virtual void boundaryHookScalarRansComb1D_AD(const int ifa, ADscalar<adouble>& phi_ph, FaZone *zone, const string &scalName)  {
+		/* empty */
+    }
+
+	/*
+	 * Method: boundaryHookScalarRansComb1D_AD
+	 * ---------------------------------------
+	 * Original code = boundaryHookScalarRansComb_AD in UgpWithCvCompFlowAD.h
+	 */
+    virtual void boundaryHookScalarRansComb1D_AD(const int ifa, adouble *phi_ph, FaZone *zone, const string &scalName)  {/*empty*/}
+
+	/*
+	 * Method: boundaryHookScalarRansComb1D
+	 * ------------------------------------
+	 * Original code = boundaryHookScalarRansComb1D_AD in IkeUgpWithCvCompFlow.h and boundaryHookScalarRansComb() in UgpWithCvCompFlowAD.h
+	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
+	 */
+    virtual void boundaryHookScalarRansComb1D(const int ifa, double *phi_ph, FaZone *zone, const string &scalName)  {/*empty*/}
+
+//	/*
+//	 * Method: boundaryHookScalarRansComb1D
+//	 * ------------------------------------
+//	 * Original code = boundaryHookScalarRansComb1D_AD in IkeUgpWithCvCompFlow.h and boundaryHookScalarRansComb() in UgpWithCvCompFlowAD.h
+//	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
+//	 */
+//    virtual void boundaryHookScalarRansComb1D(const int ifa, ADscalar<adouble>& phi_ph, FaZone *zone, const string &scalName)  {
+//		/* empty */
+//    }
+
+#ifdef USE_MEM_SAVING_ADVAR
+	/*
+	 * Method: sourceHookScalarRansComb_new_AD
+	 * ---------------------------------------
+	 *
+	 */
+	virtual void sourceHookScalarRansComb_new_AD(ADscalar<adouble>& rhs, double *A, const string &name, int flagImplicit)  {
+		/* empty */
+	}
+#endif
+
+	/*
+	 * Method: sourceHookRansComb1D_AD
+	 * -------------------------------
+	 * Original code = sourceHookRansComb_AD() in JoeWithModelsAD.h
+	 */
+	virtual void sourceHookRansComb1D_AD(const int icvCenter, REALA &rhs_rho, REALA rhs_rhou[3], REALA &rhs_rhoE, double (*A)[5][5]) {/* empty */}
+
+#ifdef USE_MEM_SAVING_ADVAR
+	/*
+	 * Method: initialHookScalarRansCombModel1D_AD
+	 * -------------------------------------------
+	 * This method is doing the exact same thing as initialHookScalarRansCombModel_AD()
+	 * but the implementation that works only for the ICVs stored in nbocv2ff
+	 * Original code = initialHookScalarRansCombModel_AD in UgpWithCvCompFlowAD.h
+	 */
+	virtual void initialHookScalarRansCombModel1D_AD(int loadtable, vector<int> &nbocv2ff, bool &firstCall) {
+		for(size_t i=0; i<nbocv2ff.size(); ++i) {
+			int icv = nbocv2ff[i];
+			RoM[icv] = R_gas;
+			gamma[icv] = GAMMA;
+		}
+
+		if(firstCall)
+			firstCall = false;
+	}
+
+	/*
+	 * Method: finalHookScalarRansCombModel1D_AD()
+	 * ---------------------------------------------
+	 *
+	 */
+	virtual void finalHookScalarRansCombModel1D_AD() {
+		/* empty */
+	}
+#endif
+
+	/*
+	 * Method: initialHookScalarRansCombModel1D_AD
+	 * -------------------------------------------
+	 * This method is doing the exact same thing as initialHookScalarRansCombModel_AD()
+	 * but has extra consideration that makes this method run only at the first call
+	 * Original code = initialHookScalarRansCombModel_AD in UgpWithCvCompFlowAD.h
+	 */
+	virtual void initialHookScalarRansCombModel1D_AD(int loadtable, bool &firstCall) {
+		if(firstCall) {
+			for (int icv = 0; icv < ncv_ggff; icv++) {
+				RoM[icv] = R_gas;
+				gamma[icv] = GAMMA;
+			}
+			firstCall = false;
+		}
+	}
+
+	/*
+	 * Method: diffusivityHookScalarRansComb1D_AD
+	 * ------------------------------------------
+	 * Original code: diffusivityHookScalarRansComb_AD in UgpWithCvCompFlowAD.h
+	 */
+    virtual void diffusivityHookScalarRansComb1D_AD(const int ifa, FaZone* zone, const string &name)  {/*empty*/}
+
+	/*
+	 * Method: pressureDerivativeHookScalarRansComb1D_AD
+	 * -------------------------------------------------
+	 * Original code: pressureDerivativeHookScalarRansComb in UgpWithCvCompFlow.h
+	 * Since it is called only for flagImplicit in the original JOE code, it is not important in IKE
+	 */
+    virtual void pressureDerivativeHookScalarRansComb1D_AD() {/*empty*/}
+
     // =========================
     //  OTHER VIRTUAL FUNCTIONS
     // =========================
+
+    /*
+     * Method: calcStateVariables1D_AD
+     * -------------------------------
+     * Calculate state variables (vel, press, temp, enthalpy, sos) for the neighbors of icvCenter
+     * Original code = calcStateVariables_AD() in UgpWithCvCompFlowAD.h
+     */
+    virtual void calcStateVariables1D_AD(const int icvCenter, ADscalar<REALQ> &rho, ADvector<REALQ> &rhou, ADscalar<REALQ> &rhoE) {
+    	static bool alreadyErrorFound = false;
+
+    	// Check if the 2-layer CSR structure has already been developed
+    	assert(nbocv2_i != NULL && !nbocv2_v.empty());
+
+    	// Check if gamma and RoM are non-zero: To save runtime, check this only if debugLevel > 0
+    	int debugLevel = getDebugLevel();
+    	if(debugLevel > 0) {
+    		if (gamma[icvCenter].value()<MACHINE_EPS && mpi_rank==0) {
+    			cout<<"ERROR! IkeWithModels_AD::calcStateVariables1D_AD(): gamma["<<icvCenter<<"] is zero or negative = "<<gamma[icvCenter].value()<<endl;
+    			throw(IKEUGPWITHCVCOMPLOW_ERROR_CODE);
+    		}
+    		if (RoM[icvCenter].value()<MACHINE_EPS && mpi_rank==0) {
+    			cout<<"ERROR! IkeWithModels_AD::calcStateVariables1D_AD(): RoM["<<icvCenter<<"] is zero or negative = "<<RoM[icvCenter].value()<<endl;
+    			throw(IKEUGPWITHCVCOMPLOW_ERROR_CODE);
+    		}
+    	}
+    	if(debugLevel > 1) {
+    		if (fabs(gamma[icvCenter].value()-1.0)<MACHINE_EPS && !alreadyErrorFound && mpi_rank==0) {
+    			cout<<"WARNING! IkeWithModels_AD::calcStateVariables1D_AD(): gamma["<<icvCenter<<"] is 1.0 (Thus, gamma-1.0=0.0, which can corrupt pressure)"<<endl;
+    			cout<<"         Did you commit this intentionally?"<<endl;
+    			alreadyErrorFound = true;
+    		}
+    	}
+
+    	// Calculate state variables only for the 2-layer neighbors of icvCenter
+    	int noc_f = nbocv2_i[icvCenter];
+    	int noc_l = nbocv2_i[icvCenter+1] - 1;
+
+    	for (int noc = noc_f; noc <= noc_l; noc++) {
+    		int icv_nbr = nbocv2_v[noc];
+
+    		if (rho[icv_nbr].value() <= 0.0) {
+    //			cout << "WARNING! calcStateVariables1D_AD(): Negative density at xcv: " << x_cv[icv_nbr][0] << ", "<< x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << rho[icv_nbr].value() << endl;
+    			std::stringstream ss;
+    			ss<<"WARNING! calcStateVariables1D_AD(): Negative density at xcv: "
+    			  << x_cv[icv_nbr][0] << ", "<< x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": "
+    			  << rho[icv_nbr].value() << endl;
+    			warningsVectorIkeUgp1D.push_back(ss.str());
+    		}
+
+    		for (int i=0; i<3; i++)
+    			vel[icv_nbr][i] = rhou[icv_nbr][i]/rho[icv_nbr];
+
+    		REALQ kinecv = 0.0;
+    		if (kine != NULL)
+    			kinecv = (*kine)[icv_nbr];
+
+    		REALQ pr = (gamma[icv_nbr]-1.0)*
+    					(rhoE[icv_nbr] - 0.5*(rhou[icv_nbr][0]*rhou[icv_nbr][0]+rhou[icv_nbr][1]*rhou[icv_nbr][1]+rhou[icv_nbr][2]*rhou[icv_nbr][2])/rho[icv_nbr]
+    					- rho[icv_nbr]*kinecv);
+
+    		if (pr.value() <= 0.0) {
+    //			cout << "WARNING! calcStateVariables1D_AD(): Negative pressure at xcv: " << x_cv[icv_nbr][0] << ", " << x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << pr.value()<<endl;
+    //			if(debugLevel > 0)
+    //				printf("                                    rhoE=%.3e, rho=%.3e, rhou=(%.3e,%.3e,%.3e), gamma=%.3e, kinecv=%.3e \n",
+    //					rhoE[icv_nbr].value(), rho[icv_nbr].value(), rhou[icv_nbr][0].value(),rhou[icv_nbr][1].value(),rhou[icv_nbr][2].value(), gamma[icv_nbr].value(), kinecv.value());
+    			std::stringstream ss;
+    			ss<<"WARNING! calcStateVariables1D_AD(): Negative pressure at xcv: "
+    			  << x_cv[icv_nbr][0] << ", " << x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << pr.value()<<endl;
+    			if(debugLevel > 0) {
+    				ss<<std::scientific;
+    				ss<<std::setprecision(3);
+    				ss<<"                                    rhoE="<<rhoE[icv_nbr].value()
+    				  <<", rho="<<rho[icv_nbr].value()
+    				  <<", rhou=("<<rhou[icv_nbr][0].value()<<","<<rhou[icv_nbr][1].value()<<","<<rhou[icv_nbr][2].value()<<")"
+    				  <<", gamma="<<gamma[icv_nbr].value()
+    				  <<", kinecv="<<kinecv.value()<<endl;
+    			}
+    			warningsVectorIkeUgp1D.push_back(ss.str());
+    		} else
+    			press[icv_nbr] = pr;
+
+    		temp[icv_nbr] = press[icv_nbr]/(rho[icv_nbr]*RoM[icv_nbr]);
+    		enthalpy[icv_nbr] = gamma[icv_nbr]*RoM[icv_nbr]/(gamma[icv_nbr]-1.0)*temp[icv_nbr];
+    		sos[icv_nbr] = sqrt(gamma[icv_nbr]*press[icv_nbr]/rho[icv_nbr]);
+    	}
+
+// IKJ
+if(mpi_rank==0 && (icvCenter<3 || icvCenter==ncv-1)) {
+	cout<<"IkeUgp::calcStateVariables1D_AD(): icvCenter="<<icvCenter<<endl;
+	cout<<"  rho="<<rho[icvCenter]<<", rhou[1]="<<rhou[icvCenter][1]<<", rhoE="<<rhoE[icvCenter]<<endl
+		<<"  gamma="<<gamma[icvCenter]<<", RoM="<<RoM[icvCenter]<<", press="<<press[icvCenter]<<", temp="<<temp[icvCenter]<<endl;
+}
+
+    }
+
+    /*
+     * Method: calcMaterialProperties1D_AD
+     * -----------------------------------
+     * Calculate material properties (mul_fa, lamOcp_fa) only for the 1-layer neighboring faces of icvCenter
+     * Original code: calcMaterialProperties1D_AD in UgpWithCvCompFlowAD.h
+     */
+    virtual void calcMaterialProperties1D_AD(const int icvCenter, vector<int>& faInternal, vector<int>& faBoundary, ADscalar<REALQ> &rho, ADvector<REALQ> &rhou, ADscalar<REALQ> &rhoE) {
+    	if (mu_ref > 0.0) {
+    		if (viscMode == "SUTHERLAND") {
+    			// internal faces
+    			for (size_t index = 0; index < faInternal.size(); index++) {
+    				int ifa = faInternal[index];
+    				if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
+    					 /* Note: 0 ~ nfa_b-1           : boundary faces
+    					  *       nfa_b ~ nfa_bpi-1     :
+    					  *       nfa_bpi ~ nfa-1       :
+    					  *       nfa ~ nfa_b2          : additional boundary faces between g1:f2 cvs
+    					  *       nfa_b2 ~ nfa_b2g-1    : faces between g1:g1 cvs
+    					  *       nfa_b2g-1 ~ nfa_b2gg-1: faces between g1:g2 cvs
+    					  */
+    					int icv0 = cvofa[ifa][0];
+    					int icv1 = cvofa[ifa][1];
+
+    					double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+    					vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+    					vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+    					double w0 = sqrt(vecDotVec3d(dx0, dx0));
+    					double w1 = sqrt(vecDotVec3d(dx1, dx1));
+
+    					REALQ temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
+    					mul_fa[ifa] = mu_ref*pow(temperature/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temperature + SL_Sref);
+    					lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+    				}
+    			}
+    			// boundary faces computed next in setBC
+    		} else if (viscMode == "POWERLAW") {
+    			// internal faces
+    			for (size_t index = 0; index < faInternal.size(); index++) {
+    				int ifa = faInternal[index];
+    				if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
+    					int icv0 = cvofa[ifa][0];
+    					int icv1 = cvofa[ifa][1];
+
+    					double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+    					vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+    					vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+    					double w0 = sqrt(vecDotVec3d(dx0, dx0));
+    					double w1 = sqrt(vecDotVec3d(dx1, dx1));
+
+    					REALQ temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
+    					mul_fa[ifa] = mu_ref*pow(temperature/T_ref, mu_power_law);
+    					lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+    				}
+    			}
+    			// boundary faces computed next in setBC
+    		} else {
+    			cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+    			throw(-1);
+    		}
+    	}
+    }
+
+
+    /*
+     * Method: calcStateVariables1D_AD
+     * -------------------------------
+     * Calculate state variables (vel, press, temp, enthalpy, sos) for the neighbors of icvCenter
+     * Original code = calcStateVariables_AD() in UgpWithCvCompFlowAD.h
+     */
+    virtual void calcStateVariables1D_AD(const int icvCenter, REALQ *rho, REALQ (*rhou)[3], REALQ *rhoE) {
+    	static bool alreadyErrorFound = false;
+
+    	// Check if the 2-layer CSR structure has already been developed
+    	assert(nbocv2_i != NULL && !nbocv2_v.empty());
+
+    	// Check if gamma and RoM are non-zero: To save runtime, check this only if debugLevel > 0
+    	int debugLevel = getDebugLevel();
+    	if(debugLevel > 0) {
+    		if (gamma[icvCenter].value()<MACHINE_EPS && mpi_rank==0) {
+    			cout<<"ERROR! IkeWithModels_AD::calcStateVariables1D_AD(): gamma["<<icvCenter<<"] is zero or negative = "<<gamma[icvCenter].value()<<endl;
+    			throw(IKEUGPWITHCVCOMPLOW_ERROR_CODE);
+    		}
+    		if (RoM[icvCenter].value()<MACHINE_EPS && mpi_rank==0) {
+    			cout<<"ERROR! IkeWithModels_AD::calcStateVariables1D_AD(): RoM["<<icvCenter<<"] is zero or negative = "<<RoM[icvCenter].value()<<endl;
+    			throw(IKEUGPWITHCVCOMPLOW_ERROR_CODE);
+    		}
+    	}
+    	if(debugLevel > 1) {
+    		if (fabs(gamma[icvCenter].value()-1.0)<MACHINE_EPS && !alreadyErrorFound && mpi_rank==0) {
+    			cout<<"WARNING! IkeWithModels_AD::calcStateVariables1D_AD(): gamma["<<icvCenter<<"] is 1.0 (Thus, gamma-1.0=0.0, which can corrupt pressure)"<<endl;
+    			cout<<"         Did you commit this intentionally?"<<endl;
+    			alreadyErrorFound = true;
+    		}
+    	}
+
+    	// Calculate state variables only for the 2-layer neighbors of icvCenter
+    	int noc_f = nbocv2_i[icvCenter];
+    	int noc_l = nbocv2_i[icvCenter+1] - 1;
+    	for (int noc = noc_f; noc <= noc_l; noc++) {
+    		int icv_nbr = nbocv2_v[noc];
+
+    		if (rho[icv_nbr].value() <= 0.0) {
+    //			cout << "WARNING! calcStateVariables1D_AD(): Negative density at xcv: " << x_cv[icv_nbr][0] << ", "<< x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << rho[icv_nbr].value() << endl;
+    			std::stringstream ss;
+    			ss<<"WARNING! calcStateVariables1D_AD(): Negative density at xcv: "
+    			  << x_cv[icv_nbr][0] << ", "<< x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": "
+    			  << rho[icv_nbr].value() << endl;
+    			warningsVectorIkeUgp1D.push_back(ss.str());
+    		}
+
+    		for (int i=0; i<3; i++)
+    			vel[icv_nbr][i] = rhou[icv_nbr][i]/rho[icv_nbr];
+
+    		REALQ kinecv = 0.0;
+
+    #ifdef USE_MEM_SAVING_ADVAR // note: USE_MEM_SAVING_ADVAR is defined in UgpWithCvCompFlow.h
+    		if (kine != NULL)
+    			kinecv = (*kine)[icv_nbr];
+    #else
+    		if (kine != NULL)
+    			kinecv = kine[icv_nbr];
+    #endif
+
+    		REALQ pr = (gamma[icv_nbr]-1.0)*
+    					(rhoE[icv_nbr] - 0.5*(rhou[icv_nbr][0]*rhou[icv_nbr][0]+rhou[icv_nbr][1]*rhou[icv_nbr][1]+rhou[icv_nbr][2]*rhou[icv_nbr][2])/rho[icv_nbr]
+    					- rho[icv_nbr]*kinecv);
+    		if (pr.value() <= 0.0) {
+    			std::stringstream ss;
+    			ss<<"WARNING! calcStateVariables1D_AD(): Negative pressure at xcv: "
+    			  << x_cv[icv_nbr][0] << ", " << x_cv[icv_nbr][1] << ", " << x_cv[icv_nbr][2] << ": " << pr.value()<<endl;
+    			if(debugLevel > 0) {
+    				ss<<std::scientific;
+    				ss<<std::setprecision(3);
+    				ss<<"                                    rhoE="<<rhoE[icv_nbr].value()
+    				  <<", rho="<<rho[icv_nbr].value()
+    				  <<", rhou=("<<rhou[icv_nbr][0].value()<<","<<rhou[icv_nbr][1].value()<<","<<rhou[icv_nbr][2].value()<<")"
+    				  <<", gamma="<<gamma[icv_nbr].value()
+    				  <<", kinecv="<<kinecv.value()<<endl;
+    			}
+    			warningsVectorIkeUgp1D.push_back(ss.str());
+    		} else
+    			press[icv_nbr] = pr;
+
+    		temp[icv_nbr] = press[icv_nbr]/(rho[icv_nbr]*RoM[icv_nbr]);
+    		enthalpy[icv_nbr] = gamma[icv_nbr]*RoM[icv_nbr]/(gamma[icv_nbr]-1.0)*temp[icv_nbr];
+    		sos[icv_nbr] = sqrt(gamma[icv_nbr]*press[icv_nbr]/rho[icv_nbr]);
+    	}
+    }
+
+    /*
+     * Method: calcMaterialProperties1D_AD
+     * -----------------------------------
+     * Calculate material properties (mul_fa, lamOcp_fa) only for the 1-layer neighboring faces of icvCenter
+     * Original code: calcMaterialProperties1D_AD in UgpWithCvCompFlowAD.h
+     */
+    virtual void calcMaterialProperties1D_AD(const int icvCenter, vector<int>& faInternal, vector<int>& faBoundary, REALQ *rho, REALQ (*rhou)[3], REALQ *rhoE) {
+    	if (mu_ref > 0.0) {
+    		if (viscMode == "SUTHERLAND") {
+    			// internal faces
+    			for (size_t index = 0; index < faInternal.size(); index++) {
+    				int ifa = faInternal[index];
+    				if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
+    					 /* Note: 0 ~ nfa_b-1           : boundary faces
+    					  *       nfa_b ~ nfa_bpi-1     :
+    					  *       nfa_bpi ~ nfa-1       :
+    					  *       nfa ~ nfa_b2          : additional boundary faces between g1:f2 cvs
+    					  *       nfa_b2 ~ nfa_b2g-1    : faces between g1:g1 cvs
+    					  *       nfa_b2g-1 ~ nfa_b2gg-1: faces between g1:g2 cvs
+    					  */
+    					int icv0 = cvofa[ifa][0];
+    					int icv1 = cvofa[ifa][1];
+
+    					double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+    					vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+    					vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+    					double w0 = sqrt(vecDotVec3d(dx0, dx0));
+    					double w1 = sqrt(vecDotVec3d(dx1, dx1));
+
+    					REALQ temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
+    					mul_fa[ifa] = mu_ref*pow(temperature/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temperature + SL_Sref);
+    					lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+    				}
+    			}
+    			// boundary faces computed next in setBC
+    		} else if (viscMode == "POWERLAW") {
+    			// internal faces
+    			for (size_t index = 0; index < faInternal.size(); index++) {
+    				int ifa = faInternal[index];
+    				if((ifa >= nfa_b && ifa<nfa) || (ifa >= nfa_b2 && ifa < nfa_b2gg)) {
+    					int icv0 = cvofa[ifa][0];
+    					int icv1 = cvofa[ifa][1];
+
+    					double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+    					vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+    					vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+    					double w0 = sqrt(vecDotVec3d(dx0, dx0));
+    					double w1 = sqrt(vecDotVec3d(dx1, dx1));
+
+    					REALQ temperature  = (w1*temp[icv0] + w0*temp[icv1])/(w0+w1);
+    					mul_fa[ifa] = mu_ref*pow(temperature/T_ref, mu_power_law);
+    					lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+    				}
+    			}
+    			// boundary faces computed next in setBC
+    		} else {
+    			cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+    			throw(-1);
+    		}
+    	}
+    }
+
+
     /*
      * Method: UgpWithCvCompFlow_AD_init
      * ---------------------------------
