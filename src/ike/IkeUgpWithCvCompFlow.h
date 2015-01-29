@@ -2010,6 +2010,61 @@ if(mpi_rank==0 && (icvCenter<3 || icvCenter==ncv-1)) {
     	}
     }
 
+	/*
+	 * Method: ComputeBCProperties1D_T_AD
+	 * ----------------------------------
+	 * brief Compute for a given temperature the properties of the mixture at a face.
+	 * Original code: ComputeBCProperties_T_AD() in UgpWithCvCompFlowAD.h
+	 */
+	virtual void ComputeBCProperties1D_T_AD(const int ifa) {
+		int icv1=cvofa[ifa][1];
+		gamma[icv1] = GAMMA;
+		RoM[icv1] = R_gas;
+		enthalpy[icv1] = GAMMA * R_gas / (GAMMA - 1.0) * temp[icv1];
+
+		if (mu_ref > 0.0) {
+			if (viscMode == "SUTHERLAND") {
+				int icv1=cvofa[ifa][1];
+				mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temp[icv1] + SL_Sref);
+			} else if (viscMode == "POWERLAW") {
+				int icv1=cvofa[ifa][1];
+				mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
+			} else {
+				cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+				throw(-1);
+			}
+
+			lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+		}
+	}
+
+	/*
+	 * Method: ComputeBCProperties1D_H_AD
+	 * ----------------------------------
+	 * brief Compute for a given enthalpy the properties of the mixture at a face.
+	 * Original code: ComputeBCProperties1D_H_AD() in UgpWithCvCompFlowAD.h
+	 */
+	virtual void ComputeBCProperties1D_H_AD(const int ifa) {
+		int icv1 = cvofa[ifa][1];
+		gamma[icv1] = GAMMA;
+		RoM[icv1] = R_gas;
+		temp[icv1] = enthalpy[icv1]*(GAMMA-1.0)/(GAMMA*R_gas);
+
+		if (mu_ref > 0.0) {
+			if (viscMode == "SUTHERLAND") {
+				int icv1 = cvofa[ifa][1];
+				mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref+SL_Sref)/(temp[icv1]+SL_Sref);
+			} else if (viscMode == "POWERLAW") {
+				int icv1 = cvofa[ifa][1];
+				mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
+			} else {
+				cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+				throw(-1);
+			}
+
+			lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+		}
+	}
 
     /*
      * Method: UgpWithCvCompFlow_AD_init

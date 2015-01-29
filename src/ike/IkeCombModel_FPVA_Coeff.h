@@ -2,7 +2,10 @@
 #define IKECOMBMODEL_FPVA_COEFF_AD_H
 
 //#include "JOE/ADJOINT_FILES/UgpWithCvCompFlowAD.h"
-#include "JOE/ADJOINT_FILES/CombModel_FPVA_Coeff_AD.h"
+//#include "JOE/ADJOINT_FILES/CombModel_FPVA_Coeff_AD.h"
+
+#include "JOE/combModels/CombModel_Base.h"
+#include "JOE/combModels/CombModel_FPVA_Coeff.h"
 
 #ifdef USE_MEM_SAVING_ADVAR
 	#define USE_MEM_SAVING_ADVAR_1D_ // Note: Actually, USE_MEM_SAVING_ADVAR is defined in UgpWithCvCompFlowAD.h (thus, it is readable here)
@@ -409,7 +412,7 @@ public:
 			press[icv_nbr] = rho[icv_nbr] * RoM[icv_nbr] * temp[icv_nbr];
 
 			// Compute mixture viscosity, heat conductivity, gamma, speed of sound
-			muLam_AD[icv_nbr] = MU0 * pow(temp[icvCenter] / T0, 0.7);
+			muLam_AD[icv_nbr] = MU0 * pow(temp[icv_nbr] / T0, 0.7);
 			LambdaOverCp_AD[icv_nbr] = LOC0 * pow(temp[icv_nbr] / T0, 0.62);
 			gamma[icv_nbr] = GAMMA0 + AGAMMA * (temp[icv_nbr] - T0);
 			sos[icv_nbr] = sqrt(gamma[icv_nbr] * press[icv_nbr] / rho[icv_nbr]);
@@ -636,13 +639,6 @@ public:
 		if (mu_ref > 0.0) {
 			ComputeProperties_vis_AD(mul_fa[ifa], lamOcp_fa[ifa], temp[icv1], (*ZMean)[icv1], (*ZVar)[icv1], (*CMean)[icv1]);
 		}
-		
-//IKJ
-  if(mpi_rank==0 && ifa==227) {
-	  cout<<"IkeCombModel_FPVA_Coeff::ComputeBCProperties1D_T_AD(): ifa="<<ifa<<", icv1="<<icv1<<": enthalpy="<<enthalpy[icv1]<<endl;
-	  cout<<"                                                       ZMean="<<(*ZMean)[icv1]<<", ZVar="<<(*ZVar)[icv1]<<", CMean="<<(*CMean)[icv1]<<endl;
-  }
-
 	}
 
 	/*
@@ -753,7 +749,7 @@ public:
 		adouble Tresidual_AD;
 
 		// The original code from Karthik uses only AD during the following Newton-iteration.
-		// However, if AD stores all the operations during the Newton-interation, the data can be gigantic.
+		// However, if AD stores all the operations during the Newton-interation, the data size can be gigantic.
 		// Thus, here we will just use normal double variables until the Newton iteration coverges, then convert the final operations to AD.
 		double R  = R_given.value();
 		double t0 = t0_given.value();

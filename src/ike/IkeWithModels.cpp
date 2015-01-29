@@ -1231,30 +1231,6 @@ int IkeWithModels_AD::calcResidual1D_AD(const int icvCenter,
 
 	int CountReducedOrder = calcRhs1D_AD(icvCenter, rhs_rho_AD, rhs_rhou_AD, rhs_rhoE_AD, rhs_rhoScal_AD, rho_AD, rhou_AD, rhoE_AD, A, AScal, flagImplicit);
 
-// IKJ
-if(mpi_rank==0 && icvCenter<2) {
-	int nScal = scalarTranspEqVector.size();
-    ADscalar<adouble>* ZMean = NULL;
-    ADscalar<adouble>* ZVar  = NULL;
-    ADscalar<adouble>* CMean = NULL;
-
-    for(int iScal=0; iScal<nScal; ++iScal) {
-        if(iScal == getScalarTransportIndex("ZMean"))
-    		ZMean = &(scalarTranspEqVector_AD[iScal].phi) ;
-        if(iScal == getScalarTransportIndex("ZVar"))
-		    ZVar  = &(scalarTranspEqVector_AD[iScal].phi) ;
-        if(iScal == getScalarTransportIndex("CMean"))
-		    CMean = &(scalarTranspEqVector_AD[iScal].phi) ;
-    }
-    assert(ZMean != NULL && ZVar != NULL && CMean != NULL);
-
-    cout<<"IkeWithModels_AD::calcResidual1D_AD(): check for icv="<<icvCenter<<endl
-        <<"  rho="<<rho[icvCenter]<<", rhou="<<rhou[icvCenter][0]<<", rhov="<<rhou[icvCenter][1]<<", rhoE="<<rhoE[icvCenter]<<", ZMean="<<(*ZMean)[icvCenter]<<", Zvar="<<(*ZVar)[icvCenter]<<", CMean="<<(*CMean)[icvCenter]<<endl
-        <<"  press="<<press[icvCenter]<<", temp="<<temp[icvCenter]<<endl
-        <<"  rhs_rhou_AD[1]="<<rhs_rhou_AD[1]<<endl;
-}
-
-
 	return CountReducedOrder;
 }
 
@@ -1821,134 +1797,6 @@ void IkeWithModels_AD::setScalarBC1D(const int ifa) {
 	}
 }
 
-/*
- * Method: ComputeBCProperties1D_T_AD
- * ----------------------------------
- * brief Compute for a given temperature the properties of the mixture at a face.
- * Original code: ComputeBCProperties_T_AD() in UgpWithCvCompFlowAD.h
- */
-void IkeWithModels_AD::ComputeBCProperties1D_T_AD(const int ifa) {
-	int icv1=cvofa[ifa][1];
-	gamma[icv1] = GAMMA;
-	RoM[icv1] = R_gas;
-	enthalpy[icv1] = GAMMA * R_gas / (GAMMA - 1.0) * temp[icv1];
-
-	if (mu_ref > 0.0) {
-		if (viscMode == "SUTHERLAND") {
-			int icv1=cvofa[ifa][1];
-			mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temp[icv1] + SL_Sref);
-		} else if (viscMode == "POWERLAW") {
-			int icv1=cvofa[ifa][1];
-			mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
-		} else {
-			cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-			throw(-1);
-		}
-
-		lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-	}
-}
-
-/*
- * Method: ComputeBCProperties1D_T
- * -------------------------------
- * brief Compute for a given temperature the properties of the mixture at a face.
- * Original code: ComputeBCProperties1D_T_AD() in IkeWithModel.cpp and ComputeBCProperties_T() UgpWithCvCompFlow.h
- * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
- */
-void IkeWithModels_AD::ComputeBCProperties1D_T(const int ifa) {
-	double *gamma = UgpWithCvCompFlow::gamma;
-	double *RoM = UgpWithCvCompFlow::RoM;
-	double *enthalpy = UgpWithCvCompFlow::enthalpy;
-	double *temp = UgpWithCvCompFlow::temp;
-	double *mul_fa = UgpWithCvCompFlow::mul_fa;
-	double *lamOcp_fa = UgpWithCvCompFlow::lamOcp_fa;
-
-	int icv1=cvofa[ifa][1];
-	gamma[icv1] = GAMMA;
-	RoM[icv1] = R_gas;
-	enthalpy[icv1] = GAMMA * R_gas / (GAMMA - 1.0) * temp[icv1];
-
-	if (mu_ref > 0.0) {
-		if (viscMode == "SUTHERLAND") {
-			int icv1=cvofa[ifa][1];
-			mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temp[icv1] + SL_Sref);
-		} else if (viscMode == "POWERLAW") {
-			int icv1=cvofa[ifa][1];
-			mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
-		} else {
-			cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-			throw(-1);
-		}
-
-		lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-	}
-}
-
-/*
- * Method: ComputeBCProperties1D_H_AD
- * ----------------------------------
- * brief Compute for a given enthalpy the properties of the mixture at a face.
- * Original code: ComputeBCProperties1D_H_AD() in IkeWithModels.cpp and ComputeBCProperties1D_H() in UgpWithCvCompFlow.h
- * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
- */
-void IkeWithModels_AD::ComputeBCProperties1D_H_AD(const int ifa) {
-	int icv1 = cvofa[ifa][1];
-	gamma[icv1] = GAMMA;
-	RoM[icv1] = R_gas;
-	temp[icv1] = enthalpy[icv1]*(GAMMA-1.0)/(GAMMA*R_gas);
-
-	if (mu_ref > 0.0) {
-		if (viscMode == "SUTHERLAND") {
-			int icv1 = cvofa[ifa][1];
-			mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref+SL_Sref)/(temp[icv1]+SL_Sref);
-		} else if (viscMode == "POWERLAW") {
-			int icv1 = cvofa[ifa][1];
-			mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
-		} else {
-			cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-			throw(-1);
-		}
-
-		lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-	}
-}
-
-/*
- * Method: ComputeBCProperties1D_H
- * -------------------------------
- * brief Compute for a given enthalpy the properties of the mixture at a face.
- * Original code: ComputeBCProperties1D_H_AD() in UgpWithCvCompFlowAD.h
- */
-void IkeWithModels_AD::ComputeBCProperties1D_H(const int ifa) {
-	double *gamma = UgpWithCvCompFlow::gamma;
-	double *RoM = UgpWithCvCompFlow::RoM;
-	double *enthalpy = UgpWithCvCompFlow::enthalpy;
-	double *temp = UgpWithCvCompFlow::temp;
-	double *mul_fa = UgpWithCvCompFlow::mul_fa;
-	double *lamOcp_fa = UgpWithCvCompFlow::lamOcp_fa;
-
-	int icv1 = cvofa[ifa][1];
-	gamma[icv1] = GAMMA;
-	RoM[icv1] = R_gas;
-	temp[icv1] = enthalpy[icv1]*(GAMMA-1.0)/(GAMMA*R_gas);
-
-	if (mu_ref > 0.0) {
-		if (viscMode == "SUTHERLAND") {
-			int icv1 = cvofa[ifa][1];
-			mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref+SL_Sref)/(temp[icv1]+SL_Sref);
-		} else if (viscMode == "POWERLAW") {
-			int icv1 = cvofa[ifa][1];
-			mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
-		} else {
-			cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-			throw(-1);
-		}
-
-		lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-	}
-}
-
 #ifdef USE_MEM_SAVING_ADVAR_1D_
 /*
  * Method: calcRhs1D_AD
@@ -1978,19 +1826,6 @@ int IkeWithModels_AD::calcRhs1D_AD(int icvCenter, REALA &rhs_rho, REALA rhs_rhou
 	// compute Euler Flux for NS and scalars
 	int myCountReducedOrder = calcEulerFlux1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, rhs_rhoScal, rho, rhou, rhoE, A, AScal, flagImplicit);
 
-// IKJ
-if(mpi_rank==0 && icvCenter==0) {
-	int icv = icvCenter;
-
-	cout<<"IkeWithModels_AD::calcRhs1D_AD(): rhs from calcEulerFlux1D_AD()"<<endl;
-	cout<<"    rhs = "<<rhs_rho;
-	for(int i=0; i<3; ++i) cout<<", "<<rhs_rhou[i];
-	cout<<", "<<rhs_rhoE;
-	for(int i=0; i<3; ++i) cout<<", "<<rhs_rhoScal[i];
-	cout<<endl
-		<<endl;
-}
-
 	// compute viscous Flux for NS
 #ifdef USE_ARTIF_VISC_WITH_MEM_SAVING
 	if(UgpWithCvCompFlow::turnOnArtifVisc) {
@@ -2009,6 +1844,14 @@ if(mpi_rank==0 && icvCenter==0) {
 	sourceHook1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, A);
 	sourceHookRansTurb1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, A);
 	sourceHookRansComb1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, A);
+
+if(mpi_rank==0 && icvCenter==1074) {
+	cout<<"======================================================"<<endl;
+	cout<<"IkeWithModels_AD::calcRhs1D_AD: Tape stats (mpi_rank="<<mpi_rank<<", icv="<<icvCenter<<") -- After calcViscousFluxNS1D_AD()"<<endl;
+	cout<<"======================================================"<<endl;
+	print_tapestats(mpi_rank);
+	cout<<endl;
+}
 
 	// =======================================================================================
 	// SCALARS
@@ -2057,6 +1900,7 @@ if(mpi_rank==0 && icvCenter==0) {
 			sourceHookScalarRansComb_new1D_AD(icvCenter, rhs_rhoScal[iScal], AScal[iScal][5], scalarTranspEqVector[iScal].getName(), flagImplicit);
 		}
 	}
+
 	firstCall = false;
 
 	return myCountReducedOrder;
@@ -2414,16 +2258,6 @@ int IkeWithModels_AD::calcEulerFlux1D_AD(const int icvCenter, REALA &rhs_rho, RE
 				throw(IKEWITHMODELS_ERROR_CODE);
 			}
 
-
-//IKJ
-if(mpi_rank==0 && icv0==0 && ifa==51535) {
-	printf("=> IkeWithModels_AD::calcEulerFlux1D_AD: INTERNAL ifa=%d  icvCenter=%d, mpi_rank=%d\n", ifa, icvCenter, mpi_rank);
-	printf("               Frho=%.6e, Frhou=(%.4e,%.4e,%.4e), FrhoE=%.4e\n", Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
-	printf("               rho0=%.6e, u0=(%.6e, %e, %e), p0=%.6e, T0=%.6e, h0=%e, R0=%e, gam0=%e, kineFA0=%e\n", rho0.value(), u0[0].value(), u0[1].value(), u0[2].value(), p0.value(), T0.value(), h0.value(), R0.value(), gam0.value(), kineFA0.value());
-	cout<<"               grad_rho[icv0]="<<grad_rho[icv0][0]<<", "<<grad_rho[icv0][1]<<", "<<grad_rho[icv0][2]<<endl;
-//	printf("               rho1=%.4e, u1=(%.4e, %.4e, %.4e), p1=%.4e, T1=%.4e, h1=%.4e, R1=%.4e, gam1=%.4e, kineFA1=%.3e\n", rho1.value(), u1[0].value(), u1[1].value(), u1[2].value(), p1.value(), T1.value(), h1.value(), R1.value(), gam1.value(), kineFA1.value());	printf("\n");
-}
-
 			// .............................................................................................
 			// calculate implicit matrix using HLLC
 			// .............................................................................................
@@ -2510,16 +2344,6 @@ if(mpi_rank==0 && icv0==0 && ifa==51535) {
 							freeMemForCalcEulerFlux1D_AD(Apl, Ami, AplScal, AmiScal, FrhoScal, Scalar0, Scalar1, ScalCV0, ScalCV1, ScalConvTerm, nScal);
 							throw(IKEWITHMODELS_ERROR_CODE);
 						}
-
-//IKJ
-if(mpi_rank==0 && icv0==0 && ifa==227) {
-    printf("=> IkeWithModels_AD::calcEulerFlux1D_AD: SYMM or WALL ifa=%d  icvCenter=%d, mpi_rank=%d\n", ifa, icvCenter, mpi_rank);
-    printf("               Frho=%.6e, Frhou=(%.4e,%.4e,%.4e), FrhoE=%.4e\n", Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
-    printf("               rho=%.6e, vel=(%.6e, %e, %e), press=%.6e, temp=%.6e, enthalpy=%e, RoM=%e, gamma=%e, kineFA=%e\n", rho[icv1].value(), vel[icv1][0].value(),vel[icv1][1].value(),vel[icv1][2].value(), press[icv1].value(), temp[icv1].value(), enthalpy[icv1].value(), RoM[icv1].value(), gamma[icv1].value(), kineFA.value());
-    printf("\n");
-}
-
-
 
 						if (flagImplicit && icv0 < ncv) {
 							calcEulerFluxMatrices_HLLC_AD(Apl, NULL, AplScal, AmiScal,
@@ -2648,17 +2472,6 @@ if(mpi_rank==0 && icv0==0 && ifa==227) {
 							freeMemForCalcEulerFlux1D_AD(Apl, Ami, AplScal, AmiScal, FrhoScal, Scalar0, Scalar1, ScalCV0, ScalCV1, ScalConvTerm, nScal);
 							throw(IKEWITHMODELS_ERROR_CODE);
 						}
-
-if(mpi_rank==0 && icv0==0) {
-    printf("=> IkeWithModels_AD::calcEulerFlux1D_AD: flux at boundary (HOOK, DIRI(CBC), NEUM) ifa=%d(%.2e,%.2e,%.2e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
-    printf("      Details: mpi_rank=%d, icvCenter=%d, Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%3e\n", mpi_rank, icvCenter, Frho.value(), Frhou[0].value(),Frhou[1].value(),Frhou[2].value(), FrhoE.value());
-    printf("               icv1=%d(%.2e,%.2e,%.2e) \n", icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
-    printf("               rho0=%.3e, u0=(%.3e, %.3e, %.3e), p0=%.3e, T0=%.3e, h0=%.3e, R0=%.3e, gam0=%.3e, kineFA0=%.3e\n", rho0.value(), u0[0].value(), u0[1].value(), u0[2].value(), p0.value(), T0.value(), h0.value(), R0.value(), gam0.value(), kineFA0.value());
-    printf("               rho=%.3e, vel=(%.3e, %.3e, %.3e), press=%.3e, temp=%.3e, enthalpy=%.3e, RoM=%.3e, gamma=%.3e, kineFA=%.3e\n", rho[icv1].value(), vel[icv1][0].value(),vel[icv1][1].value(),vel[icv1][2].value(), press[icv1].value(), temp[icv1].value(), enthalpy[icv1].value(), RoM[icv1].value(), gamma[icv1].value(), kineFA1.value());
-    printf("\n");
-}
-
-
 
 						if (flagImplicit && icv0 < ncv) {
 							calcEulerFluxMatrices_HLLC_AD(Apl, NULL, AplScal, AmiScal,

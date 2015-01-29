@@ -1857,98 +1857,173 @@ public:   // member functions
   // \brief Compute for a given temperature the properties of the mixture at a face.
   virtual void ComputeBCProperties_T(FaZone *zone)
   {
-  //  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-      for (int index = 0; index < zone->faVec.size(); ++index) {
-      int ifa = zone->faVec[index];
-      int icv1 = cvofa[ifa][1];
-      gamma[icv1] = GAMMA;
-      RoM[icv1] = R_gas;
-      enthalpy[icv1] = GAMMA*R_gas/(GAMMA-1.0)*temp[icv1]; //TODO: why is enthalpy here?
-    }
+	  //  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+	  for (int index = 0; index < zone->faVec.size(); ++index) {
+		  int ifa = zone->faVec[index];
+		  int icv1 = cvofa[ifa][1];
+		  gamma[icv1] = GAMMA;
+		  RoM[icv1] = R_gas;
+		  enthalpy[icv1] = GAMMA*R_gas/(GAMMA-1.0)*temp[icv1]; //TODO: why is enthalpy here?
+	  }
 
-    if (mu_ref > 0.0)
-    {
-      if (viscMode == "SUTHERLAND")
-      {
-       for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-       {
-	//for (int index = 0; index < zone->faVec.size(); ++index) {
-         // int ifa = zone->faVec[index];
-          int icv1 = cvofa[ifa][1];
-          mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref+SL_Sref)/(temp[icv1]+SL_Sref);
-        }
-      }
-      else if (viscMode == "POWERLAW")
-      {
-        for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-        {
-	//for (int index = 0; index < zone->faVec.size(); ++index) {
-        //  int ifa = zone->faVec[index];
-          int icv1 = cvofa[ifa][1];
-          mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
-        }
-      }
-      else
-      {
-        cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-        throw(-1);
-      }
+	  if (mu_ref > 0.0)
+	  {
+		  if (viscMode == "SUTHERLAND")
+		  {
+			  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+			  {
+				  //for (int index = 0; index < zone->faVec.size(); ++index) {
+				  // int ifa = zone->faVec[index];
+				  int icv1 = cvofa[ifa][1];
+				  mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref+SL_Sref)/(temp[icv1]+SL_Sref);
+			  }
+		  }
+		  else if (viscMode == "POWERLAW")
+		  {
+			  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+			  {
+				  //for (int index = 0; index < zone->faVec.size(); ++index) {
+				  //  int ifa = zone->faVec[index];
+				  int icv1 = cvofa[ifa][1];
+				  mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
+			  }
+		  }
+		  else
+		  {
+			  cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+			  throw(-1);
+		  }
 
-      for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-      {
-	//for (int index = 0; index < zone->faVec.size(); ++index) {
-        //  int ifa = zone->faVec[index];
-        lamOcp_fa[ifa] = mul_fa[ifa]/Pr;
-        }
-       }
+		  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+		  {
+			  //for (int index = 0; index < zone->faVec.size(); ++index) {
+			  //  int ifa = zone->faVec[index];
+			  lamOcp_fa[ifa] = mul_fa[ifa]/Pr;
+		  }
+	  }
   }  
   
+  /*
+   * Method: ComputeBCProperties1D_T
+   * -------------------------------
+   * brief Compute for a given temperature the properties of the mixture at a face.
+   * Original code: ComputeBCProperties1D_T_AD() in IkeWithModel.cpp and ComputeBCProperties_T() UgpWithCvCompFlow.h
+   *                In an old version, this method used to be in IkeUgpWithCvCompFlow.h
+   *                but moved to here so that CombModel_FPVA_Coeff.h can recognize this method.
+   * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
+   */
+  virtual void ComputeBCProperties1D_T(const int ifa) {
+	  double *gamma = UgpWithCvCompFlow::gamma;
+	  double *RoM = UgpWithCvCompFlow::RoM;
+	  double *enthalpy = UgpWithCvCompFlow::enthalpy;
+	  double *temp = UgpWithCvCompFlow::temp;
+	  double *mul_fa = UgpWithCvCompFlow::mul_fa;
+	  double *lamOcp_fa = UgpWithCvCompFlow::lamOcp_fa;
+
+	  int icv1=cvofa[ifa][1];
+	  gamma[icv1] = GAMMA;
+	  RoM[icv1] = R_gas;
+	  enthalpy[icv1] = GAMMA * R_gas / (GAMMA - 1.0) * temp[icv1];
+
+	  if (mu_ref > 0.0) {
+		  if (viscMode == "SUTHERLAND") {
+			  int icv1=cvofa[ifa][1];
+			  mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref + SL_Sref)/(temp[icv1] + SL_Sref);
+		  } else if (viscMode == "POWERLAW") {
+			  int icv1=cvofa[ifa][1];
+			  mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
+		  } else {
+			  cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+			  throw(-1);
+		  }
+
+		  lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+	  }
+  }
+
   // \brief Compute for a given enthalpy the properties of the mixture at a face.
   virtual void ComputeBCProperties_H(FaZone *zone)
   {
-    //for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-	for (int index = 0; index < zone->faVec.size(); ++index) {
-          int ifa = zone->faVec[index];
-      int icv1 = cvofa[ifa][1];
-      gamma[icv1] = GAMMA;
-      RoM[icv1] = R_gas;
-      temp[icv1] = enthalpy[icv1]*(GAMMA-1.0)/(GAMMA*R_gas);
-    }
+	  //for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+	  for (int index = 0; index < zone->faVec.size(); ++index) {
+		  int ifa = zone->faVec[index];
+		  int icv1 = cvofa[ifa][1];
+		  gamma[icv1] = GAMMA;
+		  RoM[icv1] = R_gas;
+		  temp[icv1] = enthalpy[icv1]*(GAMMA-1.0)/(GAMMA*R_gas);
+	  }
 
-    if (mu_ref > 0.0)
-    {
-      if (viscMode == "SUTHERLAND")
-      {
-        for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-        {
-	//for (int index = 0; index < zone->faVec.size(); ++index) {
-          //int ifa = zone->faVec[index];
-          int icv1 = cvofa[ifa][1];
-          mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref+SL_Sref)/(temp[icv1]+SL_Sref);
-        }
-      }
-      else if (viscMode == "POWERLAW")
-      {
-        for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-        {
-	//for (int index = 0; index < zone->faVec.size(); ++index) {
-        //  int ifa = zone->faVec[index];
-          int icv1 = cvofa[ifa][1];
-          mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
-        }
-      }
-      else
-      {
-        cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
-        throw(-1);
-      }
-      for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
-        {
-	//for (int index = 0; index < zone->faVec.size(); ++index) {
-         // int ifa = zone->faVec[index];
-        lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
-      }
-    }
+	  if (mu_ref > 0.0)
+	  {
+		  if (viscMode == "SUTHERLAND")
+		  {
+			  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+			  {
+				  //for (int index = 0; index < zone->faVec.size(); ++index) {
+				  //int ifa = zone->faVec[index];
+				  int icv1 = cvofa[ifa][1];
+				  mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref+SL_Sref)/(temp[icv1]+SL_Sref);
+			  }
+		  }
+		  else if (viscMode == "POWERLAW")
+		  {
+			  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+			  {
+				  //for (int index = 0; index < zone->faVec.size(); ++index) {
+				  //  int ifa = zone->faVec[index];
+				  int icv1 = cvofa[ifa][1];
+				  mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
+			  }
+		  }
+		  else
+		  {
+			  cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+			  throw(-1);
+		  }
+		  for (int ifa = zone->ifa_f; ifa <= zone->ifa_l; ifa++)
+		  {
+			  //for (int index = 0; index < zone->faVec.size(); ++index) {
+			  // int ifa = zone->faVec[index];
+			  lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+		  }
+	  }
+  }
+
+  /*
+   * Method: ComputeBCProperties1D_H
+   * -------------------------------
+   * brief Compute for a given enthalpy the properties of the mixture at a face.
+   * Original code: ComputeBCProperties1D_H_AD() in UgpWithCvCompFlowAD.h
+   *                In an old version, this method used to be in IkeUgpWithCvCompFlow.h
+   *                but moved to here so that CombModel_FPVA_Coeff.h can recognize this method.
+   */
+  virtual void ComputeBCProperties1D_H(const int ifa) {
+	  double *gamma = UgpWithCvCompFlow::gamma;
+	  double *RoM = UgpWithCvCompFlow::RoM;
+	  double *enthalpy = UgpWithCvCompFlow::enthalpy;
+	  double *temp = UgpWithCvCompFlow::temp;
+	  double *mul_fa = UgpWithCvCompFlow::mul_fa;
+	  double *lamOcp_fa = UgpWithCvCompFlow::lamOcp_fa;
+
+	  int icv1 = cvofa[ifa][1];
+	  gamma[icv1] = GAMMA;
+	  RoM[icv1] = R_gas;
+	  temp[icv1] = enthalpy[icv1]*(GAMMA-1.0)/(GAMMA*R_gas);
+
+	  if (mu_ref > 0.0) {
+		  if (viscMode == "SUTHERLAND") {
+			  int icv1 = cvofa[ifa][1];
+			  mul_fa[ifa] = mu_ref*pow(temp[icv1]/SL_Tref, 1.5)*(SL_Tref+SL_Sref)/(temp[icv1]+SL_Sref);
+		  } else if (viscMode == "POWERLAW") {
+			  int icv1 = cvofa[ifa][1];
+			  mul_fa[ifa] = mu_ref*pow(temp[icv1]/T_ref, mu_power_law);
+		  } else {
+			  cerr << "viscosity mode not recognized, current options are \"MU_MODE = SUTHERLAND\" and \"MU_MODE = POWERLAW\"" << endl;
+			  throw(-1);
+		  }
+
+		  lamOcp_fa[ifa] = mul_fa[ifa] / Pr;
+	  }
   }
 
 

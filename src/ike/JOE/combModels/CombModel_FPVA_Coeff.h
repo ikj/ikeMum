@@ -231,110 +231,110 @@ public:
    */
   virtual void calcStateVariables()
   {
-    double E, cp;
-    double kinecv = 0.0;
-	double CmeanSource_n, CmeanSource_np1;
-	  
-    ComputeScalarDissipation(chi);
+	  double E, cp;
+	  double kinecv = 0.0;
+	  double CmeanSource_n, CmeanSource_np1;
 
-	  
-    for (int icv = 0; icv < ncv; icv++)
-    {
-		
-		if (Comb_Reg == "HOT_FILTER") {
-			double relaxation = getDoubleParam("SOURCE_RELAXATION", "1.0");
-			if ((relaxation > 0.0) && (relaxation < 1.0)) CmeanSource_n = CmeanSource[icv];
-		}
-		
-      // Read and interpolate coefficients from chemistry table and save source term for progress variable
-      myChemTable.LookupCoeff(RoM[icv], T0, E0, GAMMA0, AGAMMA, MU0, AMU, LOC0, ALOC, CmeanSource[icv], ZMean[icv], ZVar[icv], CMean[icv]);
+	  ComputeScalarDissipation(chi);
 
-      if ((Comb_Reg == "COLD") || (Comb_Reg == "COLD_SOURCE"))
-        CmeanSource[icv] = 0.0;
-		
-	  // Relaxation of the source term	
-		if (Comb_Reg == "HOT_FILTER") {
-			double relaxation = getDoubleParam("SOURCE_RELAXATION", "1.0");
-			if ((relaxation > 0.0) && (relaxation < 1.0)) {
-				CmeanSource_np1 = CmeanSource[icv];
-				CmeanSource[icv] = CmeanSource_n + (CmeanSource_np1 - CmeanSource_n)*relaxation;
-			}
-		}
-      
-      for (int i=0; i<3; i++)
-        vel[icv][i] = rhou[icv][i]/rho[icv];
 
-      if (kine != NULL)
-        kinecv = kine[icv];
-      
-      E = rhoE[icv] / rho[icv] - 0.5 * vecDotVec3d(vel[icv], vel[icv]) - kinecv;
+	  for (int icv = 0; icv < ncv; icv++)
+	  {
 
-      // Compute mixture temperature from energy and species mass fractions
-      if (AGAMMA == 0.0)
-        temp[icv] = T0 + (GAMMA0 - 1.0) / RoM[icv] * (E - E0);
-      else
-        temp[icv] = T0 + (GAMMA0 - 1.0) / AGAMMA * (exp(AGAMMA * (E - E0) / RoM[icv]) - 1.0);
-      
-      // Temperature clipping
-      temp[icv] = max(temp[icv], Tminimum);
+		  if (Comb_Reg == "HOT_FILTER") {
+			  double relaxation = getDoubleParam("SOURCE_RELAXATION", "1.0");
+			  if ((relaxation > 0.0) && (relaxation < 1.0)) CmeanSource_n = CmeanSource[icv];
+		  }
 
-      // Compute mixture enthalpy and pressure
-      enthalpy[icv] = E + RoM[icv] * temp[icv];
-      press[icv] = rho[icv] * RoM[icv] * temp[icv];
-          
-      // Compute mixture viscosity, heat conductivity, gamma, speed of sound
-      muLam[icv] = MU0 * pow(temp[icv] / T0, 0.7);
-      LambdaOverCp[icv] = LOC0 * pow(temp[icv] / T0, 0.62);
-      gamma[icv] = GAMMA0 + AGAMMA * (temp[icv] - T0);
-      sos[icv] = sqrt(gamma[icv] * press[icv] / rho[icv]);
+		  // Read and interpolate coefficients from chemistry table and save source term for progress variable
+		  myChemTable.LookupCoeff(RoM[icv], T0, E0, GAMMA0, AGAMMA, MU0, AMU, LOC0, ALOC, CmeanSource[icv], ZMean[icv], ZVar[icv], CMean[icv]);
 
-      if ((isnan(press[icv]) || (press[icv]<= 0.0)))
-      {
-        cout << "WARNING! :" << mpi_rank<<endl;
-        cout << "T0, E0, GAMMA0, AGAMMA, MU0= "<<T0 << " "<<E0<< " "<<" "<<GAMMA0<<" "<<AGAMMA<<" "<<MU0 << endl;
-        cout << "x = " << x_cv[icv][0] << " / " << x_cv[icv][1]  << " / " << x_cv[icv][2] << endl;
-        cout << "press = " << press[icv] << "  rho = " << rho[icv] << "  temp = " << temp[icv] << "  RoM = " << RoM[icv] << "  E = " << E <<
-        "  rhoE = " << rhoE[icv] << "  1/2u^2 = " << 0.5 * vecDotVec3d(vel[icv], vel[icv]) 
-	<< "  ZM = " << ZMean[icv] 
-	<< "  Zv = " << ZVar[icv] 
-	<< "  CM = " << CMean[icv]<<endl;
-        throw(-1);
-      }
+		  if ((Comb_Reg == "COLD") || (Comb_Reg == "COLD_SOURCE"))
+			  CmeanSource[icv] = 0.0;
 
-       
-      
-      // Save additional species/scalars for output
-      for (int i=0; i<OutputSpeciesName.size(); i++)
-      {
-        string SpeciesName = OutputSpeciesName[i];
-        double *Species = getScalar(SpeciesName.c_str());  
-        Species[icv] = myChemTable.Lookup(ZMean[icv], ZVar[icv], CMean[icv], SpeciesName);
-      }
-      
+		  // Relaxation of the source term
+		  if (Comb_Reg == "HOT_FILTER") {
+			  double relaxation = getDoubleParam("SOURCE_RELAXATION", "1.0");
+			  if ((relaxation > 0.0) && (relaxation < 1.0)) {
+				  CmeanSource_np1 = CmeanSource[icv];
+				  CmeanSource[icv] = CmeanSource_n + (CmeanSource_np1 - CmeanSource_n)*relaxation;
+			  }
+		  }
+
+		  for (int i=0; i<3; i++)
+			  vel[icv][i] = rhou[icv][i]/rho[icv];
+
+		  if (kine != NULL)
+			  kinecv = kine[icv];
+
+		  E = rhoE[icv] / rho[icv] - 0.5 * vecDotVec3d(vel[icv], vel[icv]) - kinecv;
+
+		  // Compute mixture temperature from energy and species mass fractions
+		  if (AGAMMA == 0.0)
+			  temp[icv] = T0 + (GAMMA0 - 1.0) / RoM[icv] * (E - E0);
+		  else
+			  temp[icv] = T0 + (GAMMA0 - 1.0) / AGAMMA * (exp(AGAMMA * (E - E0) / RoM[icv]) - 1.0);
+
+		  // Temperature clipping
+		  temp[icv] = max(temp[icv], Tminimum);
+
+		  // Compute mixture enthalpy and pressure
+		  enthalpy[icv] = E + RoM[icv] * temp[icv];
+		  press[icv] = rho[icv] * RoM[icv] * temp[icv];
+
+		  // Compute mixture viscosity, heat conductivity, gamma, speed of sound
+		  muLam[icv] = MU0 * pow(temp[icv] / T0, 0.7);
+		  LambdaOverCp[icv] = LOC0 * pow(temp[icv] / T0, 0.62);
+		  gamma[icv] = GAMMA0 + AGAMMA * (temp[icv] - T0);
+		  sos[icv] = sqrt(gamma[icv] * press[icv] / rho[icv]);
+
+		  if ((isnan(press[icv]) || (press[icv]<= 0.0)))
+		  {
+			  cout << "WARNING! :" << mpi_rank<<endl;
+			  cout << "T0, E0, GAMMA0, AGAMMA, MU0= "<<T0 << " "<<E0<< " "<<" "<<GAMMA0<<" "<<AGAMMA<<" "<<MU0 << endl;
+			  cout << "x = " << x_cv[icv][0] << " / " << x_cv[icv][1]  << " / " << x_cv[icv][2] << endl;
+			  cout << "press = " << press[icv] << "  rho = " << rho[icv] << "  temp = " << temp[icv] << "  RoM = " << RoM[icv] << "  E = " << E <<
+					  "  rhoE = " << rhoE[icv] << "  1/2u^2 = " << 0.5 * vecDotVec3d(vel[icv], vel[icv])
+			  << "  ZM = " << ZMean[icv]
+			                        << "  Zv = " << ZVar[icv]
+			                                             << "  CM = " << CMean[icv]<<endl;
+			  throw(-1);
+		  }
+
+
+
+		  // Save additional species/scalars for output
+		  for (int i=0; i<OutputSpeciesName.size(); i++)
+		  {
+			  string SpeciesName = OutputSpeciesName[i];
+			  double *Species = getScalar(SpeciesName.c_str());
+			  Species[icv] = myChemTable.Lookup(ZMean[icv], ZVar[icv], CMean[icv], SpeciesName);
+		  }
+
 #ifdef PRESSURE_SCALING_FPVA_COEFF
-      // rescale source term
-      CmeanSource[icv] *= pow( press[icv]/Preference , PRESSURE_SCALING_FPVA_COEFF ) ;
+		  // rescale source term
+		  CmeanSource[icv] *= pow( press[icv]/Preference , PRESSURE_SCALING_FPVA_COEFF ) ;
 #endif      
 
-    }
-	  
+	  }
+
 
 	  // Implicit smoothing of the progresive variable
 	  if (Comb_Reg == "HOT_FILTER") {
-		  		  
+
 		  int nSmooth = getIntParam("NSMOOTH_MEANSOURCE", "1");
 		  double smooth_coeff = 0.75;
 		  double *CmeanSource_old = new double[ncv];
 		  double *CmeanSource_sum = new double[ncv];
-		  
+
 		  for (int icv = 0; icv < ncv; icv++)
 			  CmeanSource_old[icv] = CmeanSource[icv];
-		  
+
 		  for (int iSmooth = 0; iSmooth < nSmooth; iSmooth++) {
-			  
+
 			  for (int icv = 0; icv < ncv; icv++)
 				  CmeanSource_sum[icv] = 0.0;
-			  
+
 			  for (int ifa = nfa_b; ifa < nfa; ifa++) {
 				  int icv0 = cvofa[ifa][0]; int icv1 = cvofa[ifa][1];
 				  if (icv1 < ncv) {
@@ -342,44 +342,44 @@ public:
 					  CmeanSource_sum[icv1] += CmeanSource[icv0];
 				  }
 			  }
-			  
+
 			  for (int icv = 0; icv < ncv; icv++) {
 				  int non_f = nbocv_i[icv];
 				  int non_l = nbocv_i[icv+1]-1;
 				  double nneigh = double(non_l-non_f);
 				  CmeanSource[icv] = (CmeanSource_old[icv] + smooth_coeff*CmeanSource_sum[icv]) 
-				  / (1.0 + smooth_coeff*nneigh);
+						  / (1.0 + smooth_coeff*nneigh);
 			  }
-			  
+
 			  for (int ifa = 0; ifa < nfa_b; ifa++) {
 				  int icv0 = cvofa[ifa][0];
 				  CmeanSource[icv0] = CmeanSource_old[icv0];
 			  }
 		  }
-		  
+
 		  delete [] CmeanSource_old;
 		  delete [] CmeanSource_sum;
 	  }
-	  
-	  
-    updateCvDataG1G2(vel, REPLACE_ROTATE_DATA);
-    updateCvDataG1G2(temp, REPLACE_DATA);
-    updateCvDataG1G2(RoM, REPLACE_DATA);
-    updateCvDataG1G2(enthalpy, REPLACE_DATA);
-    updateCvDataG1G2(press, REPLACE_DATA);
-    updateCvDataG1G2(gamma, REPLACE_DATA);
-    updateCvDataG1G2(sos, REPLACE_DATA);
-    updateCvDataG1G2(muLam, REPLACE_DATA);
-    updateCvDataG1G2(LambdaOverCp, REPLACE_DATA);
-    updateCvDataG1G2(CmeanSource, REPLACE_DATA);
-//    updateCvDataG1G2(rhoDkZ, REPLACE_DATA);
-    
-    for (int i=0; i<OutputSpeciesName.size(); i++)
-    {
-      string SpeciesName = OutputSpeciesName[i];
-      double *Species = getScalar(SpeciesName.c_str());  
-      updateCvDataG1G2(Species, REPLACE_DATA);
-    }    
+
+
+	  updateCvDataG1G2(vel, REPLACE_ROTATE_DATA);
+	  updateCvDataG1G2(temp, REPLACE_DATA);
+	  updateCvDataG1G2(RoM, REPLACE_DATA);
+	  updateCvDataG1G2(enthalpy, REPLACE_DATA);
+	  updateCvDataG1G2(press, REPLACE_DATA);
+	  updateCvDataG1G2(gamma, REPLACE_DATA);
+	  updateCvDataG1G2(sos, REPLACE_DATA);
+	  updateCvDataG1G2(muLam, REPLACE_DATA);
+	  updateCvDataG1G2(LambdaOverCp, REPLACE_DATA);
+	  updateCvDataG1G2(CmeanSource, REPLACE_DATA);
+	  //    updateCvDataG1G2(rhoDkZ, REPLACE_DATA);
+
+	  for (int i=0; i<OutputSpeciesName.size(); i++)
+	  {
+		  string SpeciesName = OutputSpeciesName[i];
+		  double *Species = getScalar(SpeciesName.c_str());
+		  updateCvDataG1G2(Species, REPLACE_DATA);
+	  }
   }
   
 #ifdef MIXING_VISCOSITY  
@@ -563,18 +563,28 @@ public:
 			  ComputeProperties_vis(mul_fa[ifa],lamOcp_fa[ifa],temp[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
 		  }
 	  }
-
-//IKJ
-for (int index = 0; index < zone->faVec.size(); ++index) {
-  int ifa = zone->faVec[index];
-  int icv1 = cvofa[ifa][1];
-  if(mpi_rank==0 && ifa==227) {
-	  cout<<"CombModel_FPVA_Coeff::ComputeBCProperties_T(): ifa="<<ifa<<", icv1="<<icv1<<": enthalpy="<<enthalpy[icv1]<<endl;
-	  cout<<"                                               ZMean="<<zM_fa[icv1]<<", ZVar="<<zV_fa[icv1]<<", CMean="<<cM_fa[icv1]<<endl;
-  }
-}
   }
   
+  /*
+   * Method: ComputeBCProperties1D_T
+   * -------------------------------
+   * brief Compute for a given temperature the properties of the mixture at a face.
+   * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
+   */
+  virtual void ComputeBCProperties1D_T(const int ifa) {
+	  ScalarTranspEq *eq;
+	  eq = getScalarTransportData("ZMean");       double *zM_fa = eq->phi;
+	  eq = getScalarTransportData("ZVar");        double *zV_fa = eq->phi;
+	  eq = getScalarTransportData("CMean");       double *cM_fa = eq->phi;
+
+	  int icv1 = cvofa[ifa][1];
+
+	  ComputeProperties_T(enthalpy[icv1],RoM[icv1],gamma[icv1],temp[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
+
+	  if (mu_ref > 0.0)
+		  ComputeProperties_vis(mul_fa[ifa],lamOcp_fa[ifa],temp[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
+  }
+
   // \brief Compute for a given enthalpy the properties of the mixture at a face.
   virtual void ComputeBCProperties_H(FaZone *zone)
   {    
@@ -598,6 +608,25 @@ for (int index = 0; index < zone->faVec.size(); ++index) {
     }
   }
   
+  /*
+   * Method: ComputeBCProperties1D_H
+   * -------------------------------
+   * brief Compute for a given enthalpy the properties of the mixture at a face.
+   */
+  virtual void ComputeBCProperties1D_H(const int ifa) {
+	  ScalarTranspEq *eq;
+	  eq = getScalarTransportData("ZMean");       double *zM_fa = eq->phi;
+	  eq = getScalarTransportData("ZVar");        double *zV_fa = eq->phi;
+	  eq = getScalarTransportData("CMean");       double *cM_fa = eq->phi;
+
+	  int icv1 = cvofa[ifa][1];
+
+	  ComputeProperties_H(temp[icv1],RoM[icv1],gamma[icv1],enthalpy[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
+
+	  if (mu_ref > 0.0)
+		  ComputeProperties_vis(mul_fa[ifa],lamOcp_fa[ifa],temp[icv1],zM_fa[icv1],zV_fa[icv1],cM_fa[icv1]);
+  }
+
   /*! \brief Compute for a given temperature the properties of the mixture.
    *
    *  The enthalpy (chemical + sensible) is a function of temperature and mixture composition. 

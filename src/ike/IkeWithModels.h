@@ -430,39 +430,6 @@ protected:
 	 */
 	void setScalarBC1D(const int ifa);
 
-	/*
-	 * Method: ComputeBCProperties1D_T_AD
-	 * ----------------------------------
-	 * brief Compute for a given temperature the properties of the mixture at a face.
-	 * Original code: ComputeBCProperties_T_AD() in UgpWithCvCompFlowAD.h
-	 */
-	void ComputeBCProperties1D_T_AD(const int ifa);
-
-	/*
-	 * Method: ComputeBCProperties1D_T
-	 * -------------------------------
-	 * brief Compute for a given temperature the properties of the mixture at a face.
-	 * Original code: ComputeBCProperties1D_T_AD() in IkeWithModel.cpp and ComputeBCProperties_T() UgpWithCvCompFlow.h
-	 * In some situation, setBC() in JoeWithModels.cpp cannot update ggf faces. Thus, the user needs to manually update them.
-	 */
-	void ComputeBCProperties1D_T(const int ifa);
-
-	/*
-	 * Method: ComputeBCProperties1D_H_AD
-	 * ----------------------------------
-	 * brief Compute for a given enthalpy the properties of the mixture at a face.
-	 * Original code: ComputeBCProperties1D_H_AD() in UgpWithCvCompFlowAD.h
-	 */
-	void ComputeBCProperties1D_H_AD(const int ifa);
-
-	/*
-	 * Method: ComputeBCProperties1D_H
-	 * -------------------------------
-	 * brief Compute for a given enthalpy the properties of the mixture at a face.
-	 * Original code: ComputeBCProperties1D_H_AD() in UgpWithCvCompFlowAD.h
-	 */
-	void ComputeBCProperties1D_H(const int ifa);
-
 #ifdef USE_MEM_SAVING_ADVAR_1D_
 	/*
 	 * Method: calcRhs1D_AD

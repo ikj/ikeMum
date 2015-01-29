@@ -1310,6 +1310,18 @@ public:
 			string &filename, const int nVars, const int *cvora, const int *cv_gl);
 
 	/*
+	 * Method: writeCompatibilityEveryPtsOnTxtFile
+	 * -------------------------------------------
+	 * Compare RHS from IKE and JOE, and write the difference if the difference is greater than threshold.
+	 * This is useful when Tecplot is not avilable or when you find the ICVs where the differnce is huge.
+	 * Filename is always ERROR_IKE_JOE.csv
+	 * The format of the file is "mpi_rank, icv, x_cv[0], x_cv[1], x_cv[2], var(int), diffABS(double)"
+	 * The first 2*nVars lines are always the min & max coordinate of the given computational domain
+	 * (This information is useful when you make a plot with GnuPlot), and its diffABS is always zero.
+	 */
+	void writeCompatibilityEveryPtsOnTxtFile(const double threshold, const int nVars, double* rhsForAD, double* rhsForNormal);
+
+	/*
 	 * Method: writeQoIOnFile
 	 * ----------------------
 	 * By default, averaged density, maximum pressure, and subsonic portion will be stored
