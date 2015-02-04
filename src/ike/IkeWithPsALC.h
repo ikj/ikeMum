@@ -788,9 +788,17 @@ public:
 	/*
 	 * Method: print_tapestats
 	 * -----------------------
-	 * Original code: print_tapestats() in the JoeWithModels_AD class
+	 * Original code: print_tapestats() in the JoeWithModels_AD class.
 	 */
 	void print_tapestats(int tag);
+
+	/*
+	 * Method: countMemoryDeficit_fromTapeStats
+	 * ----------------------------------------
+	 * Return the size of the memory deficit = the number of live active variables - the buffer size
+	 *                                         (Positive = memory is not enough).
+	 */
+	int countMemoryDeficit_fromTapeStats(int tag);
 
 	/****************************
 	 * HOOK FUNCTIONS

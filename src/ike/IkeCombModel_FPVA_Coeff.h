@@ -318,7 +318,6 @@ public:
 			cout<<classID<<"::finalHookScalarRansCombModel1D_AD(): Reset CMean-related pointers as NULL "<<endl;
 	}
 
-
 	/*
 	 * Method: initialHookScalarRansCombModel_AD()
 	 * -------------------------------------------

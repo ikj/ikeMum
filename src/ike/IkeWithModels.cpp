@@ -1845,14 +1845,6 @@ int IkeWithModels_AD::calcRhs1D_AD(int icvCenter, REALA &rhs_rho, REALA rhs_rhou
 	sourceHookRansTurb1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, A);
 	sourceHookRansComb1D_AD(icvCenter, rhs_rho, rhs_rhou, rhs_rhoE, A);
 
-if(mpi_rank==0 && icvCenter==1074) {
-	cout<<"======================================================"<<endl;
-	cout<<"IkeWithModels_AD::calcRhs1D_AD: Tape stats (mpi_rank="<<mpi_rank<<", icv="<<icvCenter<<") -- After calcViscousFluxNS1D_AD()"<<endl;
-	cout<<"======================================================"<<endl;
-	print_tapestats(mpi_rank);
-	cout<<endl;
-}
-
 	// =======================================================================================
 	// SCALARS
 	// =======================================================================================

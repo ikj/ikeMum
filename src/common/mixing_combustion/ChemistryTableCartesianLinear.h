@@ -68,6 +68,18 @@ public:
 
     interp = new InterpolationIndex(3,2);
   }
+
+  ~ChemtableCartesianLinear() {
+	  if (mpi_rank == 0)
+		  cout << "~ChemtableCartesianLinear()" << endl;
+
+	  if(x1 != NULL)   delete [] x1;
+	  if(x2 != NULL)   delete [] x2;
+	  if(x3 != NULL)   delete [] x3;
+	  if(Data != NULL) delete [] Data;
+
+	  delete [] interp;
+  }
   
   /* Accessors */
   /*************/
@@ -639,6 +651,8 @@ public:
       val += weight[2][k] * g[k];
     }
 
+    delete [] weight;
+
     return val;
   }
 
@@ -735,6 +749,8 @@ public:
       }
       val += weight[2][k] * g[k];
     }
+
+    delete [] weight;
 
     return val;
   }
@@ -876,9 +892,11 @@ public:
    */
   void LookupCoeff_AD(adouble &RoM, adouble &T0, adouble &E0, adouble &Gam0, adouble &a_Gam, adouble &mu0, adouble &a_mu,
 		  adouble &lamOcp0, adouble &a_lamOcp, adouble &src_prog, adouble A1, adouble A2, adouble A3) {
-	  adouble coeff[10];
-
-	  adouble (*weight)[2] = new adouble[3][2];
+	  // ** Calculate the interpolation functions (weight) **
+	  adouble (*weight)[2] = new adouble[3][2]; // This "weight" is not a constant but has the dependency on the given A1, A2, A3
+	                                            // (e.g. linear function for linear interpolation).
+	                                            // The values of weight as functions of A1, A2, A3 will be calculated by
+	                                            // calling SetCoordinates_AD() below.
 
 	  // Clip coordinates
 	  adouble A1_clipped = A1;
@@ -889,8 +907,10 @@ public:
 	  if(A2_clipped < x2[1]) A2_clipped = x2[1];  	if(A2_clipped > x2[n2]) A2_clipped = x2[n2];
 	  if(A3_clipped < x3[1]) A3_clipped = x3[1];  	if(A3_clipped > x3[n3]) A3_clipped = x3[n3];
 
-	  // Check if coordinates and weights need to be updated
 	  SetCoordinates_AD(A1_clipped, A2_clipped, A3_clipped, weight);
+
+	  // ** Calculate coefficients **
+	  adouble coeff[10];
 
 	  for (int ll = 0; ll < 10; ll++) {
 		  adouble g[4], f[4];
@@ -918,9 +938,9 @@ public:
 	  lamOcp0  = coeff[7];
 	  a_lamOcp = coeff[8];
 	  src_prog = coeff[9];
+
+	  delete [] weight;
   }
-
-
 
   /***********************************************************************************************************/
 
@@ -975,65 +995,123 @@ public:
     a_Gam    = coeff[4];
   }
 
+//  void LookupSelectedCoeff_AD(adouble &RoM, adouble &T0, adouble &E0, adouble &Gam0, adouble &a_Gam, adouble A1, adouble A2, adouble A3)
+//  {
+//	  int ll;
+//	  adouble coeff[5], g[4], f[4];
+//
+//	  adouble Zm, Zv, Cm;
+//	  Zm = -1.0; Zv = -1.0; Cm = -1.0;
+//	  adouble (*weight)[2] = new adouble[3][2];
+//	  adouble x1_1,  x2_1,  x3_1;
+//	  adouble x1_n1, x2_n2, x3_n3;
+//	  assert(x1 != NULL && x2 != NULL && x3 != NULL);
+//	  x1_1 = x1[1];
+//	  x2_1 = x2[1];
+//	  x3_1 = x3[1];
+//	  x1_n1 = x1[n1];
+//	  x2_n2 = x2[n2];
+//	  x3_n3 = x3[n3];
+//
+//	  // Clip coordinates
+//	  A1 = min(max(A1, x1_1), x1_n1);
+//	  A2 = min(max(A2, x2_1), x2_n2);
+//	  A3 = min(max(A3, x3_1), x3_n3);
+//
+//	  // Check if coordinates and weights need to be updated
+//	  if ((Zm != A1) || (Zv != A2) || (Cm != A3))
+//	  {
+//		  Zm = A1;
+//		  Zv = A2;
+//		  Cm = A3;
+//		  SetCoordinates_AD(Zm, Zv, Cm,weight);
+//	  }
+//
+//	  for (int ll = 0; ll < 5; ll++)
+//	  {
+//		  // Interpolate value based on index and weights for given variable
+//		  coeff[ll] = 0.0;
+//		  for (int k = 0; k < 2; k++)
+//		  {
+//			  g[k] = 0.0;
+//			  for (int j = 0; j < 2; j++)
+//			  {
+//				  f[j] = 0.0;
+//				  for (int i = 0; i < 2; i++)
+//					  f[j] += weight[0][i] * Data[interp->index[0]+i][interp->index[1]+j][interp->index[2]+k][ll];
+//				  g[k] += weight[1][j] * f[j];
+//			  }
+//			  coeff[ll] += weight[2][k] * g[k];
+//		  }
+//	  }
+//
+//	  RoM      = coeff[0];
+//	  T0       = coeff[1];
+//	  E0       = coeff[2];
+//	  Gam0     = coeff[3];
+//	  a_Gam    = coeff[4];
+//
+//	  delete [] weight;
+//  }
+
+  /*
+   * Method: LookupSelectedCoeff_AD()
+   * --------------------------------
+   * Karthik's original code is too slow since the buffer for adoubles becomes full while running this method.
+   * Since the buffer (which is on memory) becomes easily full, the code tries to write data on hard disk, which makes
+   * this method really slow.
+   * Thus few modifications are applied here: Basically to use the minimum number of adoubles.
+   *                                          Also minor improvement to the algorithm.
+   *
+   * Output: 5 variables from the table (RoM, T0, E0, Gam0, a_Gam)
+   * Input : 3 variables (e.g. For FPVA, A1 = ZMean, A2=ZVar, A3=CMean)
+   */
   void LookupSelectedCoeff_AD(adouble &RoM, adouble &T0, adouble &E0, adouble &Gam0, adouble &a_Gam, adouble A1, adouble A2, adouble A3)
   {
-    int ll;
-    adouble coeff[5], g[4], f[4];
- 
-    adouble Zm, Zv, Cm;
-    Zm = -1.0; Zv = -1.0; Cm = -1.0;
-    adouble (*weight)[2] = new adouble[3][2];
-    adouble x1_1,  x2_1,  x3_1;
-    adouble x1_n1, x2_n2, x3_n3;
-    assert(x1 != NULL && x2 != NULL && x3 != NULL);
-    x1_1 = x1[1];
-    x2_1 = x2[1];
-    x3_1 = x3[1];
-    x1_n1 = x1[n1];
-    x2_n2 = x2[n2];
-    x3_n3 = x3[n3];
+	  // ** Calculate the interpolation functions (weight) **
+	  adouble (*weight)[2] = new adouble[3][2]; // This "weight" is not a constant but has the dependency on the given A1, A2, A3
+	                                            // (e.g. linear function for linear interpolation).
+	                                            // The values of weight as functions of A1, A2, A3 will be calculated by
+	                                            // calling SetCoordinates_AD() below.
 
-    // Clip coordinates
-    A1 = min(max(A1, x1_1), x1_n1);
-    A2 = min(max(A2, x2_1), x2_n2);
-    A3 = min(max(A3, x3_1), x3_n3);
-    
-    // Check if coordinates and weights need to be updated
-    if ((Zm != A1) || (Zv != A2) || (Cm != A3))
-    {
-      Zm = A1;
-      Zv = A2;
-      Cm = A3;
-      SetCoordinates_AD(Zm, Zv, Cm,weight);
-    }
-    
-    for (int ll = 0; ll < 5; ll++)
-    {
-      // Interpolate value based on index and weights for given variable
-      coeff[ll] = 0.0;    
-      for (int k = 0; k < 2; k++)
-      {
-        g[k] = 0.0;
-        for (int j = 0; j < 2; j++)
-        {
-          f[j] = 0.0;
-          for (int i = 0; i < 2; i++)
-            f[j] += weight[0][i] * Data[interp->index[0]+i][interp->index[1]+j][interp->index[2]+k][ll];
-          g[k] += weight[1][j] * f[j];
-        }
-        coeff[ll] += weight[2][k] * g[k];
-      }
-    }
-    
-    RoM      = coeff[0];
-    T0       = coeff[1];
-    E0       = coeff[2];
-    Gam0     = coeff[3];
-    a_Gam    = coeff[4];
- }
+	  // Clip coordinates
+	  adouble A1_clipped = A1;
+	  adouble A2_clipped = A2;
+	  adouble A3_clipped = A3;
 
+	  if(A1_clipped < x1[1]) A1_clipped = x1[1];  	if(A1_clipped > x1[n1]) A1_clipped = x1[n1];
+	  if(A2_clipped < x2[1]) A2_clipped = x2[1];  	if(A2_clipped > x2[n2]) A2_clipped = x2[n2];
+	  if(A3_clipped < x3[1]) A3_clipped = x3[1];  	if(A3_clipped > x3[n3]) A3_clipped = x3[n3];
 
+	  SetCoordinates_AD(A1_clipped, A2_clipped, A3_clipped, weight);
 
+	  // ** Calculate coefficients **
+	  adouble coeff[5];
+
+	  for (int ll = 0; ll < 5; ll++) {
+		  adouble g[4], f[4];
+		  // Interpolate value based on index and weights for given variable
+		  coeff[ll] = 0.0;
+		  for (int k = 0; k < 2; k++) {
+			  g[k] = 0.0;
+			  for (int j = 0; j < 2; j++) {
+				  f[j] = 0.0;
+				  for (int i = 0; i < 2; i++)
+					  f[j] += weight[0][i] * Data[interp->index[0]+i][interp->index[1]+j][interp->index[2]+k][ll];
+				  g[k] += weight[1][j] * f[j];
+			  }
+			  coeff[ll] += weight[2][k] * g[k];
+		  }
+	  }
+
+	  RoM      = coeff[0];
+	  T0       = coeff[1];
+	  E0       = coeff[2];
+	  Gam0     = coeff[3];
+	  a_Gam    = coeff[4];
+
+	  delete [] weight;
+  }
 
 
 

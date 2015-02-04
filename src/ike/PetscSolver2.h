@@ -607,7 +607,7 @@ protected:
 					//          The largest singular value is usually accurate to within a few percent if the method has converged.
 					//       3. You may want to disable restarts if using KSPGMRES, otherwise this estimate will only be using those iterations after the last restart.
 			if(mpi_rank==0)
-				cout<<"PetscSolver2::solveGMRES_solver(): Maximum singular value="<<sigmaMax<<", Minimum singular value="<<sigmaMin<<endl;
+				cout<<"           >> PetscSolver2::solveGMRES_solver(): Maximum singular value="<<sigmaMax<<", Minimum singular value="<<sigmaMin<<endl;
 		}
 #endif
 	}

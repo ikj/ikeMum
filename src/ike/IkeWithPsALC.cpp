@@ -1994,6 +1994,7 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 	} else if(debugLevel > 0) {
 		if(mpi_rank==0) {
 			// Header
+			printf("\n");
 			printf("        ITER         RESIDUAL     DELTA_Q       NNZ_JAC  LS_ITER       LS_RESID  NEWTON(JAC/RESID)");
 			if(NcontrolEqns > 0)
 				printf("          LAMBDA\n");
@@ -2469,7 +2470,7 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 				                                                            // we want to calculate the true residual here.
 
 				if(mpi_rank==0)
-					cout<<"WARNING in getSteadySolnByNewton(): Linear solver reaches MAX ITER (iterNewton="<<iterNewton<<"): nIter="<<nIter<<", absResid="<<trueAbsResid<<endl; // absResid<<endl;
+					cout<<"           >> WARNING in getSteadySolnByNewton(): Linear solver reaches MAX ITER (iterNewton="<<iterNewton<<"): nIter="<<nIter<<", absResid="<<trueAbsResid<<endl; // absResid<<endl;
 
 				// Write the residual history on a file
 				if(mpi_rank==0) {
@@ -2490,16 +2491,16 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 						}
 						fclose(fp);
 
-						cout<<"     KSP linear solver residual history: "<<endl;
+						cout<<"           >> KSP linear solver residual history: "<<endl;
 						for(size_t i=0; i<kspMonitorHistory.size(); ++i) {
 							if(kspMonitorHistory[i].first % (monitorConvergInterval*10) == 0) {
 								if(kspMonitorHistory[i].first == minIter)
-									printf("     %5d\t %11.4e (MINIMUM) \n", kspMonitorHistory[i].first, kspMonitorHistory[i].second);
+									printf("             %5d\t %11.4e (MINIMUM) \n", kspMonitorHistory[i].first, kspMonitorHistory[i].second);
 								else
-									printf("     %5d\t %11.4e\n", kspMonitorHistory[i].first, kspMonitorHistory[i].second);
+									printf("             %5d\t %11.4e\n", kspMonitorHistory[i].first, kspMonitorHistory[i].second);
 							} else {
 								if(kspMonitorHistory[i].first == minIter) // Always show the minimul residual even if kspMonitorHistory[i].first % monitorConvergInterval != 0.
-									printf("       %5d\t %11.4e (MINIMUM) \n", kspMonitorHistory[i].first, kspMonitorHistory[i].second);
+									printf("               %5d\t %11.4e (MINIMUM) \n", kspMonitorHistory[i].first, kspMonitorHistory[i].second);
 							}
 						}
 					}
@@ -2593,8 +2594,8 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 
         if(negativeValCount > 0) {
             if(mpi_rank==0) {
-                printf("WARNING! getSteadySolnByNewton(): Checking Negative rho, press, or kine - Negative occurs at total %d CVs / %d FAs\n", negativeValCount_CV, negativeValCount_FA);
-                printf("                                                                          Reduce RELAXATION to %.3e\n", relaxation);
+                printf("           >> WARNING! getSteadySolnByNewton(): Checking Negative rho, press, or kine - Negative occurs at total %d CVs / %d FAs\n", negativeValCount_CV, negativeValCount_FA);
+                printf("                                                                                        Reduce RELAXATION to %.3e\n", relaxation);
             }
             
             updateFlow_primVars(q, phi, -relaxation, nScal); // note: You should not update q here! (because of backtracking)
@@ -2978,9 +2979,9 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 			if(useExactJac) cout<<"Exact)";
 			else            cout<<modifiedNewtonMethod<<")";
 			if(NcontrolEqns > 0) {
-				printf("     %15.8e\n",lambda[0]);
+				printf("     %15.8e\n\n",lambda[0]);
 			} else {
-				printf("\n");
+				printf("\n\n");
 			}
 		}
 
@@ -3500,7 +3501,7 @@ bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhs
 
 	// booleans for first-call
 	static bool firstCall = true;
-	bool firstCallScalarTurb = true, firstCallScalarComb = true;
+	static bool firstCallScalarTurb = true, firstCallScalarComb = true;
 
 #ifndef USE_MEM_SAVING_ADVAR_1D_
 	// allocate memory for flow variables: e.g. rho_AD, rhou_AD, vel, mul_fa, ...
@@ -3772,6 +3773,8 @@ bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhs
 
 	//
 	firstCall = false;
+	firstCallScalarTurb = false;
+	firstCallScalarComb = false;
 
 	MPI_Allreduce(&myCountReducedOrder, &CountReducedOrder, 1, MPI_INT, MPI_SUM, mpi_comm);
 
@@ -4162,7 +4165,7 @@ bool IkeWithPsALC_AD::calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleAr
 	// Start the calculation of Residual wrt flow
 	// +++++++++++++++++++++++++++++++++
 	int tag = mpi_rank;
-	trace_on(tag, 1); // Note: trace_on(tag, keep) -- If keep==1, the numerical values of all active variables
+	trace_on(tag, 0); // Note: trace_on(tag, keep) -- If keep==1, the numerical values of all active variables
                       //       are recorded in a buffered temporary file before they will be overwritten.
                       //       (preparing the scene for an immediately following reverse mode differentiation)
 
@@ -4237,6 +4240,9 @@ bool IkeWithPsALC_AD::calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleAr
 		cout<<"=================================="<<endl;
 		print_tapestats(tag);
 	}
+	int memoryDeficit = countMemoryDeficit_fromTapeStats(tag);
+	if(memoryDeficit > 0)
+		cout<<"WARNING! Too much memory is requires for AD at mpi_rank=="<<mpi_rank<<": memory deficit = "<<memoryDeficit<<endl;
 
 	// +++++++++++++++++++++++++++++++++
 	// Calculate Jacobian
@@ -4333,11 +4339,6 @@ bool IkeWithPsALC_AD::calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleAr
 void IkeWithPsALC_AD::calcJacobian1DAD_calcRhs(double *rhsSingleArray, int &myCountReducedOrder, wallTimeJacCalc &myWTimeJacCalc,
 		const int icv, const int tag, const int nScal, const int debugLevel, const int NcontrolEqns,
 		const bool firstCall, bool &firstCallScalarTurb, bool &firstCallScalarComb) {
-//IKJ
-double wtimeTemp0 = MPI_Wtime();
-double wtimeTemp1 = 0.0;
-
-
 	double myWtime0 = MPI_Wtime();
 	double myWtime1;
 
@@ -4388,7 +4389,7 @@ double wtimeTemp1 = 0.0;
 	// Start the residual calculation
 	// +++++++++++++++++++++++++++++++++
 	try {
-		trace_on(tag, 1); // Note: trace_on(tag, keep) -- If keep==1, the numerical values of all active variables
+		trace_on(tag, 0); // Note: trace_on(tag, keep) -- If keep==1, the numerical values of all active variables
 		                  //       are recorded in a buffered temporary file before they will be overwritten.
 		                  //       (preparing the scene for an immediately following reverse mode differentiation)
 
@@ -4570,22 +4571,9 @@ double wtimeTemp1 = 0.0;
 			cout<<"======================================================"<<endl;
 			print_tapestats(tag);
 		}
-
-
-//IKJ
-wtimeTemp1 = MPI_Wtime();
-if(mpi_rank==0 && icv==1074) {
-	cout<<"======================================================"<<endl;
-	cout<<"IkeWithPsALC_AD::calcJacobian1DAD_calcRhs(): Tape stats (mpi_rank="<<mpi_rank<<", icv="<<icv<<")"<<" -- time="<<wtimeTemp1-wtimeTemp0<<endl;
-	cout<<"                                             tape tag="<<tag<<endl;
-	cout<<"                                             location = ("<<x_cv[icv][0]<<","<<x_cv[icv][1]<<","<<x_cv[icv][2]<<")"<<endl;
-	cout<<"======================================================"<<endl;
-	print_tapestats(tag);
-	cout<<endl;
-}
-wtimeTemp0 = wtimeTemp1;
-
-
+		int memoryDeficit = countMemoryDeficit_fromTapeStats(tag);
+		if(memoryDeficit > 0)
+			cout<<"WARNING! Too much memory is requires for AD at mpi_rank=="<<mpi_rank<<", icv="<<icv<<": memory deficit = "<<memoryDeficit<<endl;
 	}
 	catch (int e) { // Catch and Re-throw
 		trace_off();
@@ -5163,13 +5151,13 @@ double IkeWithPsALC_AD::backtrackForNegativeVals(int &negativeValCount_CV, int &
             }
         }
 
-        if(nScal>0) {
-			int negativeScalar = checkNegativeTurbScalarCv_JOE(myRelax, myRelax, icv, clipParameter, safeParameter, qArray, delQ); // Check negative scalar EXCEPT kine
-			if(negativeScalar > 0) {
-				if(!negativeFound)
-					++myNegativeCount_CV;
-				negativeFound = true;
-			}
+        if(nScal>0 && turbModel != NONE) {
+        	int negativeScalar = checkNegativeTurbScalarCv_JOE(myRelax, myRelax, icv, clipParameter, safeParameter, qArray, delQ); // Check negative scalar EXCEPT kine
+        	if(negativeScalar > 0) {
+        		if(!negativeFound)
+        			++myNegativeCount_CV;
+        		negativeFound = true;
+        	}
         }
     }
     
@@ -5347,7 +5335,7 @@ double IkeWithPsALC_AD::backtrackForNegativeVals(int &negativeValCount_CV, int &
                 // ----------------------------------------
                 // turbulent scalar EXCEPT kine at both faces
                 // ----------------------------------------
-                if(nScal>0) {
+                if(nScal>0 && turbModel != NONE) {
 					int negativeTurbScalar = checkNegativeTurbScalarFa_JOE(ifa, icv0, icv1, true);
 					if(negativeTurbScalar > 0) {
 						if(!negativeFound)
@@ -5429,7 +5417,7 @@ double IkeWithPsALC_AD::backtrackForNegativeVals(int &negativeValCount_CV, int &
                         // ----------------------------------------
                         // turbulent scalar EXCEPT kine at both faces
                         // ----------------------------------------
-                        if(nScal>0) {
+                        if(nScal>0 && turbModel != NONE) {
 							int negativeTurbScalar = checkNegativeTurbScalarFa_JOE(ifa, icv0, icv1, false);
 							if(negativeTurbScalar > 0) {
 								if(!negativeFound)
@@ -6675,7 +6663,7 @@ void IkeWithPsALC_AD::destroy_adoubles(const int NcontrolEqns) {
 /*
  * Method: print_tapestats
  * -----------------------
- * Original code: print_tapestats() in the JoeWithModels_AD class
+ * Original code: print_tapestats() in the JoeWithModels_AD class.
  */
 void IkeWithPsALC_AD::print_tapestats(int tag) {
 	int count[100];
@@ -6687,6 +6675,22 @@ void IkeWithPsALC_AD::print_tapestats(int tag) {
 	printf("Buffer size                    = %6d\n", count[4]);
 	printf("Total number of operations     = %6d\n", count[5]);
 	cout<<"======================================================"<<endl;
+}
+
+/*
+ * Method: countMemoryDeficit_fromTapeStats
+ * ----------------------------------------
+ * Return the size of the memory deficit = the number of live active variables - the buffer size
+ *                                         (Positive = memory is not enough).
+ */
+int IkeWithPsALC_AD::countMemoryDeficit_fromTapeStats(int tag) {
+	int count[100];  // count[0] = number of independents,              count[1] = number of dependents,
+	// count[2] = maximum number of linve active vars, count[3] = size of value stack,
+	// count[4] = buffer size,                         count[5] = total number of operations
+	// count[6-10] = other internal info
+	tapestats(tag, count);
+
+	return count[2] - count[4];
 }
 
 /****************************
@@ -9717,6 +9721,9 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
 			cout<<"=================================="<<endl;
 			print_tapestats(tag);
 		}
+		int memoryDeficit = countMemoryDeficit_fromTapeStats(tag);
+		if(memoryDeficit > 0)
+			cout<<"WARNING! Too much memory is requires for AD at mpi_rank=="<<mpi_rank<<": memory deficit = "<<memoryDeficit<<endl;
 
 		// +++++++++++++++++++++++++++++++++
 		// Free memory
@@ -9890,9 +9897,6 @@ bool IkeWithPsALC_AD::compatibilityCheck() {
         MPI_Barrier(mpi_comm);
     }
 
-//IKJ
-negligibleError = false;
-
 	/* ~~~~~~~~~~~~ */
 	/* Clear memory */
 	/* ~~~~~~~~~~~~ */
@@ -9906,6 +9910,7 @@ negligibleError = false;
 		cout<<endl;
 
 	MPI_Barrier(mpi_comm);
+
 	return negligibleError;
 }
 
