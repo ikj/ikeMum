@@ -575,6 +575,11 @@ public:   // constructors/destructors
     if (grad_rho != NULL)           delete [] grad_rho;
     if (grad_p != NULL)             delete [] grad_p;
     if (grad_u != NULL)             delete [] grad_u;
+
+    if (petscSolver != NULL)        	delete petscSolver;
+    if (petscSolverScalars != NULL) 	delete petscSolverScalars;
+
+    if (nbocv_v_global != NULL) { delete [] nbocv_v_global; 	nbocv_v_global = NULL; }  // I don't know reason but this line will generate a memory crash in the destructor of Ugp (!)
   }
 
 public:   // member variables

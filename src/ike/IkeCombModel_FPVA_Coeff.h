@@ -421,10 +421,10 @@ public:
 				cout << "WARNING! " << classID << "::calcStateVariables1D_AD(): Negative pressure at xcv:"
 				     << x_cv[icv_nbr][0] << ", " << x_cv[icv_nbr][1]  << ", " << x_cv[icv_nbr][2] << endl;
 				if(debugLevel > 0) {
-					stringstream ss;
-					ss<<std::scientific;
-					ss<<std::setprecision(3);
-					ss<<"                                    rhoE="<<rhoE[icv_nbr]
+					cout<<std::scientific;
+					cout<<std::setprecision(3);
+					cout<<"                                    press="<<press[icv_nbr]
+					  <<", rhoE="<<rhoE[icv_nbr]
 					  <<", rho="<<rho[icv_nbr]
 					  <<", rhou=("<<rhou[icv_nbr][0]<<","<<rhou[icv_nbr][1]<<","<<rhou[icv_nbr][2]<<")"
 					  <<", gamma="<<gamma[icv_nbr]

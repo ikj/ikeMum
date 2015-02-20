@@ -300,13 +300,13 @@ public:
   virtual void finalHook() { /*empty*/ }
 
 
-      void runBackwardEulerCoupled();
+  void runBackwardEulerCoupled();
 
-      int calcRhsCoupled(double **rhs, double ***A, int nScal, int flagImplicit);
+  int calcRhsCoupled(double **rhs, double ***A, int nScal, int flagImplicit);
 
-      int calcFluxCoupled(double **rhs, double ***A, int nScal, int flagImplicit);
+  int calcFluxCoupled(double **rhs, double ***A, int nScal, int flagImplicit);
 
-      virtual void sourceHookCoupled(double **rhs, double ***A, int nScal, int flagImplicit)  { /*empty*/ }
+  virtual void sourceHookCoupled(double **rhs, double ***A, int nScal, int flagImplicit)  { /*empty*/ }
 
 };
 

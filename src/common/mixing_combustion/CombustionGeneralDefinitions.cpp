@@ -7,26 +7,26 @@
  * \version 2.0
  */
 InterpolationIndex::InterpolationIndex(void) {
-  TableDim = 0;
-  StencilSize = 0;
-  index = NULL;
-  weight = NULL;
+	TableDim = 0;
+	StencilSize = 0;
+	index = NULL;
+	weight = NULL;
 }
 
 InterpolationIndex::InterpolationIndex(int n, int m) 
-    {
-      TableDim = n;
-      StencilSize = m;
-      index = new int[n];
-      for (int i=0; i<n; ++i) index[i] = 0;
-      getMem2D(&weight, 0, TableDim-1, 0, StencilSize-1, "InterpolationIndex: weight", true);
-    }
-  
+{
+	TableDim = n;
+	StencilSize = m;
+	index = new int[n];
+	for (int i=0; i<n; ++i) index[i] = 0;
+	getMem2D(&weight, 0, TableDim-1, 0, StencilSize-1, "InterpolationIndex: weight", true);
+}
+
 InterpolationIndex::~InterpolationIndex()
-    {
-      if (index  != NULL) {delete [] index; index = NULL;}
-      if (weight != NULL) {freeMem2D(weight, 0, TableDim-1, 0, StencilSize-1); weight = NULL;}
-    }
+{
+	if (index  != NULL) { delete [] index; 	index = NULL; }
+	if (weight != NULL) { freeMem2D(weight, 0, TableDim-1, 0, StencilSize-1); 	weight = NULL; }
+}
   
 int InterpolationIndex::copy(InterpolationIndex &newcopy){
   if (newcopy.TableDim != TableDim) return -1;

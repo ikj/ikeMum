@@ -38,6 +38,8 @@
 
 enum HOW_TO_CALC_JAC {ROW_1D, ORDINARY_2D};
 enum MODIFIED_NEWTON {BASIC, SHAMANSKII, MODIFIED_SHAMANSKII};
+enum WEIGHT_RHS_METHOD {NO_RHSWEIGHT, REF_VALUES, LOCAL_VALUES, REF_VALUES_AND_DT_OVER_VOL};
+#define WEIGHT_RHS_MIN 1.0e-6
 
 #ifndef ABSURDLY_BIG_NUMBER
 	#define ABSURDLY_BIG_NUMBER 2.22e22
@@ -79,7 +81,7 @@ enum MODIFIED_NEWTON {BASIC, SHAMANSKII, MODIFIED_SHAMANSKII};
                                  // If you DON'T define this variable, then the tangential condition will not be considered in some parts of
                                  // the getSteadySolnByNewton() method and the backtrackWithJOE_calcRelaxAndRHS() methods.
 
-#define USE_VOLUME_WEIGHTED_INNER_PROD // Use weighted inner product with CV volumes,
+//#define USE_VOLUME_WEIGHTED_INNER_PROD // Use weighted inner product with CV volumes,
                                        // i.e., || [q; lambda] ||_{W} = [q^{T}, lambda^{T}] * [ cv_volume      0         * [  q
                                        //                                                           0     weightLambda ]    lambda]
 #ifdef USE_VOLUME_WEIGHTED_INNER_PROD
@@ -372,7 +374,7 @@ public:
 	 * Return: If backtracking line search is required (due to negative density, etc.), return true.
 	 * Original code of Rhs part = JoeWithModels_AD::calcResidualDerivative(double***, double***, int)
 	 */
-	bool calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhsSingleArray, const int debugLevel, const int NcontrolEqns=0);
+	int calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhsSingleArray, const int debugLevel, const int NcontrolEqns=0);
 
 //	/*
 //	 * Method: calcJacobian1DAD_new
@@ -393,7 +395,7 @@ public:
 	 * Return: If backtracking line search is required (due to negative density, etc.), return true.
 	 * Original code of Rhs part = JoeWithModels_AD::calcResidualDerivative(double***, double***, int)
 	 */
-	bool calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleArray, const int debugLevel, const int NcontrolEqns=0);
+	int calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleArray, const int debugLevel, const int NcontrolEqns=0);
 
 	/*
 	 * Method: calcJacobian1DAD_calcRhs
@@ -672,38 +674,6 @@ public:
 	 */
 	bool checkBacktrackFromResidInc(const double residNormTotOld, const double residNormTot, const double relaxation, const double backtrackBarrierCoeff);
 
-//IKJ
-	/*
-	 * Method: calcBacktrackThresholdUsingWatchdog
-	 * -------------------------------------------
-	 * Calculate the thereshold for the backtracking method using the watchdog technique (the new residual norm should be smaller than this threshold).
-	 * This method will be called by checkBacktrackFromResidIncUsingWatchdog()
-	 */
-	double calcBacktrackThresholdUsingWatchdog(const double residNormTotOld, const double relaxation,
-			const double gammaWatchdog, const int NcontrolEqns, const int nVars, const double *rhs, const double *phi);
-
-//IKJ
-	/*
-	 * Method: checkBacktrackFromResidIncUsingWatchdog
-	 * -----------------------------------------------
-	 * Check if there is any increment in the norm of the residual using the "watchdog" technique:
-	 *   Let d_k = the Newton increment (or search direction vector) and h(x) is the objective function (e.g. ||f(x)||_1),
-	 *   Then h(x_k + relaxation*d_k) <=   max (h_j(x_k)) + gammaWatchdog*relaxation*g(x_k)^T*d_k,
-	 *                                   0<=j<=m
-	 *   	where g(x_k) is the gradient vector of h(x):
-	 *   		e.g. If 1-norm is used, g(x) = D^T*sign(f(x))
-	 *               If 2-norm is used, g(x) = D^T*f(x)
-	 *               However, the make the code simpler, g(x) is set to be f(x) here.
-	 *
-	 * For details, see L.Grippo et al., SIAM J. Numer. Anal., vol.123, 707-716, 1986.
-	 *               or R.M.Chamberlain et al., Math. Prog. Study, Vol.16, 1-17, 1982.
-	 *
-	 * Return: true if there is increment (you need backtracking in this case)
-	 *         false if the residual drops (you don't need backtracking in this case)
-	 */
-	bool checkBacktrackFromResidIncUsingWatchdog(const double residNormTotOld, const double residNormTot, const double relaxation,
-			const double gammaWatchdog, const int NcontrolEqns, const int nVars, const double *rhs, const double *phi);
-
 	/*
 	 * Method: calcArclength
 	 * ---------------------
@@ -910,6 +880,21 @@ public:
 
     // Note: barrierSourceTurbScalars1D_AD() is in IkeUgpWithCvCompFlow.h
 
+	/*
+	 * Method: calcWeightRhs
+	 * ---------------------
+	 * calculate "weightRhs" (weight for RHS) at the given icv
+	 */
+	void calcWeightRhs(const int icvCenter, WEIGHT_RHS_METHOD weightRhsMethod, const int nScal);
+
+	/*
+	 * Method: calcWeightRhsHook
+	 * -------------------------
+	 * calculate "weightRhs" (weight for RHS) at the given icv
+	 * This method is called right after calling calcWeightRhs() so that the user can modify weightRhs
+	 */
+	virtual void calcWeightRhsHook(const int icvCenter, const int nScal);
+
 	/****************************
 	 * UTILITY FUNCTIONS
 	 ****************************/
@@ -963,6 +948,17 @@ public:
 	 */
 	void getParamStabilizedNewton(int &stabilizationMethodType, double &stabilizationAlpha, double &stabilizationAlphaEps, int &stabilizationStartingIter,
 			const bool firstCall, const int debugLevel);
+
+	/*
+	 * Method: getParamMoreNewtonSteps
+	 * -------------------------------
+	 * Obtain the parameters to run Newton's method for more steps after convergence
+	 *   "MORE_NTSTEPS_BELOW_CONV"-->"MORE_STEPS"
+	 *   "MORE_NTSTEPS_BELOW_CONV"-->"RESID"
+	 *   "MORE_NTSTEPS_BELOW_CONV"-->"RESID"
+	 */
+	void getParamMoreNewtonSteps(int &moreNTstepsBelowConv_moreSteps, double &moreNTstepsBelowConv_resid, double &moreNTstepsBelowConv_deltaQ,
+			const bool firstCall);
 
 	/*
 	 * Method: getParamsModifiedNewtonMethod
@@ -1239,11 +1235,11 @@ public:
 	void readPsALCdumpedDataSerial(const char filename[], double* qVec, int& step0, double* lambda0, double* lambda1, const int NcontrolEqns, double& dsTry);
 
 	/*
-	 * Method: readJOEdumpedData
-	 * -------------------------
+	 * Method: readJOEdumpedDataSerial
+	 * -------------------------------
 	 * Read data from previous JOE simulation
 	 */
-	void readJOEdumpedData(const string &filename, double* q);
+	void readJOEdumpedDataSerial(const string &filename, double* q);
 
 	/*
 	 * Method: findMatchedIndex
@@ -1491,6 +1487,10 @@ protected:
 
 	// RHS 1D array
 	double *rhs1DArray;
+
+	// RHS weight
+	double *weightRhs;
+	WEIGHT_RHS_METHOD weightRhsMethod;
 
 	// RHS arrays (for Tecplot output)
 	double *RHSrho;

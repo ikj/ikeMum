@@ -17,7 +17,7 @@ void IkeWithModels_AD::init() {
 	nbocv2_i = NULL;
 
 	// global icv index
-	nbocv2_v_global = NULL;
+//	nbocv2_v_global = NULL;
 
 	// BC information
 //		btofa = NULL;
@@ -56,8 +56,8 @@ void IkeWithModels_AD::clear() {
 		nbocv2_v.clear();
 	}
 
-	if (nbocv2_v_global != NULL)
-		delete [] nbocv2_v_global; nbocv2_v_global = NULL;
+//	if (nbocv2_v_global != NULL)
+//		delete [] nbocv2_v_global; nbocv2_v_global = NULL;
 
 	// BC information
 	//		if (btofa != NULL) {
@@ -105,6 +105,9 @@ void IkeWithModels_AD::getReferenceParams(REF_FLOW_PARAMS& RefFlowParams) {
 	if (getParam(pmy, "U_INITIAL")) {
 		for(int i=0; i<3; ++i)
 			RefFlowParams.u_ref[i] = fabs(pmy->getDouble(i+1));
+	} else {
+		for(int i=0; i<3; ++i)
+			RefFlowParams.u_ref[i] = 1.0;
 	}
 
 	RefFlowParams.calcRhouRefFromU();
@@ -112,20 +115,21 @@ void IkeWithModels_AD::getReferenceParams(REF_FLOW_PARAMS& RefFlowParams) {
 	RefFlowParams.calcRhoERef();
 
 	if(scalarTranspEqVector.size() > 0) {
-		if(RefFlowParams.nScal == 0) {
-			RefFlowParams.nScal = scalarTranspEqVector.size();
-			RefFlowParams.scalar_ref.resize(RefFlowParams.nScal, 1.0);
+		RefFlowParams.nScal = scalarTranspEqVector.size();
+		RefFlowParams.scalar_ref.resize(RefFlowParams.nScal, 1.0);
 
-			if (getParam(pmy, "INITIAL_CONDITION_TURB")) {
-				for(size_t iScal=0; iScal<scalarTranspEqVector.size(); ++iScal)
-					RefFlowParams.scalar_ref[iScal] = fabs(pmy->getDouble(iScal+1));
+		assert(getParam(pmy, "SCALAR_REF"));
+		for(size_t iScal=0; iScal<scalarTranspEqVector.size(); ++iScal) {
+			string varName = pmy->getString(1+2*iScal);
+			int scalar_Index = getScalarTransportIndex(varName);
+			assert(scalar_Index>=0 && scalar_Index<scalarTranspEqVector.size());
 
-				RefFlowParams.kine_ref = RefFlowParams.scalar_ref[0];
-			} else {
-				if(mpi_rank==0)
-					cout<<"WARNING in IkeWithModels_AD::getReferenceParams(): Reference values for turbulence scalars were not found -- Just use 1.0 as reference values"<<endl;
-			}
+			RefFlowParams.scalar_ref[scalar_Index] = RefFlowParams.rho_ref * fabs(pmy->getDouble(2+2*iScal));
 		}
+
+		int kine_Index = getScalarTransportIndex("kine");
+		if(kine_Index >= 0)
+			RefFlowParams.kine_ref = RefFlowParams.scalar_ref[kine_Index];
 	}
 }
 
@@ -139,11 +143,11 @@ void IkeWithModels_AD::getReferenceParams(REF_FLOW_PARAMS& RefFlowParams) {
  */
 void IkeWithModels_AD::build2layerCSRstruct(bool addFakeCells) {
 	// global icv index (original code: solveCoupledLinSysNS() in UgpWithCvCompFlow.h
-	assert( nbocv2_v_global == NULL );
-	nbocv2_v_global = new int[ncv_gg];
-	for (int icv = 0; icv < ncv; icv++)
-		nbocv2_v_global[icv] = cvora[mpi_rank] + icv;
-	updateCvDataG1G2(nbocv2_v_global, REPLACE_DATA);
+//	assert( nbocv2_v_global == NULL );
+//	nbocv2_v_global = new int[ncv_gg];
+//	for (int icv = 0; icv < ncv; icv++)
+//		nbocv2_v_global[icv] = cvora[mpi_rank] + icv;
+//	updateCvDataG1G2(nbocv2_v_global, REPLACE_DATA);
 
 	// prep the CSR struct...
 	assert( nbocv2_i == NULL );

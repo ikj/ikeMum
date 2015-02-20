@@ -76,9 +76,10 @@ public:
 	  if(x1 != NULL)   delete [] x1;
 	  if(x2 != NULL)   delete [] x2;
 	  if(x3 != NULL)   delete [] x3;
+
 	  if(Data != NULL) delete [] Data;
 
-	  delete [] interp;
+	  delete interp;
   }
   
   /* Accessors */

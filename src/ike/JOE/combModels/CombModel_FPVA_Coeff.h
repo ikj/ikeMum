@@ -155,23 +155,23 @@ public:
   virtual ~RansCombFPVA_Coeff()
   {
     myChemTable.Unload();
-    
+
     if (scalarTranspEqVector[ZMean_Index].dpress_dphi != NULL)
     {
-      delete [] scalarTranspEqVector[ZMean_Index].dpress_dphi; 
+      delete [] scalarTranspEqVector[ZMean_Index].dpress_dphi;
       scalarTranspEqVector[ZMean_Index].dpress_dphi = NULL;
     }
     if (scalarTranspEqVector[ZVar_Index].dpress_dphi != NULL)
     {
-      delete [] scalarTranspEqVector[ZVar_Index].dpress_dphi; 
+      delete [] scalarTranspEqVector[ZVar_Index].dpress_dphi;
       scalarTranspEqVector[ZVar_Index].dpress_dphi = NULL;
     }
     if (scalarTranspEqVector[CMean_Index].dpress_dphi != NULL)
     {
-      delete [] scalarTranspEqVector[CMean_Index].dpress_dphi; 
+      delete [] scalarTranspEqVector[CMean_Index].dpress_dphi;
       scalarTranspEqVector[CMean_Index].dpress_dphi = NULL;
     }
-    
+
     if (dCmeanSource_dZM != NULL)
     {
       delete [] dCmeanSource_dZM;
@@ -187,7 +187,7 @@ public:
       delete [] dCmeanSource_dCM;
       dCmeanSource_dCM = NULL;
     }
-    
+
     if (mpi_rank == 0)
       cout << endl << "***** FPVA_Coeff Combustion finalized *****" << endl << endl;
   }
@@ -290,7 +290,7 @@ public:
 
 		  if ((isnan(press[icv]) || (press[icv]<= 0.0)))
 		  {
-			  cout << "WARNING! :" << mpi_rank<<endl;
+			  cout << "WARNING in RansCombFPVA_Coeff::calcStateVariables(): mpi_rank = " << mpi_rank<<endl;
 			  cout << "T0, E0, GAMMA0, AGAMMA, MU0= "<<T0 << " "<<E0<< " "<<" "<<GAMMA0<<" "<<AGAMMA<<" "<<MU0 << endl;
 			  cout << "x = " << x_cv[icv][0] << " / " << x_cv[icv][1]  << " / " << x_cv[icv][2] << endl;
 			  cout << "press = " << press[icv] << "  rho = " << rho[icv] << "  temp = " << temp[icv] << "  RoM = " << RoM[icv] << "  E = " << E <<
@@ -298,7 +298,7 @@ public:
 			  << "  ZM = " << ZMean[icv]
 			                        << "  Zv = " << ZVar[icv]
 			                                             << "  CM = " << CMean[icv]<<endl;
-			  throw(-1);
+//			  throw(-1);
 		  }
 
 

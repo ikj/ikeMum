@@ -46,6 +46,162 @@ void showBarrieredMessage(string& message, const int mpi_rank_to_show) {
 	MPI_Barrier(mpi_comm);
 }
 
+void writeJOEDataParallel(char filename[]) {
+	string funcID = "UgpWithCvCompFlow::writeJOEDataParallel";
+
+	// Number of variables
+	int nScal = scalarTranspEqVector.size();
+	int m = nScal+5; // number of variables (rho, rhou, rhov, rhow, rhoE, and scalars)
+
+	if(mpi_rank==0)
+		cout<<funcID<<"(): write data on "<<filename<<endl;
+
+	// xcvMin and xcvMax
+	double xcvMin[3] = {2.2e22, 2.2e22, 2.2e22}, 	xcvMax[3] = {-2.2e22, -2.2e22, -2.2e22};
+	double *xcvMinArray = new double [mpi_size*3];
+	double *xcvMaxArray = new double [mpi_size*3];
+	for(int icv=0; icv<ncv; ++icv) {
+		for(int i=0; i<3; ++i) {
+			xcvMin[i] = min(xcvMin[i], x_cv[icv][i]);
+			xcvMax[i] = max(xcvMax[i], x_cv[icv][i]);
+		}
+	}
+	MPI_Gather(xcvMin, 3, MPI_DOUBLE, xcvMinArray, 3, MPI_DOUBLE, 0, mpi_comm);
+	MPI_Gather(xcvMax, 3, MPI_DOUBLE, xcvMaxArray, 3, MPI_DOUBLE, 0, mpi_comm);
+	MPI_Barrier(mpi_comm);
+
+	/***********
+	 ** Write the data
+	 ***********/
+	double wtime0, wtimeF;
+	if(mpi_rank==0)
+		wtime0 = MPI_Wtime();
+
+	// 1. Header
+	//      Structure of the header part:
+	//              1. mpi_size (int)                  2. cvora (int*(mpi_size+1))
+	//              3. xMinArray (double*3*mpi_size)   4. xMaxArray (double*3*mpi_size)
+	//              5. nScal (int)
+	if(mpi_rank==0) {
+		// Open the file
+		ofstream ofile;
+		ofile.open(filename, ios_base::out | ios_base::trunc | ios_base::binary);
+
+		// Write on the file
+		int dummyInt;
+		double dummyDouble;
+
+		dummyInt=mpi_size; 			ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+
+		for(int irank=0; irank<mpi_size+1; ++irank) {
+			dummyInt=cvora[irank]; 		ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		}
+
+		for(int irank=0; irank<mpi_size; ++irank) {
+			for(int i=0; i<3; ++i) {
+				dummyDouble=xcvMinArray[irank*3+i]; 	ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+			}
+		}
+		for(int irank=0; irank<mpi_size; ++irank) {
+			for(int i=0; i<3; ++i) {
+				dummyDouble=xcvMaxArray[irank*3+i]; 	ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+			}
+		}
+
+		dummyInt=nScal; 			ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+
+		// Close the file
+		ofile.close();
+	}
+	MPI_Barrier(mpi_comm);
+	int initDisp = sizeof(int) * (3 + mpi_size) + sizeof(double) * (2*mpi_size*3);
+
+	// 2. Body
+	//       Structure of the body part:
+	//            For each mpi,
+	//              1. x_cv (double*3*ncv)
+	//              2. data (double*(5+nScal)*ncv)
+	MPI_Status status;
+	MPI_File fh;
+	MPI_Offset displacement;
+
+	// Open the file
+	if (MPI_File_open(mpi_comm, filename, MPI_MODE_WRONLY|MPI_MODE_CREATE, MPI_INFO_NULL, &fh)!=0) {
+			// Note: MPI_MODE_WRONLY = write only
+			//       MPI_MODE_CREATE = create the file if it does not exist.
+		cerr<<"ERROR "<<funcID<<"(): Cannot open "<<filename<<endl;
+		throw(-1);
+	}
+
+	// Write the CV coordinates first
+	int myOffsetNcv;
+	MPI_Scan(&ncv, &myOffsetNcv, 1, MPI_INT, MPI_SUM, mpi_comm);
+	myOffsetNcv -= ncv;
+	displacement = MPI_Offset(initDisp + sizeof(double)*myOffsetNcv*(3+m));
+	if(MPI_File_set_view(fh, displacement, MPI_INT, MPI_INT, "native", MPI_INFO_NULL)!=0) {
+		// Note: native     = Data in this representation are stored in a file exactly as it is in memory
+		//       Internal   = Data in this representation can be used for I/O operations in a homogeneous or heterogeneous environment
+		//       External32 = This data representation states that read and write operations convert all data from and to the "external32" representation
+		cerr<<"ERROR! "<<funcID<<"(): Cannot set the first MPI_File_set_view -- offset="<<displacement<<endl;
+		throw(-1);
+	}
+	double* bufferDouble = new double [ncv*3];
+	for(int icv=0; icv<ncv; ++icv) {
+		int indexStart = icv*3;
+		for(int i=0; i<3; ++i)
+			bufferDouble[indexStart+i] = x_cv[icv][i];
+	}
+	MPI_File_write(fh, bufferDouble, ncv*3, MPI_DOUBLE, &status);
+	delete [] bufferDouble; 	bufferDouble = NULL;
+
+	// Write the flow data
+	displacement += MPI_Offset(3*ncv*sizeof(double));
+	bufferDouble = new double [ncv*m];
+	for(int icv=0; icv<ncv; ++icv) {
+		int indexStart = icv*m;
+		bufferDouble[indexStart] = rho[icv];
+		for(int i=0; i<3; ++i)
+			bufferDouble[indexStart+1+i] = rhou[icv][i];
+		bufferDouble[indexStart+4] = rhoE[icv];
+		for(int iScal=0; iScal<nScal; ++iScal) {
+			double *phi = scalarTranspEqVector[iScal].phi;
+			bufferDouble[indexStart+5+iScal] = phi[icv];
+		}
+	}
+	MPI_File_write(fh, bufferDouble, ncv*m, MPI_DOUBLE, &status);
+	delete [] bufferDouble; 	bufferDouble = NULL;
+
+	// 2-4. Close the file
+	MPI_File_close(&fh);
+	MPI_Barrier(mpi_comm);
+
+	/*
+	 * 3. Write the foot
+	 */
+	if(mpi_rank == mpi_size-1) {
+		ofstream ofile;
+		ofile.open(filename, ios_base::out | ios_base::app | ios_base::binary);
+		int dummyInt = EOF_ERROR_CHECK_CODE; 	ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		ofile.close();
+	}
+	MPI_Barrier(mpi_comm);
+
+	if(mpi_rank==0)
+		wtimeF = MPI_Wtime();
+
+	/***********
+	 ** Show the summary on the screen if the debugging level is high
+	 ***********/
+	if(mpi_rank==0)
+		cout<<"> The flow data is written on "<<filename<<" (RUN TIME = "<<wtimeF-wtime0<<" [sec]) \n"<<endl;
+
+	/***********
+	 ** Free the memory
+	 ***********/
+	delete [] xcvMinArray;
+	delete [] xcvMaxArray;
+}
+
 /*
  * Method: writeJoeUncoupledNSMatrixClearDiagBinaryParallel
  * --------------------------------------------------------

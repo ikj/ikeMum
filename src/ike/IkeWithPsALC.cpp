@@ -92,6 +92,10 @@ void IkeWithPsALC_AD::init() {
 	// RHS 1D Array
 	rhs1DArray = NULL;
 
+	// RHS weight
+	weightRhs = NULL;
+	weightRhsMethod = NO_RHSWEIGHT;
+
 	// RHS arrays (for Tecplot output)
 	RHSrho   = NULL;
 	RHSrhou  = NULL;
@@ -154,6 +158,10 @@ void IkeWithPsALC_AD::clear() {
 		delete [] rhs1DArray;     rhs1DArray = NULL;
 	}
 
+	// RHS weight
+	if(weightRhs != NULL) {
+		delete [] weightRhs;  	weightRhs = NULL;
+	}
 
 	// Variables from UgpWithCvCompFlow: These variables are not deleted in the UgpWithCvCompFlow class (This bug will be reported)
 	if(nbocv_v_global != NULL) {
@@ -215,6 +223,7 @@ void IkeWithPsALC_AD::run() {
 		if(mpi_rank==0)
 			cout<<"CAUTION!! cvora is NULL -- Make sure that you will initialize it"<<endl;
 	}
+
 	if (nbocv_v_global == NULL) {
 		nbocv_v_global = new int[ncv_gg];
 		for (int icv = 0; icv < ncv; icv++)
@@ -224,6 +233,7 @@ void IkeWithPsALC_AD::run() {
 		if(mpi_rank==0)
 			cout<<"nbocv_v_global is allocated and initialized"<<endl<<endl;
 	}
+
 	// Build the 2-layerd CSR structure (nbocv2_i & nbocv2_v)
 	if(mpi_rank==0){
 		cout<<"======================="<<endl;
@@ -234,7 +244,8 @@ void IkeWithPsALC_AD::run() {
 	build2layerCSRstruct(addFakeCells);
 	MPI_Barrier(mpi_comm);
 	if(mpi_rank==0)
-		cout<<"nbocv2_v_global, nbocv2_i, and nbocv2_v are successfully constructed"<<endl<<endl;
+//		cout<<"nbocv2_v_global, nbocv2_i, and nbocv2_v are successfully constructed"<<endl<<endl;
+		cout<<"nbocv2_i, and nbocv2_v are successfully constructed"<<endl<<endl;
 
 	nScal = scalarTranspEqVector.size();
 
@@ -278,13 +289,6 @@ void IkeWithPsALC_AD::runPsALC() {
 
 	int nVars = 5+nScal;
 
-#ifdef USE_LOCAL_VALUE_SCALING
-	if(mpi_rank==0 && debugLevel>0) cout<<"> RHS will be scaled by LOCAL_VALUE divided by "<<ADDITIONAL_SCALING_VALUE<<" (you can change these in IkeWithPsALC.h"<<endl;
-#endif
-#ifdef USE_REF_VALUE_SCALING
-	if(mpi_rank==0 && debugLevel>0) cout<<"> RHS will be scaled by REF_VALUE divided by "<<ADDITIONAL_SCALING_VALUE<<" (you can change these in IkeWithPsALC.h"<<endl;
-#endif
-
 	if (!checkParam("WEIGHT_LAMBDA_IN_ARCLENGTH")) {
 		ParamMap::add("WEIGHT_LAMBDA_IN_ARCLENGTH=1.0"); // add default values
 		if (mpi_rank == 0)
@@ -308,19 +312,23 @@ void IkeWithPsALC_AD::runPsALC() {
 	bool controlArclength = false;
 	double initResidNorm_opt;
 	int iterNewton_opt;
-	string tempString = getStringParam("ARCLENGTH_CONTROL", "NO");
+	if (!checkParam("ARCLENGTH_CONTROL")) {
+		ParamMap::add("ARCLENGTH_CONTROL  USE=NO  INIT_RESID_OPT=1.0  ITER_NEWTON_OPT=10  MIN_ARCLENGTH=0.0  MAX_ARCLENGTH=1.0e22"); // add default values
+		if (mpi_rank == 0)
+			cout<< "WARNING: added keyword \"ARCLENGTH_CONTROL  USE=NO  INIT_RESID_OPT=1.0  ITER_NEWTON_OPT=10  MIN_ARCLENGTH=0.0  MAX_ARCLENGTH=1.0e22\""<< " to parameter map!" << endl;
+	}
+	string tempString = getParam("ARCLENGTH_CONTROL")->getString("USE");
 	if(mpi_rank==0 && debugLevel>0) cout<<"> Use ARCLENGTH_CONTROL = "<<tempString;
-
-	if(tempString.compare("YES")==0 || tempString.compare("yes")==0 || tempString.compare("Y")==0 || tempString.compare("y")==0) {
+	std::transform(tempString.begin(), tempString.end(), tempString.begin(), ::toupper);
+	if(tempString.compare("YES")==0 || tempString.compare("Y")==0) {
 		controlArclength  = true;
-		initResidNorm_opt = getDoubleParam("INIT_RESID_OPT", "1.0");
-		iterNewton_opt    = getIntParam("ITER_NEWTON_OPT", 10);
+		initResidNorm_opt = getParam("ARCLENGTH_CONTROL")->getDouble("INIT_RESID_OPT");
+		iterNewton_opt    = getParam("ARCLENGTH_CONTROL")->getInt("ITER_NEWTON_OPT");
 		if(mpi_rank==0 && debugLevel>0) cout<<"  INIT_RESID_OPT="<<initResidNorm_opt<<"  ITER_NEWTON_OPT="<<iterNewton_opt;
 	}
 	if(mpi_rank==0 && debugLevel>0) cout<<endl;
-
-	double minArclength = getDoubleParam("MIN_ARCLENGTH", "0.0");
-	double maxArclength = getDoubleParam("MAX_ARCLENGTH", "1.0e22");
+	double minArclength = getParam("ARCLENGTH_CONTROL")->getDouble("MIN_ARCLENGTH");
+	double maxArclength = getParam("ARCLENGTH_CONTROL")->getDouble("MAX_ARCLENGTH");
 
 	/*****
 	 ** Allocation of memory
@@ -421,6 +429,9 @@ void IkeWithPsALC_AD::runPsALC() {
 		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
 			lambda_tangent[iEqn] = 0.0;
 	}
+
+	// RHS weight
+	weightRhs = new double [ncv*(5+nScal)];
 
 	// For tecplot output of residuals
 	assert(RHSrho==NULL && RHSrhou==NULL && RHSrhoE==NULL);
@@ -526,9 +537,19 @@ void IkeWithPsALC_AD::runPsALC() {
 
 	// Show the arclength on the screen
 	if(mpi_rank==0) {
+		// Calculate the flow part and lambda part from the inner product to help the user to decide WEIGHT_FOR_LAMBDA
+		double lambdaProdUnweight = 0.0;
+		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+			lambdaProdUnweight += (lambda1[iEqn] - lambda0[iEqn])*(lambda1[iEqn] - lambda0[iEqn]); // note: lambda_tangent has not been assigned and is still zero
+
+		double qProd = sqrt(arclength * arclength - weightLambda * lambdaProdUnweight);
+		lambdaProdUnweight = sqrt(lambdaProdUnweight);
+
+
 		printf("\n>> ARCLENGTH TO BE USED DURING THE CONTINUATION = %.6e\n", arclength);
-		cout<<"   (WEIGHT FOR LAMBDA = "<<weightLambda<<","<<endl;
-		cout<<"    RATIO BETWEEN THE NORM OF THE FLOW VARIABLES AND THE LAMBDAS = "<< sqrt(normSqRatioInArclength) <<")"<<endl;
+		cout<<"   (ARCLENGTH = "<<arclength<<" = sqrt( (FLOW_PART="<<qProd<<")^2 + WEIGHT_FOR_LAMBDA * (LAMBDA_PART="<<lambdaProdUnweight<<")^2 ),"<<endl;
+		cout<<"    WEIGHT FOR LAMBDA = "<<weightLambda<<","<<endl;
+		cout<<"    RATIO BETWEEN THE NORM OF THE FLOW VARIABLES AND THE LAMBDAS (BEFORE WEIGHT_FOR_LAMBDA) = "<< sqrt(normSqRatioInArclength) <<")"<<endl;
 	}
 
 	//---------------------
@@ -861,7 +882,7 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 		filename = getStringParam("Q0_FILENAME", "finalData.bin");
 		if(mpi_rank==0) cout<<" - filename ="<<filename<<endl;
 
-		readJOEdumpedData(filename, q0);
+		readJOEdumpedDataSerial(filename, q0);
 
 		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
 			sprintf(paramName, "CONTROL_PARAM%d", iEqn);
@@ -1112,9 +1133,9 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 		case 3 : // from a bindary file dumped by normal JOE
 			if(mpi_rank==0) cout<<" Initialize q1 from a binary file dumped by JOE";
 			filename = getStringParam("Q1_FILENAME", "finalData.bin");
-			if(mpi_rank==0) cout<<" - filename ="<<filename;
+			if(mpi_rank==0) cout<<" - filename = "<<filename<<endl;
 
-			readJOEdumpedData(filename, q1);
+			readJOEdumpedDataSerial(filename, q1);
 			for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
 				sprintf(paramName2nd, "CONTROL_PARAM%d", iEqn);
 				lambdaInit1[iEqn] = getParam("LAMBDA_INITIAL_1") -> getDouble(paramName2nd);
@@ -1290,7 +1311,9 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 		if(second_field_binary  == "YES" || second_field_binary  == "yes" || second_field_binary  == "Y" || second_field_binary  == "y") {
 			char filename[40];
 			sprintf(filename, "Q1_PT%05d.bin", step);
-//			writePsALCdumpedDataSerial(filename, step, arclength, lambdaInit0, lambdaInit1, NcontrolEqns, q1);
+			string filenameQ1JOE = getStringParam("Q1_FILENAME", ""); // The filename used in the case that howToInitSecond == 3
+			if(filenameQ1JOE.compare(filename)==0)
+				sprintf(filename, "Q1_PT%05d.IKE.bin", step);
 			writePsALCdumpedDataParallel(filename, step, arclength, lambdaInit0, lambdaInit1, NcontrolEqns, q1);
 		}
 	}
@@ -1574,9 +1597,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
         const double arcLength /* =0 */) {
 	static bool firstCall = true;
 
-	if(firstCall && mpi_rank==0)
-		cout<<endl<<"getSteadySolnByNewton()"<<endl;
-
 	assert(q!=NULL && rhs!=NULL);
 	if(NcontrolEqns==0)
 		assert(q1==NULL && q_tangent==NULL && lambda_tangent==NULL && lambda1==NULL);
@@ -1615,6 +1635,15 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	int modifNewtonFreq;        // "MODIFIED_NEWTON_NS_PARAMETERS"-->"FREQ": This value will not be used if modifiedNewtonMethod==BASIC
 	getParamsModifiedNewtonMethod(modifiedNewtonMethod, modifNewtonRelResid, modifNewtonFreq);
 
+	// RHS weight
+	string tempString = getStringParam("WEIGHT_RHS_METHOD", "NO_RHSWEIGHT");
+	if(tempString.compare("REF_VALUES")==0)                      weightRhsMethod = REF_VALUES;
+	else if(tempString.compare("LOCAL_VALUES")==0)               weightRhsMethod = LOCAL_VALUES;
+	else if(tempString.compare("REF_VALUES_AND_DT_OVER_VOL")==0) weightRhsMethod = REF_VALUES_AND_DT_OVER_VOL;
+	else                                                         weightRhsMethod = NO_RHSWEIGHT;
+	if(firstCall && mpi_rank==0)
+		cout<<"> WEIGHT_RHS_METHOD == "<<weightRhsMethod<<" ("<<tempString<<")"<<endl;
+
 	// Relaxation reducing based on negative values
 	double clipParameter; // "RELAXATION_CLIP_THRESHOLD"
 	double safeParameter; // "RELAXATION_CLIP_SAFETY"
@@ -1628,13 +1657,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	bool skipBT_firstITer;   // "BACKTRACKING_SKIP"-->"FIRST_ITER"
 	int  skipBT_freq;        // "BACKTRACKING_SKIP"-->"FREQUENCY"
 	getParamsBacktrackNewton(backtrackMaxIter, backtrackRelax_LowerBound, backtrackRelax_UpperBound, backtrackBarrierCoeff, skipBT_firstITer, skipBT_freq, firstCall, debugLevel);
-
-//IKJ
-string tempBT = getStringParam("USE_WATCHDOG_BACKTRACK", "NO");
-bool useWatchdogBacktrack = false;
-if(tempBT.compare("YES")==0 || tempBT.compare("yes")==0 || tempBT.compare("Y")==0 || tempBT.compare("y")==0)
-	useWatchdogBacktrack = true;
-double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
 
 	//  Stabilized Newton's method for the problem with a singular Jacobian
 	int    stabilizationMethodType;   // "STABILIZATION_FOR_SINGULAR_JAC"-->"MATRIX_TYPE"
@@ -1656,7 +1678,7 @@ double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
 			cout << "WARNING: added keyword \"A_PRIORI_WEIGHT_REGULARIZ  USE=NO  DIGIT=3.0  X1=0.35  X2=0.4\" to parameter map!"<<endl;
 	}
 
-	string tempString = getParam("A_PRIORI_WEIGHT_REGULARIZ")->getString("USE");
+	tempString = getParam("A_PRIORI_WEIGHT_REGULARIZ")->getString("USE");
 	bool   useAprioriWeightFunction = false;
 	if(tempString.compare("YES")==0 || tempString.compare("yes")==0 || tempString.compare("Y")==0 || tempString.compare("y")==0)
 		useAprioriWeightFunction = true;
@@ -1670,12 +1692,12 @@ double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
 double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Small weight means that the tangential condition is less important
 
 	// Trust-region size
-double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
+	double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 
 	// Run the interations for few more steps even after they converges
-	int nMoreStepsBelowConvergence = getIntParam("MORE_STEPS_BELOW_CONV", "0");
-//IKJ
-	double absDeltaQSize = getDoubleParam("ABS_DELTA_Q_SIZE", "1.0e-15");
+	int moreNTstepsBelowConv_moreSteps;
+	double moreNTstepsBelowConv_resid, moreNTstepsBelowConv_deltaQ;
+	getParamMoreNewtonSteps(moreNTstepsBelowConv_moreSteps, moreNTstepsBelowConv_resid, moreNTstepsBelowConv_deltaQ, firstCall);
 
 	/* Initialize q */
 //	for(int icv=0; icv<ncv; ++icv) {
@@ -1737,9 +1759,7 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 		}
 	}
 
-	/*********************/
-	/* InitialHookNewton *
-	 *********************/
+	// InitialHookNewton() & initialHookNewton_firstCall()
 	initialHookNewton();
 	if(firstCall)
 		initialHookNewton_firstCall();
@@ -1751,7 +1771,8 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 		string temp = getStringParam("SKIP_COMPATIBILITY_CHECK", "NO");
 		if(temp=="YES" || temp=="yes" || temp=="Y" || temp=="y") {
 			if(mpi_rank==0)
-				cout<<"> CAUTION!! SKIP_COMPATIBILITY_CHECK = "<<temp<<": skip the compatibility-check between IKE and JOE"<<endl;
+				cout<<endl
+				    <<"> CAUTION!! SKIP_COMPATIBILITY_CHECK = "<<temp<<": skip the compatibility-check between IKE and JOE"<<endl;
 		} else {
 			bool negligibleError = true;
 			if(firstCall)
@@ -1768,19 +1789,10 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 	/*  Newton iteration:                     *
 	 *    Solve Q_{n+1} = Q_{n} - L^{-1}*RES  *
 	 ******************************************/
-	// Debugging level (To get a better maintenance, call a separated function here)
-	int debugLevel = getDebugLevel();
-
-	if(debugLevel>1 && mpi_rank==0) {
-		int icv=5;
-		printf("* FOR DEBUG_LEVEL>=2: icv=%d (%.3e, %.3e, %.3e): rho=%.4e, rhou=(%.4e, %.4e, %.4e), rhoE=%.4e",
-				icv, x_cv[icv][0],x_cv[icv][1],x_cv[icv][2], rho[icv], rhou[icv][0],rhou[icv][1],rhou[icv][2], rhoE[icv]);
-		if(nScal>0) {
-			for(int iScal=0; iScal<nScal; ++iScal)
-				printf(", scal%d=%.4e",iScal,scalarTranspEqVector[iScal].phi[icv]);
-		}
-		cout<<endl;
-	}
+	// Settings for the modified Newton's method
+	bool useExactJac = true, useExactJacTempo = true;
+	int countModifiedNewton = 0;
+	int myNnzJac = 0, nnzJac = 0;
 
 	// Allocate and initialize phi
 	double *phi; // note: this array will be used while solving the linear system
@@ -1797,15 +1809,11 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 			phi[i] = 0.0;
 	}
 
-	// Settings for the modified Newton's method
-	bool useExactJac = true, useExactJacTempo = true;
-	int countModifiedNewton = 0;
-	int myNnzJac = 0, nnzJac = 0;
-
 	// Residuals
 	int whichNorm = 1; // one-norm
 	if(firstCall && mpi_rank==0)
-		cout<<"> NORM = "<<whichNorm<<"-norm"<<endl;
+		cout<<endl
+		    <<"> NORM = "<<whichNorm<<"-norm"<<endl;
 
 	double* residNormVec    = new double [5+nScal];
 	residNormTot            = ABSURDLY_BIG_NUMBER;
@@ -1874,14 +1882,14 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 	}
 
 	// Scaling factor of the RHS: Currently, this will affect only the "1D-style"
-#ifdef USE_DT_OVER_VOL_SCALING
-	double dtOverVol_min, dtOverVol_max;
-	double cfl_target = getDoubleParam("RHS_SCALING_CFL_TARGET", "1.0");
-	calcDtOverVol(dtOverVol_min, dtOverVol_max, cfl_target);
-
-	if(debugLevel>0 && mpi_rank==0)
-		printf("> RHS will be scaled to match CFL_TARGET=%.2f: Max=%.4e, Min=%.4e\n", cfl_target, dtOverVol_max, dtOverVol_min);
-#endif
+//	if(weightRhsMethod == REF_VALUES_AND_DT_OVER_VOL) {
+//		double dtOverVol_min, dtOverVol_max;
+//		double cfl_target = getDoubleParam("RHS_SCALING_CFL_TARGET", "1.0");
+//		calcDtOverVol(dtOverVol_min, dtOverVol_max, cfl_target);
+//
+//		if(debugLevel>0 && mpi_rank==0)
+//			printf("> RHS will be also scaled to match CFL_TARGET=%.2f: Max=%.4e, Min=%.4e\n", cfl_target, dtOverVol_max, dtOverVol_min);
+//	}
 
 	/*
 	 * Calculate RHS and Jacobian based on the initial guess before the Newton iterations
@@ -1930,7 +1938,7 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 			for(int iParam=0; iParam<NcontrolEqns; ++iParam) {
 				if(fabs(Nres[iParam]/arcLength) > 1.0e4*double(NcontrolEqns*cvora[mpi_size])*MACHINE_EPS) { // Note: Nres must be very close to zero
 					cout<<"WARNING in getSteadySolnByNewton(): iterNewton=="<<iterNewton<<", The tangential condition["<<iParam<<"] was NOT satisfied."<<endl
-					    <<"                                    Tangetial-residual = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl;
+					    <<"                                    Tangential-residual = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl;
 				}
 				if(isNaN(Nres[iParam])) {
 					cout<<"ERROR in getSteadySolnByNewton(): iterNewton=="<<iterNewton<<", The residual of the tangential condition becomes NaN for iParam="<<iParam<<endl;
@@ -1967,11 +1975,23 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 	// Calculate deltaQ from the previous point (q1) to the initial guess (q)
 	double deltaQnorm = 0.0;
 	if(NcontrolEqns > 0) { // If NcontrolEqns==0, q1 was not passed (i.e. q1 is NULL if NcontrolEqns==0)
-		double mySumDeltaQSq= 0.0, sumDeltaQSq;
-		for(int i=0; i<ncv*(5+nScal) + ((mpi_rank==mpi_size-1) ? NcontrolEqns : 0); ++i)
-			mySumDeltaQSq += pow(q[i]-q1[i], 2.0);
-		MPI_Allreduce(&mySumDeltaQSq, &sumDeltaQSq, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-		deltaQnorm = sqrt(sumDeltaQSq);
+        double mySumPhiSq= 0.0, sumPhiSq;
+
+        double *weightVec = new double [5+nScal];
+		for(int icv=0; icv<ncv; ++icv) {
+			getFlowWeightsForInnerProduct(weightVec, 1.0, icv, 5+nScal);  // 1.0 --> without volume scaling
+			int startIndex = icv*(5+nScal);
+			for(int i=0; i<5+nScal; ++i)
+				mySumPhiSq += pow(weightVec[i] * (q[i]-q1[i]), 2.0);
+		}
+		delete [] weightVec;
+		if(mpi_rank==mpi_size-1 && NcontrolEqns>0)
+			for(int i=0; i<NcontrolEqns; ++i)
+				mySumPhiSq += weightLambda * pow(q[ncv*(5+nScal)+i]-q1[ncv*(5+nScal)+i], 2.0);
+
+		MPI_Allreduce(&mySumPhiSq, &sumPhiSq, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
+		deltaQnorm = sqrt(sumPhiSq);
 	}
 
 	if(trustRegionSize > 8.0*deltaQnorm && NcontrolEqns > 0) {
@@ -2022,8 +2042,8 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 		fclose(fp);
 	}
 
-	// Gives a warning message if the initial guess comes from a binary file but the residual is too high
-	if(step-startingStep==2 && initThirdFromQ1) {
+	// Gives a warning message if the residual is too high even though the initial guess comes from a binary
+	if(step - startingStep==2 && initThirdFromQ1) {
 		double startingResidual = getDoubleParam("INIT_THIRD_RESID", "0.0");
 		if(residNormTot > startingResidual)
 			if(mpi_rank==0)
@@ -2124,7 +2144,7 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 			}
 
 		/******
-		 ** Stabilized Newton's method for ill-conditioned (or singular) Jacobians: This will modify the Jacobian matrix
+		 ** Stabilized Newton's method for ill-conditioned (or almost singular) Jacobians: This will modify the Jacobian matrix
 		 ******/
 		if(stabilizationMethodType > 0) {
 			MPI_Barrier(mpi_comm);
@@ -2279,127 +2299,27 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 					}
 				}
 
-				// Rhs
-				if(iterNewton>=stabilizationStartingIter) {
-					for(int icv=0; icv<ncv; ++icv) {
-						double xCoord = x_cv[icv][0];
-
-						if(xCoord <= x2AprioriWeight) {
-							double exponent = minWeight + max( (1-minWeight)*exp(-betaAprioriWeight*pow(xCoord-x2AprioriWeight, 2.0)), MACHINE_EPS );
-							exponent = max(0.0, min(exponent, 1.0)); // Make sure that exponent never exceed 1.0
-
-							int index = icv*m;
-							for(int i=0; i<m; ++i) {
-								rhs[index+i] *= exponent;
-
-								if(fabs(rhs[index+i]) <= MACHINE_EPS)
-									rhs[index+i] = 0.0;
-							}
-						}
-					}
-				}
+// IKJ: commented out for now -- It seems that the following part is always active even if a-priori-Weight
+//				// Rhs
+//				if(iterNewton>=stabilizationStartingIter) {
+//					for(int icv=0; icv<ncv; ++icv) {
+//						double xCoord = x_cv[icv][0];
+//
+//						if(xCoord <= x2AprioriWeight) {
+//							double exponent = minWeight + max( (1-minWeight)*exp(-betaAprioriWeight*pow(xCoord-x2AprioriWeight, 2.0)), MACHINE_EPS );
+//							exponent = max(0.0, min(exponent, 1.0)); // Make sure that exponent never exceed 1.0
+//
+//							int index = icv*m;
+//							for(int i=0; i<m; ++i) {
+//								rhs[index+i] *= exponent;
+//
+//								if(fabs(rhs[index+i]) <= MACHINE_EPS)
+//									rhs[index+i] = 0.0;
+//							}
+//						}
+//					}
+//				}
 			}
-//			else if(stabilizationMethodType == 5) { // Apply a scaled diagonal matrix and add a modification term to RHS (still in development!!!!)
-//				double additionalScalingValue = 1.0; //ADDITIONAL_SCALING_VALUE;
-//
-//				// Calculate the actual alpha
-//				double addedValue = max( min(residNormTot, tikhonovAlpha), tikhonovAlphaEps );
-//
-//				// Calculate the scaling factor
-//				for(int icv=0; icv<ncv; ++icv) {
-//					int row = icv*m;
-//
-//					tikhonovScaling[row]   = additionalScalingValue / (fabs(rho[icv]) + MACHINE_EPS);
-//					tikhonovScaledPHI[row] = tikhonovScaling[row]*(q[row] - q1[row]);
-//					++row;
-//
-//					double rhouMag = sqrt(vecDotVec3d(rhou[icv], rhou[icv]) + MACHINE_EPS);
-//					for(int i=0; i<3; ++i) {
-//						tikhonovScaling[row]   = additionalScalingValue / (max(0.001, fabs(rhou[icv][i])/rhouMag)*rhouMag);
-//						tikhonovScaledPHI[row] = tikhonovScaling[row]*(q[row] - q1[row]);
-//						++row;
-//					}
-//
-//					tikhonovScaling[row]   = additionalScalingValue / (fabs(rhoE[icv]) + MACHINE_EPS);
-//					tikhonovScaledPHI[row] = tikhonovScaling[row]*(q[row] - q1[row]);
-//					++row;
-//
-//					for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++) {
-//						tikhonovScaling[row]   = additionalScalingValue / (max(fabs(scalarTranspEqVector[iScal].phi[icv]), 0.001*RefFlowParams.scalar_ref[iScal] + MACHINE_EPS));
-//						tikhonovScaledPHI[row] = tikhonovScaling[row]*(q[row] - q1[row]);
-//						++row;
-//					}
-//				}
-//				if(mpi_rank==mpi_size-1)
-//					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-//						int row = ncv*m+iEqn;
-//						tikhonovScaling[row]   = additionalScalingValue / q[row];
-//						tikhonovScaledPHI[row] = tikhonovScaling[row] * (q[row] - q1[row]);
-//					}
-//				MPI_Barrier(mpi_comm);
-//
-//				// Matrix
-//				for(int icv=0; icv<ncv; ++icv) {
-//					for(int ivar=0; ivar<m; ++ivar) {
-//						int row = icv*m + ivar;
-//						int diagIndex = jacMatrixSTL.get_diag_index(row);
-//
-//						double oldValue = jacMatrixSTL.get_values(diagIndex);
-//						jacMatrixSTL.set_values(diagIndex, oldValue + addedValue*tikhonovScaling[row]);
-//
-//						++myNonDiagAdd_count; // Just for Statistics
-//					}
-//				}
-//				if(mpi_rank==mpi_size-1) {
-//					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-//						weighted_lambda_tangent[iEqn] += addedValue*tikhonovScaling[ncv*m+iEqn];
-//					}
-//				}
-//				MPI_Barrier(mpi_comm);
-//
-//				// Calculate ((A+alpha*I)+I)*PHI for updating RHS
-//				solveBasicMatOperationsPetsc<MatComprsedSTL>(tempTikhonov2, jacMatrixSTL, tikhonovScaledPHI, NULL, 0,
-//						NcontrolEqns, ncv_gg, weighted_q_tangent, weighted_lambda_tangent);
-//				for(int i=0; i<ncv*m + ((mpi_rank==mpi_size-1) ? NcontrolEqns : 0); ++i)
-//					tempTikhonov2[i] += tikhonovScaledPHI[i];
-//				MPI_Barrier(mpi_comm);
-//
-//				// Calculate the 2-norm of rhs and tikhonov. Also calculate the inner product between rhs and thkhonov.
-//				double mySumRhsSq= 0.0, sumRhsSq;
-//				for(int i=0; i<ncv*m + ((mpi_rank==mpi_size-1) ? NcontrolEqns : 0); ++i)
-//					mySumRhsSq += pow(rhs[i], 2.0);
-//				MPI_Allreduce(&mySumRhsSq, &sumRhsSq, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//
-//				double mySumTikhonovSq = 0.0, sumTikhonovSq;
-//				for(int i=0; i<ncv*m + ((mpi_rank==mpi_size-1) ? NcontrolEqns : 0); ++i)
-//					mySumTikhonovSq += pow(tempTikhonov2[i], 2.0);
-//				MPI_Allreduce(&mySumTikhonovSq, &sumTikhonovSq, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//
-//				double myInnerProd = 0.0, innerProd;
-//				for(int i=0; i<ncv*m + ((mpi_rank==mpi_size-1) ? NcontrolEqns : 0); ++i)
-//					myInnerProd += rhs[i]*tempTikhonov2[i];
-//				MPI_Allreduce(&myInnerProd, &innerProd, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//
-//if(mpi_rank==0)
-//	cout<<"* Tikhonov-regularization - Modified RHS: ||rhs||_2 = "<<sqrt(sumRhsSq) <<", ||Tikhonov||_2 = "<<sqrt(sumTikhonovSq) <<", <rhs, Tikhonov> = "<< innerProd <<endl;
-//
-//				// Calculate RHS
-//				for(int icv=0; icv<ncv; ++icv) {
-//					for(int ivar=0; ivar<m; ++ivar) {
-//						int row = icv*m + ivar;
-//
-//						rhs[row] += addedValue * relaxation * min(0.3*sqrt(sumRhsSq/sumTikhonovSq), 1.0) * tempTikhonov2[row]; //(q[row] - qReference[row]);
-//					}
-//				}
-//
-//				if(mpi_rank==mpi_size-1) {
-//					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-//						int row = ncv*m + iEqn;
-//
-//						rhs[row] += addedValue * relaxation * min(0.3*sqrt(sumRhsSq/sumTikhonovSq), 1.0) * tempTikhonov2[ncv*m+iEqn]; //(lambda[iEqn] - qReference[row]);
-//					}
-//				}
-//			}
 
 			MPI_Barrier(mpi_comm);
 		}
@@ -2561,10 +2481,24 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 		 ** Trust-region regularization
 		 ******/
         double mySumPhiSq= 0.0, sumPhiSq;
-		for(int i=0; i<ncv*m + ((mpi_rank==mpi_size-1) ? NcontrolEqns : 0); ++i)
-			mySumPhiSq += pow(phi[i], 2.0);
+
+        double *weightVec = new double [5+nScal];
+		for(int icv=0; icv<ncv; ++icv) {
+			getFlowWeightsForInnerProduct(weightVec, 1.0, icv, 5+nScal);  // 1.0 --> without volume scaling
+			int startIndex = icv*(5+nScal);
+			for(int i=0; i<5+nScal; ++i)
+				mySumPhiSq += pow(weightVec[i] * phi[startIndex+i], 2.0);
+		}
+		delete [] weightVec;
+		if(mpi_rank==mpi_size-1 && NcontrolEqns>0)
+			for(int i=0; i<NcontrolEqns; ++i)
+				mySumPhiSq += weightLambda * pow(phi[ncv*(5+nScal)+i], 2.0);
+
 		MPI_Allreduce(&mySumPhiSq, &sumPhiSq, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-        deltaQnorm = relaxation*sqrt(sumPhiSq);
+
+		double deltaQnorm_beforeRelax = sqrt(sumPhiSq);
+        deltaQnorm = relaxation * deltaQnorm_beforeRelax;
+
         if(deltaQnorm >= trustRegionSize) {
         	if(mpi_rank==0)
         		cout<<"WARNING in getSteadySolnByNewton(): After solving the linear system,"<<endl
@@ -2616,7 +2550,7 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 		if(NcontrolEqns>0) {
 			if(mpi_rank==mpi_size-1) {
                 for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-                    double delta_lambda      = phi[ncv*(5+nScal)+iEqn];
+                    double delta_lambda      = relaxBeforeDlambda * phi[ncv*(5+nScal)+iEqn];
                     double delta_lambda_prev = lambda1[iEqn] - lambda0[iEqn];
                     if(fabs(delta_lambda) > 7.77*fabs(delta_lambda_prev)) {
                         cout<<"WARNING in getSteadySolnByNewton(): delta_lambda["<<iEqn<<"]="<< delta_lambda
@@ -2709,11 +2643,7 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 		bool btNotConverged   = false;
 		bool forgiveBacktrack = false;
 		if(backtrackMaxIter > 0) {
-			bool needBacktracking;
-			if(useWatchdogBacktrack)
-				needBacktracking = checkBacktrackFromResidIncUsingWatchdog(residNormTotOld, residNormTot, min(relaxation, backtrackRelax_UpperBound), gammaWatchdog, NcontrolEqns, 5+nScal, rhs, phi);
-			else
-				needBacktracking = checkBacktrackFromResidInc             (residNormTotOld, residNormTot, min(relaxation, backtrackRelax_UpperBound), backtrackBarrierCoeff);
+			bool needBacktracking = checkBacktrackFromResidInc(residNormTotOld, residNormTot, min(relaxation, backtrackRelax_UpperBound), backtrackBarrierCoeff);
 
 			if(countNegative>0 || needBacktracking) {
 				++succeessiveBacktrack;
@@ -2959,7 +2889,8 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 		/******
 		 ** Calculate the 2-norm of the final delta_Q
 		 ******/
-		deltaQnorm = relaxation*sqrt(sumPhiSq);
+//		deltaQnorm = relaxation*sqrt(sumPhiSq);
+		deltaQnorm = relaxation*deltaQnorm_beforeRelax;
 
 		/******
 		 ** If debug level is high, then show the current status
@@ -3022,32 +2953,28 @@ double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 		if(residNormTot <= tolNewton) {
 			++countConvergedSteps;
 
-			if(nMoreStepsBelowConvergence <= 0)
+			if(moreNTstepsBelowConv_moreSteps <= 0)
 				done = true;
 			else {
-				if(countConvergedSteps > nMoreStepsBelowConvergence)
+				if(countConvergedSteps > moreNTstepsBelowConv_moreSteps)
 					done = true;
 				else {
 					if(mpi_rank==0 && countConvergedSteps==1)
-						cout<<"Newton-solver converged but keep running the simulation since MORE_STEPS_BELOW_CONV="<<nMoreStepsBelowConvergence<<": ABS_DELTA_Q_SIZE="<<absDeltaQSize<<endl;
+						cout<<"Newton-solver converged but keep running the simulation since MORE_STEPS_BELOW_CONV="<<moreNTstepsBelowConv_moreSteps<<": DELTA_Q="<<moreNTstepsBelowConv_deltaQ<<endl;
 
-					if(deltaQnorm <= absDeltaQSize)
+					if(deltaQnorm <= moreNTstepsBelowConv_deltaQ)
 						done = true;
 				}
 			}
 
-			//
-			double absResidMoreStepsBelowConv = getDoubleParam("MORE_STEPS_ABS_RESID", "1.0e-15");
-			if(residNormTot <= absResidMoreStepsBelowConv)
+			if(residNormTot <= moreNTstepsBelowConv_resid)
 				done=true;
 
 			if(iterNewton > startingNewtonIter+maxIterNewton)
 				done = true;
 		}
-
 ////IKJ
 //writeData(step, iterNewton);
-
 	}
 
 	if(debugLevel>0 && mpi_rank == 0)
@@ -3487,7 +3414,7 @@ bool IkeWithPsALC_AD::getSteadySolnByBackwardEuler(double (*dq)[5], double **dSc
  * Return: If backtracking line search is required (due to negative density, etc.), return true.
  * Original code of Rhs part = JoeWithModels_AD::calcResidualDerivative(double***, double***, int)
  */
-bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhsSingleArray, const int debugLevel, const int NcontrolEqns) {
+int IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhsSingleArray, const int debugLevel, const int NcontrolEqns) {
 	assert(lambda_AD == NULL);
 
 	//==============================
@@ -3580,6 +3507,7 @@ bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhs
 		/* indvec for the MEM_SAVING mode */
 #ifdef USE_MEM_SAVING_ADVAR_1D_
 		int n_nbocv2gg = nbocv2_eachIcv.size();
+		assert(n_nbocv2gg > 0);
 		double *indvec = new double [n_nbocv2gg*nVars+NcontrolEqns];
 		for (size_t index=0; index<n_nbocv2gg; ++index) {
 			int icv = nbocv2_eachIcv[index];
@@ -3778,7 +3706,7 @@ bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhs
 
 	MPI_Allreduce(&myCountReducedOrder, &CountReducedOrder, 1, MPI_INT, MPI_SUM, mpi_comm);
 
-	return CountReducedOrder>0;
+	return CountReducedOrder;
 }
 
 ///*
@@ -4137,7 +4065,7 @@ bool IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhs
  * Note: For some reason, calcResidual_AD() calculates for ncv_gg CVs, which finally yields ncv_gg rows in Jacobian instead of ncv rows
  *       (For details of calcResidual_AD(), contact Dr. Duraisamy)
  */
-bool IkeWithPsALC_AD::calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleArray, const int debugLevel, const int NcontrolEqns)
+int IkeWithPsALC_AD::calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleArray, const int debugLevel, const int NcontrolEqns)
 {
 	assert(lambda_AD == NULL);
 
@@ -4323,7 +4251,7 @@ bool IkeWithPsALC_AD::calcJacobianAD(MatComprsed &jacMatrix, double *rhsSingleAr
 	//
 	firstCall = false;
 
-	return (countReducedCV > 0);
+	return countReducedCV;
 }
 
 /*
@@ -4487,54 +4415,35 @@ void IkeWithPsALC_AD::calcJacobian1DAD_calcRhs(double *rhsSingleArray, int &myCo
 		}
 #endif
 
-#ifdef USE_LOCAL_VALUE_SCALING
-	#ifdef USE_MEM_SAVING_ADVAR_1D_
-		*rhs_rho_AD /= ADDITIONAL_SCALING_VALUE*fabs(rho[icv]) + MACHINE_EPS;
+		// Calculate weight for RHS
+		assert(weightRhs != NULL);
+		int startingIndex = icv*nVars;
+		for(int i=0; i<nVars; ++i)
+			weightRhs[startingIndex+i] = 1.0;
 
-		double rhouMag = sqrt(vecDotVec3d(rhou[icv], rhou[icv]) + MACHINE_EPS);
+		calcWeightRhs(icv, weightRhsMethod, nScal);
+		calcWeightRhsHook(icv, nScal);
+
+#ifdef USE_MEM_SAVING_ADVAR_1D_
+		*rhs_rho_AD *= weightRhs[startingIndex];
+
 		for(int i=0; i<3; ++i)
-			rhs_rhou_AD[i] /= ADDITIONAL_SCALING_VALUE*max(0.001, fabs(rhou[icv][i])/rhouMag)*rhouMag;
+			rhs_rhou_AD[i] *= weightRhs[startingIndex+1+i];
 
-		*rhs_rhoE_AD /= ADDITIONAL_SCALING_VALUE*fabs(rhoE[icv]) + MACHINE_EPS;
+		*rhs_rhoE_AD *= weightRhs[startingIndex+4];
 
 		for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
-			rhs_rhoScal_AD[iScal] /= ADDITIONAL_SCALING_VALUE*max(fabs(scalarTranspEqVector[iScal].phi[icv]), 0.001*RefFlowParams.scalar_ref[iScal] + MACHINE_EPS);
-	#else
-		rhs_rho_AD /= ADDITIONAL_SCALING_VALUE*fabs(rho[icv]) + MACHINE_EPS;
-
-		double rhouMag = sqrt(vecDotVec3d(rhou[icv], rhou[icv]) + MACHINE_EPS);
-		for(int i=0; i<3; ++i)
-			rhs_rhou_AD[i] /= ADDITIONAL_SCALING_VALUE*max(0.01, fabs(rhou[icv][i])/rhouMag)*rhouMag;
-
-		rhs_rhoE_AD /= ADDITIONAL_SCALING_VALUE*fabs(rhoE[icv]) + MACHINE_EPS;
-
-		for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
-			rhs_rhoScal_AD[iScal] /= ADDITIONAL_SCALING_VALUE*max(fabs(scalarTranspEqVector[iScal].phi[icv]), 0.001*RefFlowParams.scalar_ref[iScal] + MACHINE_EPS);
-	#endif
+			rhs_rhoScal_AD[iScal] *= weightRhs[startingIndex+5+iScal];
 #else
-	#ifdef USE_REF_VALUE_SCALING
-		#ifdef USE_MEM_SAVING_ADVAR_1D_
-			*rhs_rho_AD /= ADDITIONAL_SCALING_VALUE*RefFlowParams.rho_ref + MACHINE_EPS;
+		rhs_rho_AD *= weightRhs[startingIndex];
 
-			for(int i=0; i<3; ++i)
-				rhs_rhou_AD[i] /= ADDITIONAL_SCALING_VALUE*max(RefFlowParams.rhou_ref[i], 0.001*RefFlowParams.rhouMag_ref) + MACHINE_EPS;
+		for(int i=0; i<3; ++i)
+			rhs_rhou_AD[i] *= weightRhs[startingIndex+1+i];
 
-			*rhs_rhoE_AD /= ADDITIONAL_SCALING_VALUE*RefFlowParams.rhoE_ref + MACHINE_EPS;
+		rhs_rhoE_AD *= weightRhs[startingIndex+4];
 
-			for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
-				rhs_rhoScal_AD[iScal] /= ADDITIONAL_SCALING_VALUE*RefFlowParams.scalar_ref[iScal] + MACHINE_EPS;
-		#else
-			rhs_rho_AD /= ADDITIONAL_SCALING_VALUE*RefFlowParams.rho_ref + MACHINE_EPS;
-
-			for(int i=0; i<3; ++i)
-				rhs_rhou_AD[i] /= ADDITIONAL_SCALING_VALUE*max(RefFlowParams.rhou_ref[i], 0.001*RefFlowParams.rhouMag_ref) + MACHINE_EPS;
-
-			rhs_rhoE_AD /= ADDITIONAL_SCALING_VALUE*RefFlowParams.rhoE_ref + MACHINE_EPS;
-
-			for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
-				rhs_rhoScal_AD[iScal] /= ADDITIONAL_SCALING_VALUE*RefFlowParams.scalar_ref[iScal] + MACHINE_EPS;
-		#endif
-	#endif
+		for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
+			rhs_rhoScal_AD[iScal] *= weightRhs[startingIndex+5+iScal];
 #endif
 
 		// Check wall-clock time
@@ -5053,7 +4962,7 @@ void IkeWithPsALC_AD::updateLambda(const double* Q, const double* delQ, const do
 			lambda[i] = Q[Nflow+i] + relaxation*delQ[Nflow+i];
 		}
 	}
-	MPI_Bcast(lambda, NcontrolEqns, MPI_DOUBLE, mpi_size-1, mpi_comm);
+	MPI_Bcast(lambda, NcontrolParams, MPI_DOUBLE, mpi_size-1, mpi_comm);
 }
 
 /*
@@ -5490,13 +5399,6 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 		const double* ResidVecOld, double* ResidVecNew, const int whichNorm, const double backtrackBarrierCoeff,
 		const int NcontrolEqns, double** q_tangent, const double* lambda_tangent, const double weightLambda, const double WeightTangentCond,
 		const double* qArrayOld, const double* NresOld, const double* lambdaOld, const double arcLength) {
-// IKJ
-string tempBT = getStringParam("USE_WATCHDOG_BACKTRACK", "NO");
-bool useWatchdogBacktrack = false;
-if(tempBT.compare("YES")==0 || tempBT.compare("yes")==0 || tempBT.compare("Y")==0 || tempBT.compare("y")==0)
-	useWatchdogBacktrack = true;
-double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
-
 	// Store the history of backtracking
 	vector<pair<double, double> > backtrackHistory; // This vector stores the history of <relax, residNormTot> from relax1 to the final backtracking
 	                                                // Note: If negative values (e.g. rho) occurs, then ABSURDLY_BIG_NUMBER will be stored instead of residNormTot.
@@ -5600,17 +5502,9 @@ double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
 	 */
 	int iter = 2; // Note that you already run one backtracking before jumping into the following while loop
 
-	bool notConverged_check1;
-	if(useWatchdogBacktrack)
-		notConverged_check1 = checkBacktrackFromResidIncUsingWatchdog(residNormTot1, residNormTot2, relax2, gammaWatchdog, NcontrolEqns, 5+nScal, rhs, delQ);
-	else
-		notConverged_check1 = checkBacktrackFromResidInc             (residNormTot1, residNormTot2, relax2, backtrackBarrierCoeff);
+	bool notConverged_check1 = checkBacktrackFromResidInc(residNormTot1, residNormTot2, relax2, backtrackBarrierCoeff);
 
-	bool notConverged_check2;
-	if(useWatchdogBacktrack)
-		notConverged_check2 = checkBacktrackFromResidIncUsingWatchdog(residNormTotOld, residNormTot2, relax2, gammaWatchdog, NcontrolEqns, 5+nScal, rhs, delQ);
-	else
-		notConverged_check2 = checkBacktrackFromResidInc             (residNormTotOld, residNormTot2, relax2, backtrackBarrierCoeff);
+	bool notConverged_check2 = notConverged_check2 = checkBacktrackFromResidInc(residNormTotOld, residNormTot2, relax2, backtrackBarrierCoeff);
 
 	// Make sure that the final result is less than last step
 	notConverged = (notConverged_check1 || notConverged_check2);
@@ -5796,17 +5690,9 @@ double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
 		 *   Creterion: 1. Residual decreases compared to the previous backtracking step
 		 *              2. Residual is smaller than the initial residual (Important !!)
 		 */
-		bool notConverged_check1;
-		if(useWatchdogBacktrack)
-			notConverged_check1 = checkBacktrackFromResidIncUsingWatchdog(residNormTot1, residNormTot2, relax2, gammaWatchdog, NcontrolEqns, 5+nScal, rhs, delQ);
-		else
-			notConverged_check1 = checkBacktrackFromResidInc             (residNormTot1, residNormTot2, relax2, backtrackBarrierCoeff);
+		bool notConverged_check1 = checkBacktrackFromResidInc(residNormTot1, residNormTot2, relax2, backtrackBarrierCoeff);
 
-		bool notConverged_check2; // Make sure that the final result is less than last step
-		if(useWatchdogBacktrack)
-			notConverged_check2 = checkBacktrackFromResidIncUsingWatchdog(residNormTotOld, residNormTot2, relax2, gammaWatchdog, NcontrolEqns, 5+nScal, rhs, delQ);
-		else
-			notConverged_check2 = checkBacktrackFromResidInc             (residNormTotOld, residNormTot2, relax2, backtrackBarrierCoeff);
+		bool notConverged_check2 = checkBacktrackFromResidInc(residNormTotOld, residNormTot2, relax2, backtrackBarrierCoeff);
 
 		notConverged = (notConverged_check1 || notConverged_check2);
 	}
@@ -5856,12 +5742,7 @@ double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
 
 		// Show the result on the screen
 		if(debugLevel > 0 && mpi_rank == 0) {
-			double threshold;
-			if(useWatchdogBacktrack)
-				threshold = calcBacktrackThresholdUsingWatchdog(residNormTotOld, relax2, gammaWatchdog, NcontrolEqns, 5+nScal, rhs, delQ);
-			else
-				threshold = calcBacktrackThreshold(residNormTotOld, relax2, backtrackBarrierCoeff);
-
+			double threshold = calcBacktrackThreshold(residNormTotOld, relax2, backtrackBarrierCoeff);
 			printf("                  >> backtrackWithJOE_calcRelaxAndRHS(): Backtracking result: iter = %d  RELAX=%.3e  RESID_TOT=%.5e --> %.5e (> THRESHOLD=%.4e)\n",
 					minResidIter, relax2, residNormTotInit, residNormTot2, threshold);
 		}
@@ -5938,13 +5819,6 @@ double IkeWithPsALC_AD::backtrackWithJOEcoupled_calcRelaxAndRHS(double* rhs, con
 
 	double **rhs2D; 	getMem2D(&rhs2D, 0, ncv-1, 0, 5+nScal-1, "IkeWithPsALC_AD::backtrackWithJOEcoupled_calcRelaxAndRHS->rhs2D", true);
 
-//IKJ
-string tempBT = getStringParam("USE_WATCHDOG_BACKTRACK", "NO");
-bool useWatchdogBacktrack = false;
-if(tempBT.compare("YES")==0 || tempBT.compare("yes")==0 || tempBT.compare("Y")==0 || tempBT.compare("y")==0)
-	useWatchdogBacktrack = true;
-double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
-
 	/*
 	 * Initial Backtracking
 	 *   In order to use the three-point parabolic model, you should launch the first backtracking anyway
@@ -5981,11 +5855,7 @@ double gammaWatchdog = getDoubleParam("WATCHDOG_COEFF", "0.0");
 	 */
 	int iter = 2; // note that you already run one backtracking before jumping into the following while loop
 
-	bool needBacktracking;
-	if(useWatchdogBacktrack)
-		needBacktracking = checkBacktrackFromResidIncUsingWatchdog(residNormTot1, residNormTot2, relax2, gammaWatchdog, NcontrolEqns, 5+nScal, rhs, delQ);
-	else
-		needBacktracking = checkBacktrackFromResidInc             (residNormTot1, residNormTot2, relax2, backtrackBarrierCoeff);
+	bool needBacktracking = checkBacktrackFromResidInc(residNormTot1, residNormTot2, relax2, backtrackBarrierCoeff);
 
 	while(countNegative>0 || needBacktracking) {
 		/*
@@ -6130,45 +6000,23 @@ int IkeWithPsALC_AD::calcRhsWithBarrier(double* rhs, const bool useBarrier) {
 		barrierSourceTurbScalars(rhs, nScal, iterNewton, residNormTotOld); // Add barrier functions
 	}
 
-#ifdef USE_LOCAL_VALUE_SCALING
+	for(int icv=0; icv<ncv; ++icv) {
+		calcWeightRhs(icv, weightRhsMethod, nScal);
+		calcWeightRhsHook(icv, nScal);
+	}
 	for(int icv=0; icv<ncv; ++icv) {
 		int indexStart = icv*(5+nScal);
 
-		rhs[indexStart] /= ADDITIONAL_SCALING_VALUE*fabs(rho[icv]) + MACHINE_EPS;
+		rhs[indexStart] *= weightRhs[indexStart];
 
-		double rhouMag = sqrt(vecDotVec3d(rhou[icv], rhou[icv]) + MACHINE_EPS);
 		for(int i=0; i<3; ++i)
-			rhs[indexStart+1+i] /= ADDITIONAL_SCALING_VALUE*max(0.001, fabs(rhou[icv][i])/rhouMag)*rhouMag;
+			rhs[indexStart+1+i] *= weightRhs[indexStart+1+i];
 
-		rhs[indexStart+4] /= ADDITIONAL_SCALING_VALUE*fabs(rhoE[icv]) + MACHINE_EPS;
+		rhs[indexStart+4] *= weightRhs[indexStart+4];
 
 		for (int iScal = 0; iScal < nScal; iScal++)
-			rhs[indexStart+5+iScal] /= ADDITIONAL_SCALING_VALUE*max(fabs(scalarTranspEqVector[iScal].phi[icv]), 0.001*RefFlowParams.scalar_ref[iScal] + MACHINE_EPS);
+			rhs[indexStart+5+iScal] *= weightRhs[indexStart+5+iScal];
 	}
-#else
-	#ifdef USE_REF_VALUE_SCALING
-		if(RefFlowParams.rho_ref < MACHINE_EPS && mpi_rank==0) cout<<"WARNING IkeWithPsALC_AD::calcRhsWithBarrier(): RefFlowParams.rho_ref = "<<RefFlowParams.rho_ref<<" is not positive -- It will give a bad scaling for RHS"<<endl;
-		for(int i=0; i<3; ++i)
-			if(RefFlowParams.rhou_ref[i] < MACHINE_EPS && mpi_rank==0) cout<<"WARNING IkeWithPsALC_AD::calcRhsWithBarrier(): RefFlowParams.rhou_ref["<<i<<"] = "<<RefFlowParams.rhou_ref[i]<<" is not positive -- It will give a bad scaling for RHS"<<endl;
-		if(RefFlowParams.rhoE_ref < MACHINE_EPS && mpi_rank==0) cout<<"WARNING IkeWithPsALC_AD::calcRhsWithBarrier(): RefFlowParams.rhoE_ref = "<<RefFlowParams.rhoE_ref<<" is not positive -- It will give a bad scaling for RHS"<<endl;
-		for (int iScal = 0; iScal < nScal; iScal++)
-			if(RefFlowParams.scalar_ref[iScal] < MACHINE_EPS && mpi_rank==0) cout<<"WARNING IkeWithPsALC_AD::calcRhsWithBarrier(): RefFlowParams.scalar_ref["<<iScal<"] = "<<RefFlowParams.scalar_ref[iScal]<<" is not positive -- It will give a bad scaling for RHS"<<endl;
-
-		for(int icv=0; icv<ncv; ++icv) {
-			int indexStart = icv*(5+nScal);
-
-			rhs[indexStart] /= ADDITIONAL_SCALING_VALUE*RefFlowParams.rho_ref + MACHINE_EPS;
-
-			for(int i=0; i<3; ++i)
-				rhs[indexStart+1+i] /= ADDITIONAL_SCALING_VALUE*max(RefFlowParams.rhou_ref[i], 0.001*RefFlowParams.rhouMag_ref) + MACHINE_EPS;
-
-			rhs[indexStart+4] /= ADDITIONAL_SCALING_VALUE*RefFlowParams.rhoE_ref + MACHINE_EPS;
-
-			for (int iScal = 0; iScal < nScal; iScal++)
-				rhs[indexStart+5+iScal] /= ADDITIONAL_SCALING_VALUE*RefFlowParams.scalar_ref[iScal] + MACHINE_EPS;
-		}
-	#endif
-#endif
 
 	// Just for tecplot output: Since rhs is updated by barriers, RHSrho and etc. should be updated
 	convert1DrhsToSeparatedRhs(rhs);
@@ -6214,69 +6062,6 @@ bool IkeWithPsALC_AD::checkBacktrackFromResidInc(const double residNormTotOld, c
 	assert(backtrackBarrierCoeff*relaxation>0.0 && backtrackBarrierCoeff*relaxation<1.0);
 
 	double threshold = calcBacktrackThreshold(residNormTotOld, relaxation, backtrackBarrierCoeff);
-
-	return !(residNormTot < threshold);
-}
-
-//IKJ
-/*
- * Method: calcBacktrackThresholdUsingWatchdog
- * -------------------------------------------
- * Calculate the thereshold for the backtracking method using the watchdog technique (the new residual norm should be smaller than this threshold).
- * This method will be called by checkBacktrackFromResidIncUsingWatchdog()
- */
-double IkeWithPsALC_AD::calcBacktrackThresholdUsingWatchdog(const double residNormTotOld, const double relaxation,
-		const double gammaWatchdog, const int NcontrolEqns, const int nVars, const double *rhs, const double *phi) {
-	double *Nres    = NULL;
-	double *dLambda = NULL;
-	if(NcontrolEqns>0) {
-		Nres    = new double [NcontrolEqns];
-		dLambda = new double [NcontrolEqns];
-
-		if(mpi_rank==mpi_size-1)
-			for(int i=0; i<NcontrolEqns; ++i) {
-				Nres[i]    = rhs[ncv*nVars+i];
-				dLambda[i] = phi[ncv*nVars+i];
-			}
-		else
-			for(int i=0; i<NcontrolEqns; ++i) {
-				Nres[i]    = 0.0;
-				dLambda[i] = 0.0;
-			}
-		MPI_Barrier(mpi_comm);
-	}
-
-	double gradientDotIncrement = -1.0*vecDotVecWithoutWeight(rhs, phi, Nres, dLambda, nVars, NcontrolEqns); // Note: d_k = -[phi; dLambda]
-	if(Nres != NULL) 		delete [] Nres;
-	if(dLambda != NULL) 	delete [] dLambda;
-
-if(mpi_rank==0) cout<<"> WATCHDOG: residNormOld="<<residNormTotOld<<", gamma*relax*<f,phi>="<<gammaWatchdog*relaxation*gradientDotIncrement<<": sum="<<residNormTotOld + gammaWatchdog*relaxation*gradientDotIncrement<<endl;
-
-	return residNormTotOld + gammaWatchdog*relaxation*gradientDotIncrement;
-}
-
-//IKJ
-/*
- * Method: checkBacktrackFromResidIncUsingWatchdog
- * -----------------------------------------------
- * Check if there is any increment in the norm of the residual using the "watchdog" technique:
- *   Let d_k = the Newton increment (or search direction vector) and h(x) is the objective function (e.g. ||f(x)||_1),
- *   Then h(x_k + relaxation*d_k) <=   max (h_j(x_k)) + gammaWatchdog*relaxation*g(x_k)^T*d_k,
- *                                   0<=j<=m
- *   	where g(x_k) is the gradient vector of h(x):
- *   		e.g. If 1-norm is used, g(x) = D^T*sign(f(x))
- *               If 2-norm is used, g(x) = D^T*f(x)
- *               However, the make the code simpler, g(x) is set to be f(x) here.
- *
- * For details, see L.Grippo et al., SIAM J. Numer. Anal., vol.123, 707-716, 1986.
- *               or R.M.Chamberlain et al., Math. Prog. Study, Vol.16, 1-17, 1982.
- *
- * Return: true if there is increment (you need backtracking in this case)
- *         false if the residual drops (you don't need backtracking in this case)
- */
-bool IkeWithPsALC_AD::checkBacktrackFromResidIncUsingWatchdog(const double residNormTotOld, const double residNormTot, const double relaxation,
-		const double gammaWatchdog, const int NcontrolEqns, const int nVars, const double *rhs, const double *phi) {
-	double threshold = calcBacktrackThresholdUsingWatchdog(residNormTotOld, relaxation, gammaWatchdog, NcontrolEqns, nVars, rhs, phi);
 
 	return !(residNormTot < threshold);
 }
@@ -7090,6 +6875,64 @@ void IkeWithPsALC_AD::barrierSourceNS1D_AD(const int icvCenter, REALA &rhs_rho_A
 
 // Note: barrierSourceTurbScalars1D_AD() is in IkeUgpWithCvCompFlow.h
 
+
+/*
+ * Method: calcWeightRhs
+ * ---------------------
+ * calculate "weightRhs" (weight for RHS) at the given icv
+ */
+void IkeWithPsALC_AD::calcWeightRhs(const int icvCenter, WEIGHT_RHS_METHOD weightRhsMethod, const int nScal) {
+	int startingIndex = icvCenter * (5+nScal);
+	static bool firstCall = true;
+
+	if(weightRhsMethod == NO_RHSWEIGHT) {
+		for(int i=0; i<5+nScal; ++i)
+			weightRhs[startingIndex+i] = 1.0;
+	} if(weightRhsMethod == REF_VALUES) {
+		weightRhs[startingIndex] = max( 1.0/(ADDITIONAL_SCALING_VALUE*RefFlowParams.rho_ref),  WEIGHT_RHS_MIN );
+		for(int i=0; i<3; ++i)
+//			weightRhs[startingIndex+1+i] = max( 1.0/(ADDITIONAL_SCALING_VALUE*max(RefFlowParams.rhou_ref[i], 0.02*RefFlowParams.rhouMag_ref)),  WEIGHT_RHS_MIN );
+			weightRhs[startingIndex+1+i] = max( 1.0/(ADDITIONAL_SCALING_VALUE*RefFlowParams.rhouMag_ref),  WEIGHT_RHS_MIN );
+		weightRhs[startingIndex+4] = max( 1.0/(ADDITIONAL_SCALING_VALUE*RefFlowParams.rhoE_ref),  WEIGHT_RHS_MIN );
+		for(int iScal=0; iScal<nScal; ++iScal)
+			weightRhs[startingIndex+5+iScal] = max( 1.0/(ADDITIONAL_SCALING_VALUE*RefFlowParams.scalar_ref[iScal]),  WEIGHT_RHS_MIN);
+
+		if(mpi_rank==0 && firstCall) {
+			cout<<"           > IkeWithPsALC_AD::calcWeightRhs(): REF_VALUES weighting =";
+			for(int i=0; i<5+nScal; ++i) cout<<" "<<weightRhs[startingIndex+i]<<" ";
+			cout<<endl;
+		}
+	} else if(weightRhsMethod == LOCAL_VALUES) {
+		weightRhs[startingIndex] = max( 1.0/(ADDITIONAL_SCALING_VALUE*fabs(rho[icvCenter])),  WEIGHT_RHS_MIN );
+		double rhouMag = sqrt(vecDotVec3d(rhou[icvCenter], rhou[icvCenter]));
+		for(int i=0; i<3; ++i)
+//			weightRhs[startingIndex+1+i] = max( 1.0/(ADDITIONAL_SCALING_VALUE*max(0.02, fabs(rhou[icvCenter][i])/rhouMag)*rhouMag),  WEIGHT_RHS_MIN );
+			weightRhs[startingIndex+1+i] = max( 1.0/(ADDITIONAL_SCALING_VALUE*rhouMag),  WEIGHT_RHS_MIN );
+		weightRhs[startingIndex+4] = max( 1.0/(ADDITIONAL_SCALING_VALUE*fabs(rhoE[icvCenter])),  WEIGHT_RHS_MIN );
+		for(int iScal=0; iScal<nScal; ++iScal)
+			weightRhs[startingIndex+5+iScal] = max( 1.0/(ADDITIONAL_SCALING_VALUE*max(fabs(scalarTranspEqVector[iScal].phi[icvCenter]), 0.02*RefFlowParams.scalar_ref[iScal])),  WEIGHT_RHS_MIN);
+
+		if(mpi_rank==0 && firstCall) {
+			cout<<"           > IkeWithPsALC_AD::calcWeightRhs(): LOCAL_VALUES weighting (at icv="<<icvCenter<<") =";
+			for(int i=0; i<5+nScal; ++i) cout<<" "<<weightRhs[startingIndex+i]<<" ";
+			cout<<endl;
+		}
+	} else {
+		if(mpi_rank==0) cerr<<"ERROR IkeWithPsALC_AD::calcWeightRhs() - weightRhsMethod="<<weightRhsMethod<<" cannot be supported"<<endl;
+		throw(PSALC_ERROR_CODE);
+	}
+
+	firstCall = false;
+}
+
+/*
+ * Method: calcWeightRhsHook
+ * -------------------------
+ * calculate "weightRhs" (weight for RHS) at the given icv
+ * This method is called right after calling calcWeightRhs() so that the user can modify weightRhs
+ */
+void IkeWithPsALC_AD::calcWeightRhsHook(const int icvCenter, const int nVars) { /* empty */ }
+
 /****************************
  * UTILITY FUNCTIONS
  ****************************/
@@ -7225,6 +7068,29 @@ void IkeWithPsALC_AD::getParamStabilizedNewton(int &stabilizationMethodType, dou
 }
 
 /*
+ * Method: getParamMoreNewtonSteps
+ * -------------------------------
+ * Obtain the parameters to run Newton's method for more steps after convergence
+ *   "MORE_NTSTEPS_BELOW_CONV"-->"MORE_STEPS"
+ *   "MORE_NTSTEPS_BELOW_CONV"-->"RESID"
+ *   "MORE_NTSTEPS_BELOW_CONV"-->"RESID"
+ */
+void IkeWithPsALC_AD::getParamMoreNewtonSteps(int &moreNTstepsBelowConv_moreSteps, double &moreNTstepsBelowConv_resid, double &moreNTstepsBelowConv_deltaQ,
+		const bool firstCall) {
+	if (!checkParam("MORE_NTSTEPS_BELOW_CONV")) {
+		ParamMap::add("MORE_NTSTEPS_BELOW_CONV  MORE_STEPS=0  RESID=1.0e-15  DELTA_Q=1.0e-15"); // add default values
+		if (mpi_rank == 0)
+			cout<< "WARNING: added keyword \"MORE_NTSTEPS_BELOW_CONV  MORE_STEPS=0  RESID=1.0e-15  DELTA_Q=1.0e-15\""<< " to parameter map!" << endl;
+	}
+	moreNTstepsBelowConv_moreSteps = getParam("MORE_NTSTEPS_BELOW_CONV")->getInt("MORE_STEPS");
+	moreNTstepsBelowConv_resid     = getParam("MORE_NTSTEPS_BELOW_CONV")->getDouble("RESID");
+	moreNTstepsBelowConv_deltaQ    = getParam("MORE_NTSTEPS_BELOW_CONV")->getDouble("DELTA_Q");
+
+	if(firstCall && mpi_rank==0)
+		cout<<"> MORE_NTSTEPS_BELOW_CONV  MORE_STEPS="<<moreNTstepsBelowConv_moreSteps<<"  RESID="<<moreNTstepsBelowConv_resid<<"  DELTA_Q = "<<moreNTstepsBelowConv_deltaQ<<endl;
+}
+
+/*
  * Method: getParamsModifiedNewtonMethod
  * -------------------------------------
  * Obtain the Newton method to be used.
@@ -7277,12 +7143,17 @@ void IkeWithPsALC_AD::getParamsModifiedNewtonMethod(MODIFIED_NEWTON& modifiedNew
  *   If positive values (rho, press, kine) become negative during Newton's method, reduce "relaxtion"
  */
 void IkeWithPsALC_AD::getParamsReducingRelax(double &clipParameter, double &safeParameter, bool showOnScreen) {
-	clipParameter  = getDoubleParam("RELAXATION_CLIP_THRESHOLD", "1.0e-9");
-	safeParameter  = getDoubleParam("RELAXATION_CLIP_SAFETY",    "0.8");
+	if (!checkParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")) {
+		ParamMap::add("RELAXATION_CLIP_FOR_NEGATIVE_VALS  CLIP_PARAM=1.0e-9  SAFE_PARAM=0.8"); // add default values
+		if (mpi_rank == 0)
+			cout << "WARNING: added keyword \"RELAXATION_CLIP_NEGATIVE_VALS  CLIP_PARAM=1.0e-9  SAFE_PARAM=0.8\" to parameter map!"<<endl;
+	}
+
+	clipParameter  = getParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")->getDouble("CLIP_PARAM");
+	safeParameter  = getParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")->getDouble("SAFE_PARAM");
 
 	if(showOnScreen && mpi_rank==0) {
-		cout<<"RELAXATION_CLIP_THRESHOLD: "<<clipParameter<<endl;
-		cout<<"RELAXATION_CLIP_SAFETY:    "<<safeParameter<<endl;
+		cout<<"> RELAXATION_CLIP_FOR_NEGATIVE_VALS (if some scalars become negative during NT, reduce relax): CLIP_PARAM = "<<clipParameter<<"  SAFE_PARAM="<<safeParameter<<endl;
 	}
 }
 
@@ -7479,7 +7350,7 @@ double IkeWithPsALC_AD::vecDotVecWithWeight (double* innerProductRatio,
 		const int Nvars, const int NcontrolEqns) {
 	assert(weightForLambda > 0.0);
 	assert(Nvars >= 5);
-	if(mpi_rank == mpi_size-1)
+	if(NcontrolEqns > 0 && mpi_rank == mpi_size-1)
 		assert(lambdaVec0 != NULL && lambdaVec1 != NULL);
 
 	static bool firstCall = true;
@@ -7614,7 +7485,7 @@ double IkeWithPsALC_AD::calcWeighted2NormForVecMinusVec(double *normSqRatio,
 	// Allocate memory
 	double* qVecDiff      = new double [ncv*Nvars];
 	double* lambdaVecDiff = NULL;
-	if(mpi_rank == mpi_size-1)
+	if(mpi_rank == mpi_size-1 && NcontrolEqns > 0)
 		lambdaVecDiff = new double [NcontrolEqns];
 
 	// Calculate the squre of the weighted 2-norm
@@ -7628,7 +7499,7 @@ double IkeWithPsALC_AD::calcWeighted2NormForVecMinusVec(double *normSqRatio,
 
 	// Free memory
 	delete [] qVecDiff;
-	if(mpi_rank == mpi_size-1)
+	if(mpi_rank == mpi_size-1 && NcontrolEqns > 0)
 		delete [] lambdaVecDiff;
 
 	// Return
@@ -7863,7 +7734,7 @@ bool IkeWithPsALC_AD::calcNres(double* Nres, const double *q, double* rhs, const
 	}
 
 	// Calculate Nres = (new arclength) - (old arclength)
-	double NresVal = arcLengthNew-arcLength;
+	double NresVal = arcLengthNew - arcLength;
 
 	for(int iParam=0; iParam<NcontrolEqns; ++iParam)
 		Nres[iParam] = NresVal;
@@ -8231,7 +8102,7 @@ void IkeWithPsALC_AD::writePsALCdumpedDataParallel(char filename[], const int st
 	//              1. step (int)                      2. NcontrolEqns (int)
 	//              3. lambda0 (double*NcontrolEqns)   4. lambda1 (double*NcontrolEqns)
 	//              5. ds (double)
-	//              6. mpi_size (int)                  7. cvora (int*(mpi_size+1)
+	//              6. mpi_size (int)                  7. cvora (int*(mpi_size+1))
 	//              8. xMinArray (double*3*mpi_size)   9. xMaxArray (double*3*mpi_size)
 	if(mpi_rank==0) {
 		// Open the file
@@ -8520,11 +8391,11 @@ void IkeWithPsALC_AD::readPsALCdumpedDataSerial(const char filename[], double* q
 }
 
 /*
- * Method: readJOEdumpedData
- * -------------------------
+ * Method: readJOEdumpedDataSerial
+ * -------------------------------
  * Read data from previous JOE simulation
  */
-void IkeWithPsALC_AD::readJOEdumpedData(const string &filename, double* q) {
+void IkeWithPsALC_AD::readJOEdumpedDataSerial(const string &filename, double* q) {
 	// number of variables
 	int nScal = scalarTranspEqVector.size();
 	int m = nScal+5; // number of variables (rho, rhou, rhov, rhow, rhoE, and scalars)
@@ -8538,45 +8409,56 @@ void IkeWithPsALC_AD::readJOEdumpedData(const string &filename, double* q) {
 
 	// read the file
 	if(mpi_rank==0)
-		cout<<">> readQbinary(): reading data from "<<filename<<"..."<<endl;
+		cout<<">> readJOEdumpedDataSerial(): ";
 
-	int mpi_size_file, totalNcv_file, nScal_file;
+	int mpi_size_file;
+	int *cvora_file = NULL;
+	double *xcvMinArray_file = NULL;
+	double *xcvMaxArray_file = NULL;
+	int nScal_file;
 
 	ifstream infile(filename.c_str(), ios::in | ios::binary);
 	if(infile.is_open()) {
 		// read some parameters from the file
 		infile.read(reinterpret_cast<char*>(&mpi_size_file), sizeof(int)); // Note: if you simply use the ">>" operator, it will cause some problem due to bugs in a g++ library on linux
-		infile.read(reinterpret_cast<char*>(&totalNcv_file), sizeof(int));
+
+		cvora_file = new int [mpi_size_file+1];
+		infile.read(reinterpret_cast<char*>(cvora_file), sizeof(int)*(mpi_size_file+1));
+
+		xcvMinArray_file = new double [mpi_size_file*3];
+		infile.read(reinterpret_cast<char*>(xcvMinArray_file), sizeof(double)*(mpi_size_file*3));
+		xcvMaxArray_file = new double [mpi_size_file*3];
+		infile.read(reinterpret_cast<char*>(xcvMaxArray_file), sizeof(double)*(mpi_size_file*3));
+
 		infile.read(reinterpret_cast<char*>(&nScal_file), sizeof(int));
 
-		assert(nScal_file == nScal);
 		if(mpi_rank==0) {
-			printf("Reading \'%s\': total number of CVs=%d with # of fields = %d ...\n", filename.c_str(), totalNcv_file, mpi_size_file);
+			printf("Reading \'%s\': total number of CVs=%d with # of fields=%d and nScal=%d ...\n", filename.c_str(), cvora_file[mpi_size_file], mpi_size_file, nScal_file);
 		}
+		assert(nScal_file == nScal);
+		assert(cvora_file[mpi_size_file] == cvora[mpi_size]);
 
 		// variables
 		int ncv_file;
-		int ndata_file;
 		double (*x_cv_file)[3] = NULL;
 		double *q_file = NULL;
 
 		// read each data
 		for(int impi_file=0; impi_file<mpi_size_file; ++impi_file) {
 			// read data dumped by a CPU
-			infile.read(reinterpret_cast<char*>(&ncv_file), sizeof(int));
-			assert(ncv_file>0);
+			ncv_file = cvora_file[impi_file+1]-cvora_file[impi_file];
+			assert(ncv_file>0 && ncv_file<=cvora[mpi_size]);
 			if(mpi_rank==0)
-				cout<<"  Data field "<<impi_file<<": ncv="<<ncv_file<<endl;
+				cout<<"  Data field "<<impi_file<<": ncv = "<<ncv_file<<endl;
 
-			assert(x_cv_file==NULL);	x_cv_file = new double [ncv_file][3];
-			assert(q_file==NULL);		q_file = new double [ncv_file*m];
+			assert(x_cv_file == NULL);	x_cv_file = new double [ncv_file][3];
+			assert(q_file == NULL);	    q_file    = new double [ncv_file*m];
 
-			for(int icv_file=0; icv_file<ncv_file; ++icv_file) {
+			for(int icv=0; icv<ncv_file; ++icv) {
 				for(int i=0; i<3; ++i)
-					infile.read(reinterpret_cast<char*>(&x_cv_file[icv_file][i]), sizeof(double));
-				for(int i=0; i<m; ++i)
-					infile.read(reinterpret_cast<char*>(&q_file[m*icv_file+i]), sizeof(double));
+					infile.read(reinterpret_cast<char*>(&x_cv_file[icv][i]), sizeof(double));
 			}
+			infile.read(reinterpret_cast<char*>(q_file), sizeof(double)*(ncv_file*m));
 
 			// find the matached data
 			for(int icv=0; icv<ncv; ++icv) {
@@ -8591,6 +8473,15 @@ void IkeWithPsALC_AD::readJOEdumpedData(const string &filename, double* q) {
 
 			delete [] x_cv_file;	x_cv_file = NULL;
 			delete [] q_file;		q_file = NULL;
+		}
+
+		// Read the foot
+		int dummyInt;
+		infile.read(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		if(dummyInt != EOF_ERROR_CHECK_CODE) {
+			if(mpi_rank==0)
+				cout<<"ERROR! IkeWithPsALC_AD::readJOEdumpedDataSerial(): file does not end with EOF_ERROR_CHECK_CODE="<<EOF_ERROR_CHECK_CODE<<endl;
+			assert(false);
 		}
 
 		// check if each CV finds a matched CV
@@ -8613,6 +8504,9 @@ void IkeWithPsALC_AD::readJOEdumpedData(const string &filename, double* q) {
 	infile.close();
 
 	delete [] countFound;
+	delete [] cvora_file;
+	delete [] xcvMinArray_file;
+	delete [] xcvMaxArray_file;
 
 	MPI_Barrier(mpi_comm);
 }

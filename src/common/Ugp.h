@@ -1076,6 +1076,7 @@ public:
     io_write_flag = 0;
     my_no_list = NULL;
     my_fa_list = NULL;
+
     my_cv_list = NULL;
 
     // cvGroup - this will be used to modify the partition if specified...
