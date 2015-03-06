@@ -1059,7 +1059,7 @@ public:
 	 *                 2. sourceHookScalarRansTurb_new1D_AD in IkeUgpWithCvCompFlow.h
 	 */
 	virtual void sourceHookScalarRansComb_new1D_AD(const int icv, adouble &rhs, double *A, const string &name, int flagImplicit) {
-		if (name == "ZVar") {
+		if (name.compare("ZVar") == 0) {
 			adouble src = 2.0*InterpolateAtCellCenterFromFaceValues_AD(mut_fa, icv)/Schmidt_turb_Z2 * vecDotVec3d_AD((*grad_ZMean)[icv], (*grad_ZMean)[icv]) - chi_AD[icv] * rho_AD[icv] * (*ZVar)[icv];
 			rhs += src * cv_volume[icv];
 
@@ -1070,7 +1070,7 @@ public:
 			}
 		}
 
-		if (name == "CMean") {
+		if (name.compare("CMean") == 0) {
 			rhs += rho_AD[icv] * CmeanSource_AD[icv] * cv_volume[icv];
 
 			if (flagImplicit) {
@@ -1093,6 +1093,8 @@ public:
 				A[noc00] -= (CmeanSourcep - CmeanSourcem) / (2.0 * delta_CM) * cv_volume[icv] ;
 			}
 		}
+
+		sourceHookinSourceHookScalarRansComb_new1D_AD(icv, rhs, A, name, flagImplicit);
 	}
 
 	/*

@@ -2045,6 +2045,8 @@ public:   // member functions
   virtual void sourceHookScalarRansCombExplicit(double *rhs, const string &name)  {/*empty*/}
   virtual void sourceHookScalarRansComb(double *rhs, double *A, const string &name, int flagImplicit)  {/*empty*/}
 ///IKJ
+  virtual void sourceHookInSourceHookScalarRansComb(double *rhs, double *A, const string &name, int flagImplicit)  {/*empty*/}
+///IKJ
   virtual void sourceHookScalarRansComb_ikj(double **rhs_rhoScal, double ***Ascal, vector<ScalarTranspEq> &scalarTranspEqVector, int flagImplicit) {/*empty*/}
 
   virtual void boundaryHookScalarRansComb(double *phi_ph, FaZone *zone, const string &name)  {/*empty*/}  

@@ -785,59 +785,61 @@ public:
       }
     }
   }
-  
-	virtual void sourceHookScalarRansComb(double *rhs, double *A, const string &name, int flagImplicit)
-	{
-		if (name == "ZVar")
-		{
-			ScalarTranspEq *eq = getScalarTransportData("ZMean");       
-			//double *ZMean_bfa = eq->phi;  
-			double (*ZMean_grad)[3] = eq->grad_phi;
-			
-			for (int icv = 0; icv < ncv; icv++)
-			{
-				double src = 2.0*InterpolateAtCellCenterFromFaceValues(mut_fa, icv)/Schmidt_turb_Z2 * vecDotVec3d(ZMean_grad[icv], ZMean_grad[icv]) - chi[icv] * rho[icv] * ZVar[icv];
-				rhs[icv] += src * cv_volume[icv];
-			}
-			
-			if (flagImplicit)
-			{
-				for (int icv = 0; icv < ncv; icv++)
-				{
-					int noc00 = nbocv_i[icv];
-					double dsrcdphi = - chi[icv];
-					A[noc00] -= dsrcdphi*cv_volume[icv];
-				}
-			}
-		}
-		
-		if (name == "CMean")
-		{
-			for (int icv = 0; icv < ncv; icv++)
-			{
-				rhs[icv] += rho[icv] * CmeanSource[icv] * cv_volume[icv];
-			}
-			
-			if (flagImplicit) {
-				// Derivative with respect to CMean
-				for (int icv = 0; icv < ncv; icv++) {
-					double E = enthalpy[icv] - RoM[icv] * temp[icv];
-					double delta_CM = 1.0e-5;
-					double CMp = CMean[icv] + delta_CM;
-					double CMm = CMean[icv] - delta_CM;
-					double pressp, pressm, CmeanSourcep, CmeanSourcem;
-					pressure_scalSource(pressp, CmeanSourcep, rho[icv], E, ZMean[icv], ZVar[icv], CMp);
-					pressure_scalSource(pressm, CmeanSourcem, rho[icv], E, ZMean[icv], ZVar[icv], CMm);
+
+  virtual void sourceHookScalarRansComb(double *rhs, double *A, const string &name, int flagImplicit)
+  {
+	  if (name == "ZVar")
+	  {
+		  ScalarTranspEq *eq = getScalarTransportData("ZMean");
+		  //double *ZMean_bfa = eq->phi;
+		  double (*ZMean_grad)[3] = eq->grad_phi;
+
+		  for (int icv = 0; icv < ncv; icv++)
+		  {
+			  double src = 2.0*InterpolateAtCellCenterFromFaceValues(mut_fa, icv)/Schmidt_turb_Z2 * vecDotVec3d(ZMean_grad[icv], ZMean_grad[icv]) - chi[icv] * rho[icv] * ZVar[icv];
+			  rhs[icv] += src * cv_volume[icv];
+		  }
+
+		  if (flagImplicit)
+		  {
+			  for (int icv = 0; icv < ncv; icv++)
+			  {
+				  int noc00 = nbocv_i[icv];
+				  double dsrcdphi = - chi[icv];
+				  A[noc00] -= dsrcdphi*cv_volume[icv];
+			  }
+		  }
+	  }
+
+	  if (name == "CMean")
+	  {
+		  for (int icv = 0; icv < ncv; icv++)
+		  {
+			  rhs[icv] += rho[icv] * CmeanSource[icv] * cv_volume[icv];
+		  }
+
+		  if (flagImplicit) {
+			  // Derivative with respect to CMean
+			  for (int icv = 0; icv < ncv; icv++) {
+				  double E = enthalpy[icv] - RoM[icv] * temp[icv];
+				  double delta_CM = 1.0e-5;
+				  double CMp = CMean[icv] + delta_CM;
+				  double CMm = CMean[icv] - delta_CM;
+				  double pressp, pressm, CmeanSourcep, CmeanSourcem;
+				  pressure_scalSource(pressp, CmeanSourcep, rho[icv], E, ZMean[icv], ZVar[icv], CMp);
+				  pressure_scalSource(pressm, CmeanSourcem, rho[icv], E, ZMean[icv], ZVar[icv], CMm);
 #ifdef PRESSURE_SCALING_FPVA_COEFF
-					CmeanSourcep *= pow( pressp/Preference , PRESSURE_SCALING_FPVA_COEFF ) ;
-					CmeanSourcem *= pow( pressm/Preference , PRESSURE_SCALING_FPVA_COEFF ) ;
+				  CmeanSourcep *= pow( pressp/Preference , PRESSURE_SCALING_FPVA_COEFF ) ;
+				  CmeanSourcem *= pow( pressm/Preference , PRESSURE_SCALING_FPVA_COEFF ) ;
 #endif      
-					int noc00 = nbocv_i[icv];
-					A[noc00] -= (CmeanSourcep - CmeanSourcem) / (2.0 * delta_CM) * cv_volume[icv] ;
-				}
-			}
-		}
-	}
+				  int noc00 = nbocv_i[icv];
+				  A[noc00] -= (CmeanSourcep - CmeanSourcem) / (2.0 * delta_CM) * cv_volume[icv] ;
+			  }
+		  }
+	  }
+
+	  sourceHookInSourceHookScalarRansComb(rhs, A, name, flagImplicit);
+  }
 	
 	
 	

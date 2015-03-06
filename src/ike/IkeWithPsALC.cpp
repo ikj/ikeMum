@@ -561,7 +561,11 @@ void IkeWithPsALC_AD::runPsALC() {
 	}
 
 	string tempFor3rdPt = getStringParam("INIT_THIRD_FROM_Q1", "NO");
-	initThirdFromQ1 = (tempFor3rdPt.compare("YES")==0) || (tempFor3rdPt.compare("yes")==0) || (tempFor3rdPt.compare("Y")==0) || (tempFor3rdPt.compare("y")==0);
+	std::transform(tempFor3rdPt.begin(), tempFor3rdPt.end(), tempFor3rdPt.begin(), ::tolower);
+	if(tempFor3rdPt.compare("yes")==0)
+		initThirdFromQ1 = true;
+	else
+		initThirdFromQ1 = false;
 
 	PsALCinitialHOOK_debug(); // This function is only for debugging: the user can have a opportunity to look into the variables
 
@@ -713,10 +717,10 @@ void IkeWithPsALC_AD::runPsALC() {
 						// Note: "initResidNorm" and "iterNewton" are Member variables
 
 			if(factorReduceTangential < minArclength/arclength) {
-				if(mpi_rank==0) cout<<"WARNING in runPsALC(): too small arclength after applying arclength-control (reduce-factor="<<factorReduceTangential<<": CLIP TO "<<minArclength/arclength<<")"<<endl;
+				if(mpi_rank==0) cout<<"WARNING in runPsALC(): too small arclength after applying arclength-control (new arclength="<<factorReduceTangential*arclength<<" < MIN_ARCLENGTH="<<minArclength<<") -- CLIP TO "<<minArclength<<endl;
 				factorReduceTangential = minArclength/arclength;
 			} else if(factorReduceTangential > maxArclength/arclength) {
-				if(mpi_rank==0) cout<<"WARNING in runPsALC(): too big arclength after applying arclength-control (reduce-factor="<<factorReduceTangential<<": CLIP TO "<<maxArclength/arclength<<")"<<endl;
+				if(mpi_rank==0) cout<<"WARNING in runPsALC(): too big arclength after applying arclength-control (new arclength="<<factorReduceTangential*arclength<<" < MAX_ARCLENGTH="<<maxArclength<<") -- CLIP TO "<<maxArclength<<endl;
 				factorReduceTangential = maxArclength/arclength;
 			}
 
@@ -925,6 +929,8 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 	calcStateVariables();     // Compute velocity, pressure, temperature, enthalpy and speed of sound at cell centers
 //	calcMaterialProperties(); // Compute viscosity and thermal diffusivity at cell faces
 	setBC();
+	for(int ifa=nfa; ifa<nfa_b2; ++ifa)
+		setBC1D(ifa, UgpWithCvCompFlow::rho, UgpWithCvCompFlow::rhou, UgpWithCvCompFlow::rhoE); // Note: ncvggf's cannot be not updated, so the user should take care of it
 	calcRansTurbViscMuet();
 
 	for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
@@ -1200,40 +1206,51 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 			double relTolNewton = getParam("NEWTON_PARAMETERS_2NDPT")->getDouble("REL_RESID");
 
 			// Initialize q1 with an initial guess
-			int initGuessNewton = getIntParam("INIT_GUESS_NEWTON", "0"); // Note: 0=Previos rho, rhou, etc.
-			                                                             //       1=binary file by IKE (filename is defined by Q1_FILENAME
+			int initGuessNewton = getIntParam("INIT_GUESS_NEWTON", "0"); // Note: 0 = Previous rho, rhou, etc.
+			                                                             //       1 = binary file by JOE (filename is defined by Q1_FILENAME)
+			                                                             //       2 = binary file by IKE (filename is defined by Q1_FILENAME)
 			if(initGuessNewton > 0) {
-				if(mpi_rank==0) cout<<"   Initial guess is provided from a binary file dumped by IKE";
 				filename = getStringParam("Q1_FILENAME", "Q1_PT00001.bin");
-				if(mpi_rank==0) cout<<" - filename = "<<filename<<endl;
 
-				lambda0Temp2nd = new double [NcontrolEqns];
-				lambda1Temp2nd = new double [NcontrolEqns];
-				double arclengthTemp2nd;
+				if(initGuessNewton == 1) {
+					if(mpi_rank==0) cout<<"   Initial guess is provided from a binary file dumped by JOE - filename = "<<filename<<endl;
 
-				readPsALCdumpedDataSerial(filename, q1, step, lambda0Temp2nd, lambda1Temp2nd, NcontrolEqns, arclengthTemp2nd);
+					readJOEdumpedDataSerial(filename, q1);  // Note: writeJOEDataParallel() is defined in Joe
+				} else if(initGuessNewton == 2) {
+					if(mpi_rank==0) cout<<"   Initial guess is provided from a binary file dumped by IKE - filename = "<<filename<<endl;
 
-				if(mpi_rank==0) {
-					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
-						printf("  lambda%d=%.3e", iEqn, lambda1Temp2nd[iEqn]);
-					printf("  arclength=%.4e \n", arclengthTemp2nd);
-				}
+					lambda0Temp2nd = new double [NcontrolEqns];
+					lambda1Temp2nd = new double [NcontrolEqns];
+					double arclengthTemp2nd;
 
-				// Check possible errors
-				errorAbs2nd = 0.0;
-				for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
-					errorAbs2nd += fabs((lambda1Temp2nd[iEqn] - lambdaInit1[iEqn])/lambdaInit1[iEqn]);
-				if(errorAbs2nd > LAMBDA_COMPATIBILITY_EPS) {
+					readPsALCdumpedDataSerial(filename, q1, step, lambda0Temp2nd, lambda1Temp2nd, NcontrolEqns, arclengthTemp2nd);
+
 					if(mpi_rank==0) {
-						printf("\n  CAUTION! The binary file does not match with the Ike.in file \n");
-						printf("       Binary file:");
 						for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
-							printf(" lambda%d=%.5e ", iEqn, lambda1Temp2nd[iEqn]);
-						printf("\n       Input file : ");
-						for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
-							printf(" lambda%d=%.5e ", iEqn, lambdaInit1[iEqn]);
-						cout<<endl;
+							printf("  lambda%d=%.3e", iEqn, lambda1Temp2nd[iEqn]);
+						printf("  arclength=%.4e \n", arclengthTemp2nd);
 					}
+
+					// Check possible errors
+					errorAbs2nd = 0.0;
+					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+						errorAbs2nd += fabs((lambda1Temp2nd[iEqn] - lambdaInit1[iEqn])/lambdaInit1[iEqn]);
+					if(errorAbs2nd > LAMBDA_COMPATIBILITY_EPS) {
+						if(mpi_rank==0) {
+							printf("\n  CAUTION! The binary file does not match with the Ike.in file \n");
+							printf("       Binary file:");
+							for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+								printf(" lambda%d=%.5e ", iEqn, lambda1Temp2nd[iEqn]);
+							printf("\n       Input file : ");
+							for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+								printf(" lambda%d=%.5e ", iEqn, lambdaInit1[iEqn]);
+							cout<<endl;
+						}
+					}
+
+					// Free memory
+					delete [] lambda0Temp2nd;
+					delete [] lambda1Temp2nd;
 				}
 
 				// update the flow field
@@ -1249,12 +1266,10 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 				calcStateVariables();
 //				calcMaterialProperties();
 				setBC();
+				for(int ifa=nfa; ifa<nfa_b2; ++ifa)
+					setBC1D(ifa, UgpWithCvCompFlow::rho, UgpWithCvCompFlow::rhou, UgpWithCvCompFlow::rhoE); // Note: ncvggf's cannot be not updated, so the user should take care of it
 				calcRansTurbViscMuet();
 				MPI_Barrier(mpi_comm);
-
-				// Free memory
-				delete [] lambda0Temp2nd;
-				delete [] lambda1Temp2nd;
 			} else {
 				for(int icv=0; icv<ncv; ++icv) {
 					int tempInt = icv*m;
@@ -1489,6 +1504,8 @@ void IkeWithPsALC_AD::singlePsALCstep(double *qVec, const double *q0, const doub
 	calcStateVariables();     // Compute velocity, pressure, temperature, enthalpy and speed of sound at cell centers
 //	calcMaterialProperties(); // Compute viscosity and thermal diffusivity at cell faces
 	setBC();
+	for(int ifa=nfa; ifa<nfa_b2; ++ifa)
+		setBC1D(ifa, UgpWithCvCompFlow::rho, UgpWithCvCompFlow::rhou, UgpWithCvCompFlow::rhoE); // Note: ncvggf's cannot be not updated, so the user should take care of it
 	calcRansTurbViscMuet();
 
 	if(mpi_rank == mpi_size-1) {
@@ -2274,17 +2291,18 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 						double xCoord = x_cv[icv][0];
 
 						double exponent = 1.0;
-						if(xCoord <= x2AprioriWeight) {
-							exponent = minWeight + max( (1-minWeight)*exp(-betaAprioriWeight*pow(xCoord-x2AprioriWeight, 2.0)), MACHINE_EPS );
-							exponent = max(MACHINE_EPS, min(exponent, 1.0)); // Make sure that 0 < exponent <= 1.0
-						}
+//						if(xCoord <= x2AprioriWeight) {
+//							exponent = minWeight + max( (1-minWeight)*exp(-betaAprioriWeight*pow(xCoord-x2AprioriWeight, 2.0)), MACHINE_EPS );
+//							exponent = max(MACHINE_EPS, min(exponent, 1.0)); // Make sure that 0 < exponent <= 1.0
+//						}
 
 						for(int ivar=0; ivar<m; ++ivar) {
 							int row = icv*m + ivar;
 							int diagIndex = jacMatrixSTL.get_diag_index(row);
 
 							double oldValue = jacMatrixSTL.get_values(diagIndex);
-							double addVal   = - max(MACHINE_EPS, alpha*exponent*fabs(rhs[row])) - stabilizationAlphaEps;
+//							double addVal   = - max(MACHINE_EPS, alpha*exponent*fabs(rhs[row])) - stabilizationAlphaEps;
+							double addVal   = -alpha*exponent*rhs[row] - stabilizationAlphaEps;
 							jacMatrixSTL.set_values(diagIndex, oldValue + addVal); // Note that the Jacobian matrix is negative (semi-) definite
 
 							++myNonDiagAdd_count; // Just for Statistics
@@ -2959,9 +2977,6 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 				if(countConvergedSteps > moreNTstepsBelowConv_moreSteps)
 					done = true;
 				else {
-					if(mpi_rank==0 && countConvergedSteps==1)
-						cout<<"Newton-solver converged but keep running the simulation since MORE_STEPS_BELOW_CONV="<<moreNTstepsBelowConv_moreSteps<<": DELTA_Q="<<moreNTstepsBelowConv_deltaQ<<endl;
-
 					if(deltaQnorm <= moreNTstepsBelowConv_deltaQ)
 						done = true;
 				}
@@ -2972,6 +2987,13 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 
 			if(iterNewton > startingNewtonIter+maxIterNewton)
 				done = true;
+
+			if(mpi_rank==0 && countConvergedSteps==1) {
+				if(!done)
+					cout<<"Newton-solver converged but keep running the simulation since MORE_STEPS_BELOW_CONV="<<moreNTstepsBelowConv_moreSteps<<", DELTA_Q="<<moreNTstepsBelowConv_deltaQ<<endl;
+				else
+					cout<<"Even though MORE_STEPS_BELOW_CONV="<<moreNTstepsBelowConv_moreSteps<<", do not launch more Newton steps since other conditions have met"<<endl;
+			}
 		}
 ////IKJ
 //writeData(step, iterNewton);
@@ -3147,6 +3169,8 @@ bool IkeWithPsALC_AD::getSteadySolnByBackwardEuler(double (*dq)[5], double **dSc
 	// set BC's for NS and scalars
 	// -------------------------------------------------------------------------------------------
 	setBC();
+	for(int ifa=nfa; ifa<nfa_b2; ++ifa)
+		setBC1D(ifa, UgpWithCvCompFlow::rho, UgpWithCvCompFlow::rhou, UgpWithCvCompFlow::rhoE); // Note: ncvggf's cannot be not updated, so the user should take care of it
 
 	// -------------------------------------------------------------------------------------------
 	// update turbulent properties: mut and initialize strain rate, vort mag, ... for turb scalars
@@ -3331,6 +3355,8 @@ bool IkeWithPsALC_AD::getSteadySolnByBackwardEuler(double (*dq)[5], double **dSc
 		// set BC's for NS and scalars
 		// -------------------------------------------------------------------------------------------
 		setBC();
+		for(int ifa=nfa; ifa<nfa_b2; ++ifa)
+			setBC1D(ifa, UgpWithCvCompFlow::rho, UgpWithCvCompFlow::rhou, UgpWithCvCompFlow::rhoE); // Note: ncvggf's cannot be not updated, so the user should take care of it
 
 		// -------------------------------------------------------------------------------------------
 		// update turbulent properties: mut and initialize strain rate, vort mag, ... for turb scalars
@@ -6888,7 +6914,7 @@ void IkeWithPsALC_AD::calcWeightRhs(const int icvCenter, WEIGHT_RHS_METHOD weigh
 	if(weightRhsMethod == NO_RHSWEIGHT) {
 		for(int i=0; i<5+nScal; ++i)
 			weightRhs[startingIndex+i] = 1.0;
-	} if(weightRhsMethod == REF_VALUES) {
+	} else if(weightRhsMethod == REF_VALUES) {
 		weightRhs[startingIndex] = max( 1.0/(ADDITIONAL_SCALING_VALUE*RefFlowParams.rho_ref),  WEIGHT_RHS_MIN );
 		for(int i=0; i<3; ++i)
 //			weightRhs[startingIndex+1+i] = max( 1.0/(ADDITIONAL_SCALING_VALUE*max(RefFlowParams.rhou_ref[i], 0.02*RefFlowParams.rhouMag_ref)),  WEIGHT_RHS_MIN );
@@ -6918,7 +6944,12 @@ void IkeWithPsALC_AD::calcWeightRhs(const int icvCenter, WEIGHT_RHS_METHOD weigh
 			cout<<endl;
 		}
 	} else {
-		if(mpi_rank==0) cerr<<"ERROR IkeWithPsALC_AD::calcWeightRhs() - weightRhsMethod="<<weightRhsMethod<<" cannot be supported"<<endl;
+		if(mpi_rank==0) {
+			cerr<<"ERROR IkeWithPsALC_AD::calcWeightRhs() - weightRhsMethod = "<<weightRhsMethod<<" cannot be supported"<<endl;
+			cerr<<"      Supported methods: "<<NO_RHSWEIGHT<<" = NO_RHSWEIGHT"<<endl
+			    <<"      Supported methods: "<<REF_VALUES<<" = REF_VALUES"<<endl
+			    <<"      Supported methods: "<<LOCAL_VALUES<<" = LOCAL_VALUES"<<endl;
+		}
 		throw(PSALC_ERROR_CODE);
 	}
 

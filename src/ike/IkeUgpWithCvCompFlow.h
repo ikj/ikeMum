@@ -1537,6 +1537,21 @@
 	 */
     virtual void sourceHookScalarRansComb_new1D_AD(const int icvCenter, adouble &rhs, double *A, const string &name, int flagImplicit)  {/*empty*/}
 
+	/*
+	 * Method: sourceHookinSourceHookScalarRansComb_new1D_AD
+	 * -----------------------------------------------------
+	 * This method will be called at the end of sourceHookScalarRansComb_new1D_AD().
+	 *
+	 * Since sourceHookScalarRansComb_new1D_AD() is called by Combustion models, the user cannot use the method
+	 * to freely add source terms in the scalar transport equations.
+	 * If the user wants to add source terms by defining sourceHookScalarRansComb_new1D_AD() in their ike.cpp file,
+	 * it can be a hassle since some member variables in the combustion model cannot be accessed in the ike.cpp file.
+	 *
+	 * Note that currently (Feb, 2015) only FPVA model is compatible with this method: i.e., this method is NOT called
+	 * in sourceHookScalarRansComb_new1D_AD() in the other combustion models
+	 */
+    virtual void sourceHookinSourceHookScalarRansComb_new1D_AD(const int icvCenter, adouble &rhs, double *A, const string &name, int flagImplicit)  {/*empty*/}
+
     /*
      * Method: sourceHookRansCombCoupled1D_AD
      * --------------------------------------
@@ -1790,14 +1805,6 @@
     		enthalpy[icv_nbr] = gamma[icv_nbr]*RoM[icv_nbr]/(gamma[icv_nbr]-1.0)*temp[icv_nbr];
     		sos[icv_nbr] = sqrt(gamma[icv_nbr]*press[icv_nbr]/rho[icv_nbr]);
     	}
-
-// IKJ
-if(mpi_rank==0 && (icvCenter<3 || icvCenter==ncv-1)) {
-	cout<<"IkeUgp::calcStateVariables1D_AD(): icvCenter="<<icvCenter<<endl;
-	cout<<"  rho="<<rho[icvCenter]<<", rhou[1]="<<rhou[icvCenter][1]<<", rhoE="<<rhoE[icvCenter]<<endl
-		<<"  gamma="<<gamma[icvCenter]<<", RoM="<<RoM[icvCenter]<<", press="<<press[icvCenter]<<", temp="<<temp[icvCenter]<<endl;
-}
-
     }
 
     /*
