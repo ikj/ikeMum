@@ -239,7 +239,7 @@ public:
         if (!checkParam("BARRIER_SOURCE_TURB_SCALARS")) {
             ParamMap::add("BARRIER_SOURCE_TURB_SCALARS  FUNCTION=NO_METHOD  MAX_ITER=0  THRESHOLD_RESID=1.0e-6  COEFF_KINE=1.0  COEFF_OMEGA=1.0"); // add default values
             if (mpi_rank == 0)
-                cout<< "WARNING: added keyword \"BARRIER_SOURCE_TURB_SCALARS  METHOD=NO_METHOD  MAX_ITER=0  THRESHOLD_RESID=1.0e-6  COEFF_KINE=1.0  COEFF_OMEGA=1.0\""<< " to parameter map!" << endl;
+                cout<< "WARNING: added keyword \"BARRIER_SOURCE_TURB_SCALARS  FUNCTION=NO_METHOD  MAX_ITER=0  THRESHOLD_RESID=1.0e-6  COEFF_KINE=1.0  COEFF_OMEGA=1.0\""<< " to parameter map!" << endl;
         }
 
         barrierFunctionName = getParam("BARRIER_SOURCE_TURB_SCALARS")->getString("FUNCTION"); // If functionName=="NO_METHOD", skip the barrier
@@ -670,7 +670,7 @@ public:
 	 *
 	 */
 	virtual void initialHookScalarRansTurbModel_AD() {
-		// bebug level
+		// debug level
 		int debugLevel = getDebugLevel();
 
 		// connect pointers
@@ -1422,7 +1422,8 @@ public:
 
 					int icv0 = cvofa[ifa][0];
 					int icv1 = cvofa[ifa][1];
-					double muLamCV = calcMuLam(UgpWithCvCompFlow::temp[icv0]);
+//					double muLamCV = calcMuLam(UgpWithCvCompFlow::temp[icv0]);
+					double muLamCV = calcMuLam(icv0); // Note: calcMuLam(temp) can generate error with FPVA
 					phi[icv1] = 6.0*muLamCV/(rho[icv0]*beta0*wallDist[icv0]*wallDist[icv0]);
 				}
 			}

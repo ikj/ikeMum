@@ -79,16 +79,17 @@
 				<<"--------------------------------------------------"<<endl
 				<<"FLOW REFERENCE VALUES IN THE REF_FLOW_PARAMS STRUCT:"<<endl
 				<<"  RHO_REF     = "<<rho_ref<<endl
-				<<"  U_REF       = "<<u_ref[0]<<"  "<<u_ref[1]<<"  "<<u_ref[2]<<endl
+				<<"  (U_REF      = "<<u_ref[0]<<"  "<<u_ref[1]<<"  "<<u_ref[2]<<")"<<endl
 				<<"  RHOUMAG_REF = "<<rhouMag_ref<<endl
-				<<"  P_REF       = "<<press_ref<<endl
-				<<"  T_REF       = "<<temp_ref<<endl
-				<<"  RGAS_REF    = "<<Rgas_ref<<endl
-				<<"  GAMMA_REF   = "<<gamma_ref<<endl
-				<<"  KINE_REF    = "<<kine_ref<<endl
-				<<"  NSCAL       = "<<nScal<<endl;
+				<<"  (P_REF      = "<<press_ref<<endl
+				<<"   T_REF      = "<<temp_ref<<endl
+				<<"   RGAS_REF   = "<<Rgas_ref<<endl
+				<<"   GAMMA_REF  = "<<gamma_ref<<endl
+				<<"   KINE_REF   = "<<kine_ref<<")"<<endl
+				<<"  RHOE_REF    = "<<rhoE_ref<<endl
+				<<"  (NSCAL      = "<<nScal<<")"<<endl;
 			if(nScal>0) {
-				cout<<"  SCAL_REF    =";
+				cout<<"  RHO*SCAL_REF=";
 				for(size_t iScal=0; iScal<scalar_ref.size(); ++iScal)
 					cout<<" "<<scalar_ref[iScal]<<" ";
 				cout<<endl;

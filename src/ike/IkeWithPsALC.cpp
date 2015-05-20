@@ -1992,7 +1992,7 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 	// Calculate deltaQ from the previous point (q1) to the initial guess (q)
 	double deltaQnorm = 0.0;
 	if(NcontrolEqns > 0) { // If NcontrolEqns==0, q1 was not passed (i.e. q1 is NULL if NcontrolEqns==0)
-        double mySumPhiSq= 0.0, sumPhiSq;
+        double mySumPhiSq = 0.0, sumPhiSq;
 
         double *weightVec = new double [5+nScal];
 		for(int icv=0; icv<ncv; ++icv) {
@@ -2010,6 +2010,23 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 
 		deltaQnorm = sqrt(sumPhiSq);
 	}
+
+//IKJ
+for(int icv=0; icv<ncv; ++icv) {
+	int startingIndex = (5+nScal)*icv;
+	DELQ_RHO[icv] = q[startingIndex]-q1[startingIndex];
+	for(int i=0; i<3; ++i)
+		DELQ_RHOU[icv][i] = q[startingIndex+1+i]-q1[startingIndex+1+i];
+	DELQ_RHOE[icv] = q[startingIndex+4]-q1[startingIndex+4];
+
+	DELQ_KINE[icv]  = q[startingIndex+5]-q1[startingIndex+5];
+	DELQ_OMEGA[icv] = q[startingIndex+6]-q1[startingIndex+6];
+	DELQ_ZMEAN[icv] = q[startingIndex+7]-q1[startingIndex+7];
+	DELQ_ZVAR[icv]  = q[startingIndex+8]-q1[startingIndex+8];
+	DELQ_CMEAN[icv] = q[startingIndex+9]-q1[startingIndex+9];
+}
+writeData(step, 0);
+
 
 	if(trustRegionSize > 8.0*deltaQnorm && NcontrolEqns > 0) {
 		if(mpi_rank==0)
@@ -2516,6 +2533,23 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 
 		double deltaQnorm_beforeRelax = sqrt(sumPhiSq);
         deltaQnorm = relaxation * deltaQnorm_beforeRelax;
+
+//IKJ
+for(int icv=0; icv<ncv; ++icv) {
+	int startingIndex = (5+nScal)*icv;
+	DELQ_RHO[icv] = q[startingIndex]-q1[startingIndex];
+	for(int i=0; i<3; ++i)
+		DELQ_RHOU[icv][i] = phi[startingIndex+1+i];
+	DELQ_RHOE[icv] = phi[startingIndex+4];
+
+	DELQ_KINE[icv]  = phi[startingIndex+5];
+	DELQ_OMEGA[icv] = phi[startingIndex+6];
+	DELQ_ZMEAN[icv] = phi[startingIndex+7];
+	DELQ_ZVAR[icv]  = phi[startingIndex+8];
+	DELQ_CMEAN[icv] = phi[startingIndex+9];
+}
+writeData(step, 1);
+
 
         if(deltaQnorm >= trustRegionSize) {
         	if(mpi_rank==0)

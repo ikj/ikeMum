@@ -1888,11 +1888,17 @@ int JoeWithModels::calcEulerFlux(double *rhs_rho, double (*rhs_rhou)[3], double 
 				area, nVec, nScal, 0.0);
 
 		if(isNaN0(Frho) || isNaN0(Frhou[0]) || isNaN0(Frhou[1]) || isNaN0(Frhou[2]) || isNaN0(FrhoE)) {
-			printf("ERROR in JoeWithModels::calcEulerFlux(): NaN detected in flux at INTERNAL ifa=%d(%.2e,%.2e,%.2e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
-			printf("         Details: mpi_rank=%d, icv0=%d(%.2e,%.2e,%.2e), icv1=%d(%.2e,%.2e,%.2e)\n", mpi_rank, icv0, x_cv[icv0][0],x_cv[icv0][1],x_cv[icv0][2], icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
+			printf("ERROR in JoeWithModels::calcEulerFlux(): NaN detected in flux at INTERNAL ifa=%d(%e,%e,%e)\n", ifa, x_fa[ifa][0], x_fa[ifa][1], x_fa[ifa][2]);
+			printf("         Details: mpi_rank=%d, icv0=%d(%.4e,%.4e,%.4e), icv1=%d(%.4e,%.4e,%.4e)\n", mpi_rank, icv0, x_cv[icv0][0],x_cv[icv0][1],x_cv[icv0][2], icv1, x_cv[icv1][0],x_cv[icv1][1],x_cv[icv1][2]);
 			printf("                  Frho=%.3e, Frhou=(%.3e,%.3e,%.3e), FrhoE=%3e\n", Frho, Frhou[0],Frhou[1],Frhou[2], FrhoE);
-			printf("                  rho0=%.3e, u0=(%.3e, %.3e, %.3e), p0=%.3e, T0=%.3e, h0=%.3e, R0=%.3e, gam0=%.3e, kineFA0=%.3e\n", rho0, u0[0], u0[1], u0[2], p0, T0, h0, R0, gam0, kineFA0);
-			printf("                  rho1=%.3e, u1=(%.3e, %.3e, %.3e), p1=%.3e, T1=%.3e, h1=%.3e, R1=%.3e, gam1=%.3e, kineFA1=%.3e\n\n", rho1, u1[0], u1[1], u1[2], p1, T1, h1, R1, gam1, kineFA1);
+			printf("                  rho0=%.3e, u0=(%.3e, %.3e, %.3e), p0=%.3e, T0=%.3e, h0=%.3e, R0=%.3e, gam0=%.3e, kineFA0=%.3e", rho0, u0[0], u0[1], u0[2], p0, T0, h0, R0, gam0, kineFA0);
+			for (ScalarTranspEqIterator data = scalarTranspEqVector.begin(); data < scalarTranspEqVector.end(); data++)
+				printf(", %s=%.3e", data->getName(), (data->phi)[icv0]);
+			printf("\n");
+			printf("                  rho1=%.3e, u1=(%.3e, %.3e, %.3e), p1=%.3e, T1=%.3e, h1=%.3e, R1=%.3e, gam1=%.3e, kineFA1=%.3e", rho1, u1[0], u1[1], u1[2], p1, T1, h1, R1, gam1, kineFA1);
+			for (ScalarTranspEqIterator data = scalarTranspEqVector.begin(); data < scalarTranspEqVector.end(); data++)
+				printf(", %s=%.3e", data->getName(), (data->phi)[icv1]);
+			printf("\n\n");
 			throw(-11);
 		}
 

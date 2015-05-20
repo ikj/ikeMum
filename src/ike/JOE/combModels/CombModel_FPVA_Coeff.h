@@ -60,7 +60,7 @@ public:
   double             *dCmeanSource_dZM;            ///< Derivative of progress variable source term with respect to mean mixture fraction.
   double             *dCmeanSource_dZV;            ///< Derivative of progress variable source term with respect to mixture fraction variance.
   double             *dCmeanSource_dCM;            ///< Derivative of progress variable source term with respect to mean progress variable.
-  
+
 private:
   double T0;
   double E0;
@@ -490,6 +490,7 @@ public:
     double R0, T;
     myChemTable.LookupSelectedCoeff(R0, T0, E0, GAMMA0, AGAMMA, ZM, ZV, CM);
     CMSource = myChemTable.Lookup(ZM, ZV, CM, "SRC_PROG");
+
     if (AGAMMA == 0.0)
       T = T0 + (GAMMA0 - 1.0) / R0 * (E - E0);
     else
@@ -499,7 +500,7 @@ public:
     T = max(T, Tminimum);
     pp = rrho * R0 * T;
   }
-  
+
   // \brief Compute for a given temperature, density and scalars: pressure, enthalpy, gas constant and ratio of specific heat
   virtual void calcThermoProp_T(double &p, double &h, double &R, double &gam, double &rho, double &T, double *Scal, int nScal)
   {
