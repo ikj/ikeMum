@@ -55,6 +55,7 @@ enum WEIGHT_RHS_METHOD {NO_RHSWEIGHT, REF_VALUES, LOCAL_VALUES, REF_VALUES_AND_D
 #define JAC1D_STATUS_FILENAME  "Jac1D_status.dat"
 #define BIFUR_SUMMARY_FILENAME "Bifur_summary.csv"
 #define NEWTON_STATUS_FILENAME "Newton_converg.csv"
+#define TIMESTEP_STATUS_FILENAME "Timestep_converg.csv"
 #define LS_CONVERGENCE_FILENAME "LinearSystem_converg.csv"
 
 #ifndef EOF_ERROR_CHECK_CODE
@@ -88,7 +89,7 @@ enum WEIGHT_RHS_METHOD {NO_RHSWEIGHT, REF_VALUES, LOCAL_VALUES, REF_VALUES_AND_D
 #define MIN_CV_VOL_CUTOFF 1.0e-12
 #endif
 
-#define USE_REF_WEIGHTED_INNER_PROD // Similar idea as using USE_VOLUME_WEIGHTED_INNER_PROD,
+//#define USE_REF_WEIGHTED_INNER_PROD // Similar idea as using USE_VOLUME_WEIGHTED_INNER_PROD,
                                     // but each variables are normalized by its reference value (e.g. rho / RHO_REF),
                                     // i.e., || [q; lambda] ||_{W} = [q^{T}, lambda^{T}] * [ 1/REF_VAL      0         * [  q
                                     //                                                           0     weightLambda ]    lambda]
@@ -351,6 +352,41 @@ public:
 			MatComprsed& jacMatrix, MatComprsedSTL& jacMatrixSTL);
 
 	/*
+	 * Method: getSteadySolnByTimeStepping
+	 * -----------------------------------
+	 * Time stepping method (for example, implicit Euler) with a penalty term.
+	 * Barrier and trust-region are also used to stabilize the calculation.
+	 * Note: tolerance = absTolTimeStepping + relTolTimeStepping * norm(rhs_initial)   -- C.T.Kelley, SIAM 2003, Chap.1.5
+	 *
+	 * In the pseudo-arclength method, additional system control parameters must be introduced (e.g. heat release rate).
+	 * If NcontrolEqns > 0, this function will also take care of it.
+	 * Caution: if NcontrolEqns > 0, you need one more equation for the system control paramter.
+	 * Note that lambda1 is required only to save a binary file.
+	 */
+	void getSteadySolnByTimeStepping(double *q, const int maxTimeStep, const double absTolTS, const double relTolTS, const double startCFL,
+			const double *q_guess, double** q_tangent, const int NcontrolEqns=0,
+			const double *lambda1=NULL, const double *lambda_guess=NULL, double *lambda_tangent=NULL,
+			const double weightLambda=0.0, const double arcLength=0.0);
+
+	/*
+	 * Method: sourcePenalty
+	 * ---------------------
+	 * Add penalty to prevent diverging solution
+	 */
+	void sourcePenalty(const int iEqn, const double pentaltyStrength, const double tangentDotUvecFromUguess,
+			double** q_tangent, const double *lambda_tangent,
+			double *RHSrho, double (*RHSrhou)[3], double *RHSrhoE, double **RHSrhoScal, double (*A)[5][5], double ***AScal, const bool flagImplicit);
+
+	/*
+	 * Method: calcRhsLambda
+	 * ---------------------
+	 * Calculate RHS for lambda evolution equation
+	 */
+	void calcRhsLambda(double* RHSlambda, double** ALambda, const bool flagImplicit,
+			double** q_tangent, const double* lambda_tangent, const double* q_initGuess, const double* lambda_initGuess,
+			const double vol_lambda, const int NcontrolEqns, const double arcLength);
+
+	/*
 	 * Method: getSteadySolnByBackwardEuler
 	 * ------------------------------------
 	 * Original code = runBackwardEuler() in JoeWithModels.cpp
@@ -607,7 +643,7 @@ public:
 	double backtrackWithJOE_calcRelaxAndRHS(double* rhs, const double* qArray, const double* delQ, bool &notConverged,
 			const int maxBacktrackingIter, const double relaxationOld, const double relaxationLowerBound, const double relaxationUpperBound,
 			const double* ResidOld, double* ResidNew, const int whichNorm, const double backtrackBarrierCoeff,
-			const int NcontrolEqns, double** q_tangent, const double* lambda_tangent, const double weightLambda, const double WeightTangentCond,
+			const int NcontrolEqns, double** q_tangent, const double* lambda_tangent, const double weightLambda,
 			const double* qArrayOld, const double* NresOld, const double* lambdaOld, const double arcLength);
 
 	/*
@@ -860,6 +896,14 @@ public:
 	 */
 	virtual void barrierSourceNS(double* rhs);
 
+	/*
+	 * Method: barrierSourceNS
+	 * -----------------------
+	 * Add barrier functions to the RHS of the N-S equations for JOE-type RHS vectors (with Jacobian matrix update)
+	 */
+	virtual void barrierSourceNS(double *RHSrho, double (*RHSrhou)[3], double *RHSrhoE, double **rhsScal, double (*A)[5][5], double ***AScal, int flagImplicit);
+
+
     // Note: barrierSourceTurbScalars() is in IkeUgpWithCvCompFlow.h
 
 	/*
@@ -1084,6 +1128,35 @@ public:
 
 	double calcWeighted2NormForVecMinusVec(const double* qVec1, const double* qVec0, const double* lambdaVec1, const double* lambdaVec0, const double weightForLambda,
 			const int Nvars, const int NcontrolEqns);
+
+	/*
+	 * Method: calcUnweightedTangentVecDotFlowVecMinusGuess
+	 * ----------------------------------------------------
+	 * Calculate unweighted vector multiplication of [q_tangent; lambda_tangent]^T [flowVec - q_guess; lambda - lambda_guess],
+	 * where flowVec = [rho; rhou; rhoE; scalars].
+	 *
+	 * This will be often called if time stepping is used instead of Newton's method
+	 *
+	 * Note: 1. The dimension of qTangent and qGuess must be ncv*nVars and the dimension of lambda and lambdaGuess can be either zero or NcontrolEqns.
+	 *       2. This is a MPI call, i.e., all the cores must have the q vectors,
+	 *          and only the last core (mpi_rank==mpi_size-1) can have the lambda vectors.
+	 *       3. If NcontrolEqns == 0, innerProductRatio will be set as -1.
+	 *
+	 * Return:
+	 *   By value     = the weighted norm
+	 *   By reference = normSqRatio
+	 */
+	double calcUnweightedTangentVecDotFlowVecMinusGuess(double &innerProductRatio,
+			const int iEqn, double** q_tangent, const double* q_guess, const double* lambda_tangent, const double* lambda, const double* lambda_guess,
+			const int Nvars, const int NcontrolEqns);
+
+	/*
+	 * Method: calcUnweightedTangentVecDotJOEdq
+	 * ----------------------------------------------------
+	 * Calculate unweighted vector multiplication of [q_tangent; lambda_tangent]^T [dq; dLambda],
+	 * where dq is JOE vector
+	 */
+	double calcUnweightedTangentVecDotJOEdq(const int iEqn, double** q_tangent, double* lambda_tangent, double (*dq)[5], double** dScal, const int Nvars);
 
 	/*
 	 * Method: calcUnitVecWithWeightedNorm
@@ -1496,6 +1569,8 @@ protected:
 	double *RHSrho;
 	double (*RHSrhou)[3];
 	double *RHSrhoE;
+	double **RHSrhoScal;
+
 	double *RHSkine;
 	double *RHSomega;
 	double *RHSsa;
@@ -1534,6 +1609,20 @@ protected:
 	double initResidNorm; // residual of the initial guess of the Newton's method (Declare this as a member variable so that any functions can get the access to it)
 	int iterNewton; // iteration number of the Newton's method (Declare this as a member variable so that any functions can get the access to it)
 
+	// Newton's method parameters
+	struct NewtonParam {
+		// Linear solver setting (PETSc)
+		int maxIterLS; 		// "LINEAR_SOLVER_NEWTON_TRESHOLDS"-->"MAX_ITER" in the Ike.in file
+		double zeroAbsLS; 	// "LINEAR_SOLVER_NEWTON_TRESHOLDS"-->"ABS_RESID"
+		double zeroRelLS; 	// "LINEAR_SOLVER_NEWTON_TRESHOLDS"-->"REL_RESID"
+		int startDecLS; 		// "LSNT_RAMP"-->"AFTER_NEWTON_ITER"
+		int intervalDecLS; 		// "LSNT_RAMP"-->"INTERVAL_NEWTON_ITER"
+		int incIterLS; 			// "LSNT_RAMP"-->"FACTOR_ITER"
+		int maxFinalIterLS; 	// "LSNT_RAMP"-->"MAX_ITER"
+		double decZeroLS; 		// "LSNT_RAMP"-->"FACTOR_RESID"
+		double minZeroAbsLS; 	// "LSNT_RAMP"-->"MIN_ABS_RESID"
+		double minZeroRelLS; 	// "LSNT_RAMP"-->"MIN_REL_RESID"
+	};
 	int    myNonDiagAdd_count;     // Statistics: the number of modified diagonal
 	double myNonDiagAdd_rhsAbsSum; // Statistics: the increase of RHS due to this treatment
 

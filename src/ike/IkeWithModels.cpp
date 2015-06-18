@@ -39,17 +39,6 @@ void IkeWithModels_AD::init() {
 		local_dtOverVol[icv] = 1.0;
 	updateCvDataG1G2(local_dtOverVol, REPLACE_DATA);
 #endif
-
-// IKJ
-	DELQ_RHO  = NULL;  registerScalar(DELQ_RHO,  "DELQ_RHO",  CV_DATA);
-	DELQ_RHOU = NULL;  registerVector(DELQ_RHOU, "DELQ_RHOU", CV_DATA);
-	DELQ_RHOE = NULL;  registerScalar(DELQ_RHOE, "DELQ_RHOE", CV_DATA);
-
-	DELQ_KINE  = NULL;  registerScalar(DELQ_KINE,  "DELQ_KINE",  CV_DATA);
-	DELQ_OMEGA = NULL;  registerScalar(DELQ_OMEGA, "DELQ_OMEGA", CV_DATA);
-	DELQ_ZMEAN = NULL;  registerScalar(DELQ_ZMEAN, "DELQ_ZMEAN", CV_DATA);
-	DELQ_ZVAR  = NULL;  registerScalar(DELQ_ZVAR,  "DELQ_ZVAR",  CV_DATA);
-	DELQ_CMEAN = NULL;  registerScalar(DELQ_CMEAN, "DELQ_CMEAN", CV_DATA);
 }
 
 /*

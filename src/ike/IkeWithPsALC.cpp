@@ -96,10 +96,18 @@ void IkeWithPsALC_AD::init() {
 	weightRhs = NULL;
 	weightRhsMethod = NO_RHSWEIGHT;
 
-	// RHS arrays (for Tecplot output)
+	// RHS arrays (for JOE RHS calculations and Tecplot output)
 	RHSrho   = NULL;
 	RHSrhou  = NULL;
 	RHSrhoE  = NULL;
+
+	registerScalar(RHSrho,  "RHSRHO",  CV_DATA);
+	registerVector(RHSrhou, "RHSRHOU", CV_DATA);
+	registerScalar(RHSrhoE, "RHSRHOE", CV_DATA);
+
+	RHSrhoScal = NULL;
+
+	// Scalar RHS arrays (for Tecplot output)
 	RHSkine  = NULL;
 	RHSomega = NULL;
 	RHSsa    = NULL;
@@ -286,6 +294,10 @@ void IkeWithPsALC_AD::runPsALC() {
 		cout<<"ikj AT stanford DOT edu"<<endl;
 		cout<<"======================="<<endl;
 	}
+	string correctorMethod = getStringParam("CORRECTOR_METHOD", "NEWTON");
+	string booleanString = getStringParam("AFTER_TIMESTEPPING_LAUNCH_NT", "FALSE");  // This will be used for TIME_STEPPING
+	std::transform(booleanString.begin(), booleanString.end(), booleanString.begin(), ::tolower);
+	bool AfterTSlaunchNT = (booleanString.compare("true")==0 || booleanString.compare("yes")==0);
 
 	int nVars = 5+nScal;
 
@@ -296,17 +308,6 @@ void IkeWithPsALC_AD::runPsALC() {
 	}
 	double weightLambda = getDoubleParam("WEIGHT_LAMBDA_IN_ARCLENGTH", "1.0");
 	if(mpi_rank==0 && debugLevel>0) cout<<"> WEIGHT_LAMBDA_IN_ARCLENGTH = "<<weightLambda<<endl;
-
-	// Interval to check the convergence of PETSc KSP
-	if (!checkParam("PETSC_CONVERG_MONITOR_INTERVAL")) {
-		ParamMap::add("PETSC_CONVERG_MONITOR_INTERVAL=0"); // add default values
-		if (mpi_rank == 0)
-			cout << "WARNING: added keyword \"PETSC_CONVERG_MONITOR_INTERVAL=0\" to parameter map!"<<endl;
-	}
-	monitorConvergInterval = getIntParam("PETSC_CONVERG_MONITOR_INTERVAL", "0");
-
-	// The restart value for GMRes
-	gmresRestart = getIntParam("GMRES_RESTART", "100");
 
 	// Arclength control algorithm
 	bool controlArclength = false;
@@ -329,6 +330,20 @@ void IkeWithPsALC_AD::runPsALC() {
 	if(mpi_rank==0 && debugLevel>0) cout<<endl;
 	double minArclength = getParam("ARCLENGTH_CONTROL")->getDouble("MIN_ARCLENGTH");
 	double maxArclength = getParam("ARCLENGTH_CONTROL")->getDouble("MAX_ARCLENGTH");
+
+	// Parameters related to Newton's method
+	if(correctorMethod.compare("NEWTON") == 0 || (correctorMethod.compare("TIME_STEPPING")==0 && AfterTSlaunchNT)) {
+		// Interval to check the convergence of PETSc KSP
+		if (!checkParam("PETSC_CONVERG_MONITOR_INTERVAL")) {
+			ParamMap::add("PETSC_CONVERG_MONITOR_INTERVAL=0"); // add default values
+			if (mpi_rank == 0)
+				cout << "WARNING: added keyword \"PETSC_CONVERG_MONITOR_INTERVAL=0\" to parameter map!"<<endl;
+		}
+		monitorConvergInterval = getIntParam("PETSC_CONVERG_MONITOR_INTERVAL", "0");
+
+		// The restart value for GMRes
+		gmresRestart = getIntParam("GMRES_RESTART", "100");
+	}
 
 	/*****
 	 ** Allocation of memory
@@ -394,26 +409,29 @@ void IkeWithPsALC_AD::runPsALC() {
 		}
 	}
 
-	// RHS of the N-S system: "rhs1DArray" is defined as a member variable since it can be very useful for debugging if it can be seen outside of this method
-	assert(rhs1DArray==NULL);
-	if(getStringParam("HOW_TO_CALC_JAC")=="ORDINARY_2D") {
-		if(mpi_rank == mpi_size-1) {
-			rhs1DArray = new double[ncv_gg*nVars+NcontrolEqns]; // Since the ordinary method was developed for Adjoint studies, it is also considering the ghost cells (ncv_gg). For more details, contact with Dr. Duraisamy
-			for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-				rhs1DArray[ncv_gg*nVars+iParam] = -ABSURDLY_BIG_NUMBER; // Initialize with a very small number for a debugging purpose
-		} else
-			rhs1DArray = new double[ncv_gg*nVars]; // Since the ordinary method was developed for Adjoint studies, it is also considering the ghost cells. For more details, contact with Dr. Duraisamy
-	} else if (getStringParam("HOW_TO_CALC_JAC")=="ROW_1D") {
-		if(mpi_rank == mpi_size-1) {
-			rhs1DArray = new double[ncv*nVars+NcontrolEqns];
-			for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-				rhs1DArray[ncv*nVars+iParam] = -ABSURDLY_BIG_NUMBER; // Initialize with a very small number for a debugging purpose
-		} else
-			rhs1DArray = new double[ncv*nVars];
-	} else {
-		if(mpi_rank==0)
-			cout<<"ERROR in runPsALC(): HOW_TO_CALC_JAC="<<getStringParam("HOW_TO_CALC_JAC")<<" cannot be supported"<<endl;
-		return;
+	// Memory related to Newton's method
+	if(correctorMethod.compare("NEWTON") == 0 || (correctorMethod.compare("TIME_STEPPING")==0 && AfterTSlaunchNT)) {
+		// RHS of the N-S system: "rhs1DArray" is defined as a member variable since it can be very useful for debugging if it can be seen outside of this method
+		assert(rhs1DArray==NULL);
+		if(getStringParam("HOW_TO_CALC_JAC")=="ORDINARY_2D") {
+			if(mpi_rank == mpi_size-1) {
+				rhs1DArray = new double[ncv_gg*nVars+NcontrolEqns]; // Since the ordinary method was developed for Adjoint studies, it is also considering the ghost cells (ncv_gg). For more details, contact with Dr. Duraisamy
+				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
+					rhs1DArray[ncv_gg*nVars+iParam] = -ABSURDLY_BIG_NUMBER; // Initialize with a very small number for a debugging purpose
+			} else
+				rhs1DArray = new double[ncv_gg*nVars]; // Since the ordinary method was developed for Adjoint studies, it is also considering the ghost cells. For more details, contact with Dr. Duraisamy
+		} else if (getStringParam("HOW_TO_CALC_JAC")=="ROW_1D") {
+			if(mpi_rank == mpi_size-1) {
+				rhs1DArray = new double[ncv*nVars+NcontrolEqns];
+				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
+					rhs1DArray[ncv*nVars+iParam] = -ABSURDLY_BIG_NUMBER; // Initialize with a very small number for a debugging purpose
+			} else
+				rhs1DArray = new double[ncv*nVars];
+		} else {
+			if(mpi_rank==0)
+				cout<<"ERROR in runPsALC(): HOW_TO_CALC_JAC="<<getStringParam("HOW_TO_CALC_JAC")<<" cannot be supported"<<endl;
+			return;
+		}
 	}
 
 	// Tangential vectors
@@ -433,11 +451,14 @@ void IkeWithPsALC_AD::runPsALC() {
 	// RHS weight
 	weightRhs = new double [ncv*(5+nScal)];
 
-	// For tecplot output of residuals
-	assert(RHSrho==NULL && RHSrhou==NULL && RHSrhoE==NULL);
-	registerScalar(RHSrho,  "RHSRHO",  CV_DATA);
-	registerVector(RHSrhou, "RHSRHOU", CV_DATA);
-	registerScalar(RHSrhoE, "RHSRHOE", CV_DATA);
+	// For RHS calculations and tecplot output of residuals
+//	assert(RHSrho==NULL && RHSrhou==NULL && RHSrhoE==NULL);
+//	registerScalar(RHSrho,  "RHSRHO",  CV_DATA);
+//	registerVector(RHSrhou, "RHSRHOU", CV_DATA);
+//	registerScalar(RHSrhoE, "RHSRHOE", CV_DATA);
+	assert(RHSrhoScal == NULL);
+	if (nScal > 0) getMem2D(&RHSrhoScal,  0, nScal-1, 0, ncv_g-1, "rhsScal");
+
 	if(nScal==1) {
 		assert(RHSsa == NULL);
 		registerScalar(RHSsa, "RHSSA", CV_DATA);
@@ -465,10 +486,12 @@ void IkeWithPsALC_AD::runPsALC() {
 
 	//---------------------
 	// Status file
-	if(mpi_rank==0) {
-		FILE *fp = fopen(JAC1D_STATUS_FILENAME, "w");
-		fprintf(fp, "STEP   NEWTON_ITER         ICV   WTIME[sec]\n");
-		fclose(fp);
+	if(correctorMethod.compare("NEWTON") == 0 || (correctorMethod.compare("TIME_STEPPING")==0 && AfterTSlaunchNT)) {
+		if(mpi_rank==0) {
+			FILE *fp = fopen(JAC1D_STATUS_FILENAME, "w");
+			fprintf(fp, "STEP   NEWTON_ITER         ICV   WTIME[sec]\n");
+			fclose(fp);
+		}
 	}
 
 	//---------------------
@@ -545,7 +568,6 @@ void IkeWithPsALC_AD::runPsALC() {
 		double qProd = sqrt(arclength * arclength - weightLambda * lambdaProdUnweight);
 		lambdaProdUnweight = sqrt(lambdaProdUnweight);
 
-
 		printf("\n>> ARCLENGTH TO BE USED DURING THE CONTINUATION = %.6e\n", arclength);
 		cout<<"   (ARCLENGTH = "<<arclength<<" = sqrt( (FLOW_PART="<<qProd<<")^2 + WEIGHT_FOR_LAMBDA * (LAMBDA_PART="<<lambdaProdUnweight<<")^2 ),"<<endl;
 		cout<<"    WEIGHT FOR LAMBDA = "<<weightLambda<<","<<endl;
@@ -582,6 +604,8 @@ void IkeWithPsALC_AD::runPsALC() {
 
 		try {
 			bool writeJacMat = true;
+			if(correctorMethod.compare("TIME_STEPPING") == 0)
+				writeJacMat = false;
 
 			singlePsALCstep(Qguess, q0, q1, rhs1DArray, q_tangent, lambda_tangent, arclength, lambda0, lambda1, weightLambda, writeJacMat, factorReduceTangential);
 				// Note: Even though factorReduceTangential != 1.0, [q_tangent; lambda_tangent] must be a unit vector.
@@ -801,6 +825,9 @@ void IkeWithPsALC_AD::freePsALCMemory(double **p_q0, double **p_q1, double **p_Q
 		delete [] rhs1DArray; 	rhs1DArray = NULL;
 	}
 
+	if (RHSrhoScal != NULL && nScal > 0)
+		freeMem2D(RHSrhoScal, 0, nScal-1, 0, ncv-1);
+
 	if((*p_lambda_tangent) != NULL) {
 		delete [] (*p_lambda_tangent); 	(*p_lambda_tangent) = NULL;
 	}
@@ -865,7 +892,7 @@ void IkeWithPsALC_AD::initFirstTwoPts(double* q0, double* q1, double *rhs, doubl
 	case 2 : // from a previous PsALC simulation by IKE
 		if(mpi_rank==0) cout<<" Initialize q0 from a binary file dumped by IKE";
 		filename = getStringParam("Q0_FILENAME", "Q1_PT00000.bin");
-		if(mpi_rank==0) cout<<" - filename ="<<filename;
+		if(mpi_rank==0) cout<<" - filename = "<<filename;
 
 		readPsALCdumpedDataSerial(filename, q0, step, lambdaInit0temp, lambdaInit0, NcontrolEqns, arclength);
 
@@ -1395,7 +1422,6 @@ void IkeWithPsALC_AD::singlePsALCstep(double *qVec, const double *q0, const doub
 	 */
 	if(debugLevel>1 && mpi_rank==0) cout<<"IkeWithPsALC_AD::singlePsALCstep()"<<endl;
 
-	assert(rhs!=NULL);
 	assert(lambda0!=NULL && lambda1!=NULL);
 	assert(jacMatrix.empty() && jacMatrixSTL.empty());
 	assert(NcontrolEqns > 0);
@@ -1423,7 +1449,7 @@ void IkeWithPsALC_AD::singlePsALCstep(double *qVec, const double *q0, const doub
 		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
 			lambda_tangent[iEqn] = factorReduceTangential*(lambda1[iEqn] - lambda0[iEqn]);
 
-	// Normalize q_tangent and lambda_tangent
+	// Normalize q_tangent and lambda_tangent !!!!!!!!
 	calcUnitVecWithWeightedNorm(q_tangent[0], lambda_tangent, q_tangent[0], lambda_tangent, arcLength, nVars, NcontrolEqns);
 
 	MPI_Bcast(lambda_tangent, NcontrolEqns, MPI_DOUBLE, mpi_size-1, mpi_comm);
@@ -1524,32 +1550,105 @@ void IkeWithPsALC_AD::singlePsALCstep(double *qVec, const double *q0, const doub
 		printf("\n");
 	}
 
-	/***********************************************/
-	/* Corrector step (Newton iteration)           *
-	 *   Solve Q_{n+1} = Q_{n} - L^{-1}*RESID      *
-	 *                                             *
-	 *   Where L = [     J         dF/dlambda      *
-	 *               q_tangent'  lambda_tangent ]  *
-	 *                                             *
-	 *         RESID = [ RHS(q, lambda)            *
-	 *                   Nres           ]          *
-	 *         c.f.) Nres = c^{T}*[dq; dlambda]-ds *
-	 *                                             *
-	 *         Q = [q                              *
-	 *              lambda ]                       *
-	 ***********************************************/
-	if (!checkParam("NEWTON_PARAMETERS_PSALC")) {
-		ParamMap::add("NEWTON_PARAMETERS_PSALC  MAX_ITER=100  ABS_RESID=1.0e-14  REL_RESID=1.0e-8"); // add default values
-		if (mpi_rank == 0)
-			cout<< "WARNING: added keyword \"NEWTON_PARAMETERS_PSALC  MAX_ITER=100  ABS_RESID=1.0e-14  REL_RESID=1.0e-8\""<< " to parameter map!" << endl;
-	}
-	int maxIterNewton   = getParam("NEWTON_PARAMETERS_PSALC")->getInt("MAX_ITER");
-	double absTolNewton = getParam("NEWTON_PARAMETERS_PSALC")->getDouble("ABS_RESID");
-	double relTolNewton = getParam("NEWTON_PARAMETERS_PSALC")->getDouble("REL_RESID");
 
-	getSteadySolnByNewton(qVec, rhs, maxIterNewton, absTolNewton, relTolNewton, 
-        writeJacOnFile, NcontrolEqns, q1, q_tangent, lambda_tangent, lambda0, lambda1, weightLambda, arcLength);
+	/***********************************************/
+	/* Corrector step                              *
+	 ***********************************************/
+	string correctorMethod = getStringParam("CORRECTOR_METHOD", "NEWTON");
+
+	/*-----------------------------------------------*/
+	/* Corrector step (Newton iteration)             *
+	 *   Solve Q_{n+1} = Q_{n} - L^{-1}*RESID        *
+	 *                                               *
+	 *   Where L = [      J          dF/dlambda      *
+	 *               -q_tangent'  -lambda_tangent ]  *
+	 *                                               *
+	 *         RESID = [ RHS(q, lambda)              *
+	 *                   Nres           ]            *
+	 *         c.f.) Nres = ds-c^{T}*[dq; dlambda]   *
+	 *                                               *
+	 *         Q = [q                                *
+	 *              lambda ]                         *
+	 *-----------------------------------------------*/
+	if(correctorMethod.compare("NEWTON") == 0) {
+		assert(rhs!=NULL);
+
+		if (!checkParam("NEWTON_PARAMETERS_PSALC")) {
+			ParamMap::add("NEWTON_PARAMETERS_PSALC  MAX_ITER=100  ABS_RESID=1.0e-14  REL_RESID=1.0e-8"); // add default values
+			if (mpi_rank == 0)
+				cout<< "WARNING: added keyword \"NEWTON_PARAMETERS_PSALC  MAX_ITER=100  ABS_RESID=1.0e-14  REL_RESID=1.0e-8\""<< " to parameter map!" << endl;
+		}
+		int maxIterNewton   = getParam("NEWTON_PARAMETERS_PSALC")->getInt("MAX_ITER");
+		double absTolNewton = getParam("NEWTON_PARAMETERS_PSALC")->getDouble("ABS_RESID");
+		double relTolNewton = getParam("NEWTON_PARAMETERS_PSALC")->getDouble("REL_RESID");
+
+		getSteadySolnByNewton(qVec, rhs, maxIterNewton, absTolNewton, relTolNewton,
+				writeJacOnFile, NcontrolEqns, q1, q_tangent, lambda_tangent, lambda0, lambda1, weightLambda, arcLength);
 		// Note: getSteadySolnByNewton() can access to the member variable NcontrolEqns, so you don't have to pass it to the method
+	}
+
+	/*----------------------------------------------------------------------------------------------------------------------*/
+	/* Corrector step (Time stepping with implicit Euler)                                                                   *
+	 *   Solve dQ/dt = f(Q)                                                                                                 *
+	 *   The tangential equation is                                                                                         *
+	 *           dLambda                                                                                                    *
+	 *         V ------- = -( q_tangent^T*(u-u_guess) + lambda_tangent*(lambda - lambda_tangent) ) * sign(lambda_tangent),  *
+	 *              dt                                                                                                      *
+	 *         where V = 1 / weightTangentCond / |lambda_tangent|.                                                          *
+	 *----------------------------------------------------------------------------------------------------------------------*/
+	else if (correctorMethod.compare("TIME_STEPPING") == 0) {
+		// Allocate for initial guess: they will be used for the tangential condition (they are used to implement the penalty method in the flow RHS)
+		double* q_guess = new double [ncv*nVars];
+		for(int i=0; i<ncv*nVars; ++i)
+			q_guess[i] = qVec[i];
+		double* lambda_guess = NULL;
+		if(NcontrolEqns > 0) {
+			lambda_guess = new double [NcontrolEqns];
+			for(int iScal=0; iScal<NcontrolEqns; ++iScal)
+				lambda_guess[iScal] = lambda[iScal];
+		}
+
+		// Solve the corrector step using time-stepping
+		if (!checkParam("TIMESTEPPING_PARAMETERS_PSALC")) {
+			ParamMap::add("TIMESTEPPING_PARAMETERS_PSALC  MAX_STEP=100  ABS_RESID=1.0e-14  REL_RESID=1.0e-8"); // add default values
+			if (mpi_rank == 0)
+				cout<< "WARNING: added keyword \"TIMESTEPPING_PARAMETERS_PSALC  MAX_STEP=100  ABS_RESID=1.0e-14  REL_RESID=1.0e-8\""<< " to parameter map!" << endl;
+		}
+		int maxTimeStep = getParam("TIMESTEPPING_PARAMETERS_PSALC")->getInt("MAX_STEP");
+		double absTolTS = getParam("TIMESTEPPING_PARAMETERS_PSALC")->getDouble("ABS_RESID");
+		double relTolTS = getParam("TIMESTEPPING_PARAMETERS_PSALC")->getDouble("REL_RESID");
+
+		double startCFL = getDoubleParam("CFL", "1.0");
+
+		getSteadySolnByTimeStepping(qVec, maxTimeStep, absTolTS, relTolTS, startCFL,
+				q_guess, q_tangent, NcontrolEqns, lambda1, lambda_guess, lambda_tangent,
+				weightLambda, arcLength);  // Note: lambda1 is required only to save a binary file.
+
+		// Clear memory
+		delete [] q_guess;
+		if(lambda_guess != NULL) 	delete [] lambda_guess;
+
+		// Boost convergence with Newton's method
+		string booleanString = getStringParam("AFTER_TIMESTEPPING_LAUNCH_NT", "FALSE");
+		std::transform(booleanString.begin(), booleanString.end(), booleanString.begin(), ::tolower);
+		if(booleanString.compare("true")==0 || booleanString.compare("yes")==0) {
+			assert(rhs!=NULL);
+
+			int maxIterNewton   = getParam("NEWTON_PARAMETERS_PSALC")->getInt("MAX_ITER");
+			double absTolNewton = getParam("NEWTON_PARAMETERS_PSALC")->getDouble("ABS_RESID");
+			double relTolNewton = getParam("NEWTON_PARAMETERS_PSALC")->getDouble("REL_RESID");
+
+			getSteadySolnByNewton(qVec, rhs, maxIterNewton, absTolNewton, relTolNewton,
+					writeJacOnFile, NcontrolEqns, q1, q_tangent, lambda_tangent, lambda0, lambda1, weightLambda, arcLength);
+			// Note: getSteadySolnByNewton() can access to the member variable NcontrolEqns, so you don't have to pass it to the method
+		}
+	}
+
+	else {
+		if(mpi_rank == 0)
+			cout << "ERROR in IkeWithPsALC_AD::singlePsALCstep(): CORRECTOR_METHOD = " << correctorMethod << " is not supported" << endl;
+		throw(PSALC_ERROR_CODE);
+	}
 
 	/***********************************************/
 	/* Clean up                                    */
@@ -1701,12 +1800,9 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		useAprioriWeightFunction = true;
 
 	double digitAprioriWeight = getParam("A_PRIORI_WEIGHT_REGULARIZ")->getDouble("DIGIT"); // If 3.0, Want to have minimum weight of 1.0e-3
-	double x1AprioriWeight    = getParam("A_PRIORI_WEIGHT_REGULARIZ")->getDouble("X1"); ; // Inlet location of Scramjet
+	double x1AprioriWeight    = getParam("A_PRIORI_WEIGHT_REGULARIZ")->getDouble("X1"); ;  // Inlet location of Scramjet
 	double x2AprioriWeight    = getParam("A_PRIORI_WEIGHT_REGULARIZ")->getDouble("X2"); ;  // Slightly upstream of combustion start
 	double betaAprioriWeight  = digitAprioriWeight*2.302585093/pow(x2AprioriWeight - x1AprioriWeight, 2.0); // Note: ln(10) = 2.302585093
-
-	// Weight in the tangential condition
-double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Small weight means that the tangential condition is less important
 
 	// Trust-region size
 	double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
@@ -1716,26 +1812,7 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 	double moreNTstepsBelowConv_resid, moreNTstepsBelowConv_deltaQ;
 	getParamMoreNewtonSteps(moreNTstepsBelowConv_moreSteps, moreNTstepsBelowConv_resid, moreNTstepsBelowConv_deltaQ, firstCall);
 
-	/* Initialize q */
-//	for(int icv=0; icv<ncv; ++icv) {
-//		int tempInt = icv*m;
-//		q[tempInt] = rho[icv];
-//		for(int i=0; i<3; ++i)
-//			q[tempInt+1+i] = rhou[icv][i];
-//		q[tempInt+4] = rhoE[icv];
-//
-//		if(nScal > 0) {
-//			for(int iScal=0; iScal<nScal; ++iScal) {
-//				double *scalArray = scalarTranspEqVector[iScal].phi;
-//				q[tempInt+5+iScal] = scalArray[icv];
-//			}
-//		}
-//	}
-//	if(NcontrolEqns>0 && mpi_rank==mpi_size-1) {
-//		for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-//			q[ncv*m+iParam] = lambda[iParam];
-//	}
-//	MPI_Barrier(mpi_comm);
+	// Note: q has been initialized before calling this method
 
 	/* Initialize rhs */
 	for(int i=0; i<ncv*m; ++i)
@@ -1846,58 +1923,6 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 			Nres[iParam] = -ABSURDLY_BIG_NUMBER; // Initialize with a very small number for a debugging purpose
 	}
 
-	// Weighted tangential vector for q:
-	//   1. Two options -- USE_VOLUME_WEIGHTED_INNER_PROD and USE_REF_WEIGHTED_INNER_PROD defined in IkeWithPsALC.h
-	//                     If neither USE_VOLUME_WEIGHTED_INNER_PROD nor USE_REF_WEIGHTED_INNER_PROD is defined, no weight (i.e., weight == 1.0).
-	//   2. The weighted_q_tangent vector will be used only for the construction of the Jacobian matrix of the pseudo-arclength cont. method
-	//
-	//   Note that this part must be the same as what can be found in vecDotVecWithWeight() -- Actually, getFlowWeightsForInnerProduct() called by vecDotVecWithWeight()
-	//   since the arclength will be calculated by calling vecDotVecWithWeight()
-	double **weighted_q_tangent = NULL;
-
-	double rhoWeight  = 1.0;
-	double rhouWeight = 1.0;
-	double rhoEWeight = 1.0;
-	double *turbScalWeightVec = NULL;
-
-	if(q_tangent != NULL) {
-		getMem2D(&weighted_q_tangent, 0, NcontrolEqns-1, 0, (ncv*m)-1, "weighted_q_tangent");
-			// The size of weighted_q_tangent is same as that of q_tangent
-
-		/* Allocate memory */
-		double* weightVec = new double [m];
-
-		/* Calculate weighted q_tangent */
-		for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-			for(int icv=0; icv<ncv; ++icv) {
-				int indexStart = icv*m;
-
-#ifdef USE_VOLUME_WEIGHTED_INNER_PROD
-				getFlowWeightsForInnerProduct(weightVec, sqrt(max(totMinCvVol,MIN_CV_VOL_CUTOFF)), icv, m);
-#else
-				getFlowWeightsForInnerProduct(weightVec, 1.0,                                      icv, m);
-#endif
-
-				for(int ivar=0; ivar<m; ++ivar) {
-					int index = indexStart + ivar;
-					weighted_q_tangent[iParam][index] = weightTangentCond * weightVec[ivar] * q_tangent[iParam][index];
-						// If neither USE_VOLUME_WEIGHTED_INNER_PROD nor USE_REF_WEIGHTED_INNER_PROD is defined, weighted_q_tangent becomes same as q_tangent
-				}
-			}
-
-		/* Free memory */
-		delete [] weightVec;
-	}
-
-	// Weighted tangential vector for lambda:  weighted_lambda_tangent = weightLambda * lambda_tangent
-	//                                         This vector will be used only for the construction of the Jacobian matrix of the pseudo-arclength cont. method
-	double* weighted_lambda_tangent = NULL;
-	if(lambda_tangent != NULL) {
-		weighted_lambda_tangent = new double [NcontrolEqns];
-		for(int iParam=0; iParam<NcontrolEqns>0; ++iParam)
-			weighted_lambda_tangent[iParam] = weightTangentCond * weightLambda * lambda_tangent[iParam];
-	}
-
 	// Scaling factor of the RHS: Currently, this will affect only the "1D-style"
 //	if(weightRhsMethod == REF_VALUES_AND_DT_OVER_VOL) {
 //		double dtOverVol_min, dtOverVol_max;
@@ -1919,8 +1944,7 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 			countNegative = calcJacobianAD(jacMatrix, rhs, debugLevel, NcontrolEqns);
 			myNnzJac      = jacMatrix.get_nnz();
 		} else { // ERROR
-			freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-					turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+			freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 			assert(true);
 		}
 		MPI_Allreduce(&myNnzJac, &nnzJac, 1, MPI_INT, MPI_SUM, mpi_comm);
@@ -1932,29 +1956,25 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 			//       However, Nres should not change residNormTot much since Nres must be very close to zero
 	}
 	catch(int e) { // Catch and re-throw
-		freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-				turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+		freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 		throw(e);
 	}
 	catch(...) { // Catch and re-throw
-		freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-				turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+		freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 		throw;
 	}
 
-	// Fill up the last element of rhs (Nres == q_tangent*(q_guess-q1) + weightLambda*lambda_tangent*(lambda_guess-lambda1) - ds) for mpi_rank == mpi_size-1
+	// Fill up the last element of rhs ( Nres == ds - q_tangent*(q_guess-q1) + weightLambda*lambda_tangent*(lambda_guess-lambda1) ) for mpi_rank == mpi_size-1
 	// Note: 1. Even though this part of the code is designed to handle multiple parameters (or lambdas), the actual formulation here is only for one parameters.
 	//       2. You don't have to pass weighted_q_tangent instead of q_tangent since it will be weighted in getFlowWeightsForInnerProduct() called by vecDotVecWithWeight().
 	if(NcontrolEqns>0) {
 		calcNres(Nres, q, rhs, m, NcontrolEqns, q1, q_tangent, lambda_tangent, lambda1, weightLambda, arcLength);
-		for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-			Nres[iParam] *= weightTangentCond;
 		MPI_Barrier(mpi_comm);
 
 		if(mpi_rank==0) {
 			for(int iParam=0; iParam<NcontrolEqns; ++iParam) {
 				if(fabs(Nres[iParam]/arcLength) > 1.0e4*double(NcontrolEqns*cvora[mpi_size])*MACHINE_EPS) { // Note: Nres must be very close to zero
-					cout<<"WARNING in getSteadySolnByNewton(): iterNewton=="<<iterNewton<<", The tangential condition["<<iParam<<"] was NOT satisfied."<<endl
+					cout<<"WARNING in getSteadySolnByNewton(): iterNewton=="<<iterNewton<<", The tangential condition["<<iParam<<"] shows a big residual."<<endl
 					    <<"                                    Tangential-residual = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl;
 				}
 				if(isNaN(Nres[iParam])) {
@@ -1994,14 +2014,9 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 	if(NcontrolEqns > 0) { // If NcontrolEqns==0, q1 was not passed (i.e. q1 is NULL if NcontrolEqns==0)
         double mySumPhiSq = 0.0, sumPhiSq;
 
-        double *weightVec = new double [5+nScal];
-		for(int icv=0; icv<ncv; ++icv) {
-			getFlowWeightsForInnerProduct(weightVec, 1.0, icv, 5+nScal);  // 1.0 --> without volume scaling
-			int startIndex = icv*(5+nScal);
-			for(int i=0; i<5+nScal; ++i)
-				mySumPhiSq += pow(weightVec[i] * (q[i]-q1[i]), 2.0);
-		}
-		delete [] weightVec;
+		for(int i=0; i<ncv*m; ++i)
+				mySumPhiSq += pow(q[i]-q1[i], 2.0);
+
 		if(mpi_rank==mpi_size-1 && NcontrolEqns>0)
 			for(int i=0; i<NcontrolEqns; ++i)
 				mySumPhiSq += weightLambda * pow(q[ncv*(5+nScal)+i]-q1[ncv*(5+nScal)+i], 2.0);
@@ -2010,23 +2025,6 @@ double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Smal
 
 		deltaQnorm = sqrt(sumPhiSq);
 	}
-
-//IKJ
-for(int icv=0; icv<ncv; ++icv) {
-	int startingIndex = (5+nScal)*icv;
-	DELQ_RHO[icv] = q[startingIndex]-q1[startingIndex];
-	for(int i=0; i<3; ++i)
-		DELQ_RHOU[icv][i] = q[startingIndex+1+i]-q1[startingIndex+1+i];
-	DELQ_RHOE[icv] = q[startingIndex+4]-q1[startingIndex+4];
-
-	DELQ_KINE[icv]  = q[startingIndex+5]-q1[startingIndex+5];
-	DELQ_OMEGA[icv] = q[startingIndex+6]-q1[startingIndex+6];
-	DELQ_ZMEAN[icv] = q[startingIndex+7]-q1[startingIndex+7];
-	DELQ_ZVAR[icv]  = q[startingIndex+8]-q1[startingIndex+8];
-	DELQ_CMEAN[icv] = q[startingIndex+9]-q1[startingIndex+9];
-}
-writeData(step, 0);
-
 
 	if(trustRegionSize > 8.0*deltaQnorm && NcontrolEqns > 0) {
 		if(mpi_rank==0)
@@ -2100,7 +2098,7 @@ writeData(step, 0);
 	 * Calculate tolNewton
 	 */
 	initResidNorm = residNormTot;
-	double tolNewton = absTolNewton + relTolNewton*initResidNorm;
+	double tolNewton = absTolNewton + relTolNewton * initResidNorm;
 
 	MPI_Barrier(mpi_comm);
 
@@ -2138,12 +2136,11 @@ writeData(step, 0);
 
 			writeData(step, iterNewton-1);
 
-			freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-					turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+			freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 			throw (PSALC_ERROR_CODE);
 		} else {
 			if(iterNewton>startingNewtonIter+1 && newtonDumpQ1Interval>0) { // If the user wants to dump the data at every "newtonDumpQ1Interval" Newton step
-				if((iterNewton-1)%newtonDumpQ1Interval==0) {
+				if((iterNewton-1)%newtonDumpQ1Interval == 0) {
 					if(NcontrolEqns>0) {
 						char filename[50];
 						sprintf(filename, "Q1_PT%05d.dumped.%05d.bin", step, iterNewton-1);
@@ -2200,12 +2197,6 @@ writeData(step, 0);
 						++myNonDiagAdd_count; // Just for Statistics
 					}
 				}
-				if(mpi_rank==mpi_size-1) {
-					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-						weighted_lambda_tangent[iEqn] -= addedValue;
-					}
-				}
-
 				MPI_Barrier(mpi_comm);
 			} else if(stabilizationMethodType == 2) { // Apply a scaled diagonal matrix - scaled with local flow variables (Second SAS form)
 				// Calculate the actual alpha
@@ -2251,11 +2242,6 @@ writeData(step, 0);
 						++myNonDiagAdd_count; // Just for Statistics
 					}
 				}
-				if(mpi_rank==mpi_size-1) {
-					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-						weighted_lambda_tangent[iEqn] -= addedValue*sasScaling[ncv*m+iEqn];
-					}
-				}
 
 				MPI_Barrier(mpi_comm);
 			} else if(stabilizationMethodType == 3) { // Apply a scaled diagonal matrix - scaled with rhs: See X.Wu, Applied Mathematics and Computation, vol.189, 2007.
@@ -2274,13 +2260,6 @@ writeData(step, 0);
 							double oldValue = jacMatrixSTL.get_values(diagIndex);
 							double addVal   = - max(MACHINE_EPS, alpha*fabs(rhs[row])) - stabilizationAlphaEps;
 							jacMatrixSTL.set_values(diagIndex, oldValue + addVal); // Note that the Jacobian matrix is negative (semi-) definite
-
-							++myNonDiagAdd_count; // Just for Statistics
-						}
-					}
-					if(mpi_rank==mpi_size-1) {
-						for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-							weighted_lambda_tangent[iEqn] -= max(alpha*fabs(rhs[ncv*m+iEqn]), MACHINE_EPS) + stabilizationAlphaEps;
 
 							++myNonDiagAdd_count; // Just for Statistics
 						}
@@ -2325,35 +2304,7 @@ writeData(step, 0);
 							++myNonDiagAdd_count; // Just for Statistics
 						}
 					}
-					if(mpi_rank==mpi_size-1) {
-						for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-							weighted_lambda_tangent[iEqn] -= max(alpha*fabs(rhs[ncv*m+iEqn]), MACHINE_EPS) + stabilizationAlphaEps;
-
-							++myNonDiagAdd_count; // Just for Statistics
-						}
-					}
 				}
-
-// IKJ: commented out for now -- It seems that the following part is always active even if a-priori-Weight
-//				// Rhs
-//				if(iterNewton>=stabilizationStartingIter) {
-//					for(int icv=0; icv<ncv; ++icv) {
-//						double xCoord = x_cv[icv][0];
-//
-//						if(xCoord <= x2AprioriWeight) {
-//							double exponent = minWeight + max( (1-minWeight)*exp(-betaAprioriWeight*pow(xCoord-x2AprioriWeight, 2.0)), MACHINE_EPS );
-//							exponent = max(0.0, min(exponent, 1.0)); // Make sure that exponent never exceed 1.0
-//
-//							int index = icv*m;
-//							for(int i=0; i<m; ++i) {
-//								rhs[index+i] *= exponent;
-//
-//								if(fabs(rhs[index+i]) <= MACHINE_EPS)
-//									rhs[index+i] = 0.0;
-//							}
-//						}
-//					}
-//				}
 			}
 
 			MPI_Barrier(mpi_comm);
@@ -2363,11 +2314,11 @@ writeData(step, 0);
 		 ** solve the linear (NEWTON) system :
 		 ** 1. Normal Newton:    q_{n+1} = q_{n} - J^{-1}*RHS
 		 ** 2. Pseudo-arclength: Q_{n+1} = Q_{n} - L^{-1}*RESID
-		 **                          Where L = [          J                 dF/dlambda
-		 **                                      weighted_q_tangent'  weighted_lambda_tangent ]
+		 **                          Where L = [           J                  dF/dlambda
+		 **                                      -weighted_q_tangent'  -weighted_lambda_tangent ]
 		 **                                RESID = [ RHS(q, lambda)
 		 **                                          Nres           ]
-		 **                          c.f.) Nres = [q_tangent', lambda_tangent']*W*[dq; dlambda]-ds,  where W is the (diagonal) weight matrix
+		 **                          c.f.) Nres = ds - [q_tangent', lambda_tangent']*W*[dq; dlambda],  where W is the (diagonal) weight matrix
 		 ******/
 		// solve the sub-system, PHI = L^(-1)*RHS
 		int nIter;
@@ -2380,21 +2331,32 @@ writeData(step, 0);
 			if(firstCall && iterNewton==startingNewtonIter+1 && debugLevel>0 && mpi_rank==0)
 				wtime0 = MPI_Wtime();
 
+			double **minus_q_tangent     = NULL;
+			double *minus_lambda_tangent = NULL;
+			if(NcontrolEqns > 0) {
+				getMem2D(&minus_q_tangent, 0, NcontrolEqns-1, 0, (ncv*m)-1, "minus_q_tangent"); // The size of q_tangent is the same for both ORDINARY_2D and ROW_1D: In the matrix used for Newton's method, you don't need to have ncv_gg even for ORDINARY_2D
+				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
+					for(int i=0; i<ncv*m; ++i)
+						minus_q_tangent[iParam][i] = -q_tangent[iParam][i];
+
+				minus_lambda_tangent = new double [NcontrolEqns];
+				for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+					minus_lambda_tangent[iEqn] = -lambda_tangent[iEqn];
+			}
+
 			// Note: If you want to print out the matrix stored in PETSc on the screen, set the ShowPetscMatrixMatlab variable as true
 			//       ShowPetscMatrixMatlab is defined as a static variable in the PetscSolver2.h file
 			//       e.g. if(iterNewton==1 && NcontrolEqns>0) ShowPetscMatrixMatlab = true;
 			bool useOldSolnAsInitGuess = false; // If true, use the previous solution vector as the initial guess.
 			                                    // Otherwise, apply PC(pre-conditioner) to get the inital guess (the Knoll trick) -- For Bifurcation, this works better.
-//			solveLinSysNSCoupled2<MatComprsedSTL>(phi, jacMatrixSTL, rhs, nIter, absResid,
-//					zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
-//					NcontrolEqns, ncv_gg, q_tangent, weighted_lambda_tangent, step, iterNewton);
-//			solveLinSysNSCoupled2<MatComprsedSTL>(phi, jacMatrixSTL, rhs, nIter, absResid,
-//					zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
-//					NcontrolEqns, ncv_gg, weighted_q_tangent, weighted_lambda_tangent, step, iterNewton);
+
 			solveLinSysNSCoupled2<MatComprsedSTL>(phi, jacMatrixSTL, rhs, nIter, absResid, kspMonitorHistory,
 					useOldSolnAsInitGuess, zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
-					NcontrolEqns, ncv_gg, weighted_q_tangent, weighted_lambda_tangent, step, iterNewton);
+					NcontrolEqns, ncv_gg, minus_q_tangent, minus_lambda_tangent, step, iterNewton);
 			// Note that you should pass nScal to this function instead of m(=5+nScal)
+
+			if(minus_q_tangent != NULL)       freeMem2D(minus_q_tangent, 0, NcontrolEqns-1, 0, (ncv*m)-1);
+			if(minus_lambda_tangent != NULL)  delete [] minus_lambda_tangent;
 
 			if(firstCall && iterNewton==startingNewtonIter+1 && debugLevel>0 && mpi_rank==0)
 				wtimeLS = MPI_Wtime();
@@ -2407,18 +2369,16 @@ writeData(step, 0);
 			bool useOldSolnAsInitGuess = false; // If true, use the previous solution vector as the initial guess.
 			                                    // Otherwise, apply PC(pre-conditioner) to get the inital guess (the Knoll trick) -- For Bifurcation, this works better.
 			int saveConvergInterval = int(max(monitorConvergInterval/10, 1.01));
-//			solveLinSysNSCoupled2<MatComprsed>(phi, jacMatrix, rhs, nIter, absResid,
-//					zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
-//					NcontrolEqns, ncv_gg, q_tangent, weighted_lambda_tangent, step, iterNewton);
+
 			solveLinSysNSCoupled2<MatComprsed>(phi, jacMatrix, rhs, nIter, absResid, kspMonitorHistory,
 					useOldSolnAsInitGuess, zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
-					NcontrolEqns, ncv_gg, weighted_q_tangent, weighted_lambda_tangent, step, iterNewton);
+					NcontrolEqns, ncv_gg, q_tangent, lambda_tangent, step, iterNewton);
 			// Note that you should pass nScal to this function instead of m(=5+nScal)
 		} else {
 			throw(PSALC_ERROR_CODE);
 		}
 
-		if(nIter==maxIterLS && absResid>zeroAbsLS) {
+		if(nIter == maxIterLS  &&  absResid > zeroAbsLS) {
 			if(debugLevel>0 || (incIterLS==0 && incIterLS==1.0)) { // TO DO
 				// Show the warning message on the screen
 				double trueAbsResid = petscSolver2->calcTrueResidualNorm(); // Since "absResid" contains the last approximate & left-preconditioned residual norm,
@@ -2460,19 +2420,6 @@ writeData(step, 0);
 						}
 					}
 				}
-
-//				// Calculate the Gershgorin disk
-//				if(howToCalcJac == ROW_1D) {
-//					vector<std::pair<double, double> > gershgorinDisk;
-//					jacMatrixSTL.calcGershgorinDisks(gershgorinDisk);
-//
-////					cout << "    Gershgorin disk (center, radius):";
-////					for(int i=0; i<jacMatrixSTL.get_nRows(); ++i)
-////						cout<<" ("<<gershgorinDisk[i].first<<","<<gershgorinDisk[i].second<<") ";
-////					cout << endl;
-//				}
-//
-//				MPI_Barrier(mpi_comm);
 			}
 		}
 
@@ -2533,23 +2480,6 @@ writeData(step, 0);
 
 		double deltaQnorm_beforeRelax = sqrt(sumPhiSq);
         deltaQnorm = relaxation * deltaQnorm_beforeRelax;
-
-//IKJ
-for(int icv=0; icv<ncv; ++icv) {
-	int startingIndex = (5+nScal)*icv;
-	DELQ_RHO[icv] = q[startingIndex]-q1[startingIndex];
-	for(int i=0; i<3; ++i)
-		DELQ_RHOU[icv][i] = phi[startingIndex+1+i];
-	DELQ_RHOE[icv] = phi[startingIndex+4];
-
-	DELQ_KINE[icv]  = phi[startingIndex+5];
-	DELQ_OMEGA[icv] = phi[startingIndex+6];
-	DELQ_ZMEAN[icv] = phi[startingIndex+7];
-	DELQ_ZVAR[icv]  = phi[startingIndex+8];
-	DELQ_CMEAN[icv] = phi[startingIndex+9];
-}
-writeData(step, 1);
-
 
         if(deltaQnorm >= trustRegionSize) {
         	if(mpi_rank==0)
@@ -2660,8 +2590,6 @@ writeData(step, 1);
 				}
 			}
 
-			for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-				Nres[iParam] *= weightTangentCond;
 			MPI_Barrier(mpi_comm);
 		}
 
@@ -2739,7 +2667,7 @@ writeData(step, 1);
 					relaxation = backtrackWithJOE_calcRelaxAndRHS(rhs, q, phi, btNotConverged,
 							backtrackMaxIter, relaxation, backtrackRelax_LowerBound, backtrackRelax_UpperBound,
 							residNormVecOld, residNormVec, whichNorm, backtrackBarrierCoeff,
-							NcontrolEqns, q_tangent, lambda_tangent, weightLambda, weightTangentCond, q1, Nres, lambda1, arcLength);
+							NcontrolEqns, q_tangent, lambda_tangent, weightLambda, q1, Nres, lambda1, arcLength);
 							// Since the reduction algorithm based on delta_lambda is heuristics, use "relaxBeforeDlambda" instead of "relaxation"
 
 					calcResidualsFrom1Drhs(residNormVec, rhs, whichNorm);
@@ -2758,8 +2686,6 @@ writeData(step, 1);
 						// Finally, update the total residual using the tangential condition
 						calcNresForJOE(Nres, m, NcontrolEqns, q1, q_tangent, lambda_tangent, lambda, lambda1, weightLambda, arcLength);
 								// Use calcNresForJOE() instead of calcNres() since q has not been updated yet!
-						for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-							Nres[iParam] *= weightTangentCond;
 						MPI_Barrier(mpi_comm);
 						residNormTot = updateTotResidualWithNres(residNormTot, Nres, NcontrolEqns, whichNorm);
 					}
@@ -2859,26 +2785,22 @@ writeData(step, 1);
 					countNegative = calcJacobianAD(jacMatrix, rhs, debugLevel, NcontrolEqns);
 					myNnzJac = jacMatrix.get_nnz();
 				} else { // ERROR
-					freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-							turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+					freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 					throw(PSALC_ERROR_CODE);
 				}
 				MPI_Allreduce(&myNnzJac, &nnzJac, 1, MPI_INT, MPI_SUM, mpi_comm);
 			}
 			catch(int e) { // Catch and re-throw
-				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-						turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 				throw(e);
 			}
 			catch(...) { // Catch and re-throw
-				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-						turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 				throw;
 			}
 
 			if(countNegative>0) {
-				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-						turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 				if(mpi_rank==0) cout<<"ERROR! getSteadySolnByNewton(): After negative vars = "<<countNegative<<endl;
 				throw(PSALC_ERROR_CODE);
 			}
@@ -2904,9 +2826,6 @@ writeData(step, 1);
 						cout<<"WARNING in getSteadySolnByNewton(): iterNewton=="<<iterNewton<<", The tangential condition["<<iParam<<"] was NOT satisfied."<<endl
 						    <<"                                    Tangetial-residual = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl;
 			}
-
-			for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-				Nres[iParam] *= weightTangentCond;
 
 			if(mpi_rank == mpi_size-1) {
 				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
@@ -3092,8 +3011,7 @@ writeData(step, 1);
 	}
 
 	/* free memory */
-	freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres,
-			turbScalWeightVec, weighted_q_tangent, weighted_lambda_tangent, m, NcontrolEqns, jacMatrix, jacMatrixSTL);
+	freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
 
 //IKJ
 	if(sasScaling != NULL) {
@@ -3107,6 +3025,7 @@ writeData(step, 1);
 
 	MPI_Barrier(mpi_comm);
 }
+
 
 /*
  * Method: freeMemGetSteadySolnByNewton
@@ -3150,6 +3069,685 @@ void IkeWithPsALC_AD::freeMemGetSteadySolnByNewton(double *phi, double* residNor
 		jacMatrixSTL.clear();
 
 	MPI_Barrier(mpi_comm);
+}
+
+/*
+ * Method: getSteadySolnByTimeStepping
+ * -----------------------------------
+ * Time stepping method (for example, implicit Euler) with a penalty term.
+ * Barrier and trust-region are also used to stabilize the calculation.
+ * Note: tolerance = absTolTimeStepping + relTolTimeStepping * norm(rhs_initial)   -- C.T.Kelley, SIAM 2003, Chap.1.5
+ *
+ * In the pseudo-arclength method, additional system control parameters must be introduced (e.g. heat release rate).
+ * If NcontrolEqns > 0, this function will also take care of it.
+ * Caution: if NcontrolEqns > 0, you need one more equation for the system control paramter.
+ * Note that lambda1 is required only to save a binary file.
+ */
+void IkeWithPsALC_AD::getSteadySolnByTimeStepping(double *q, const int maxTimeStep, const double absTolTS, const double relTolTS, const double startCFL,
+		const double *q_guess, double** q_tangent, const int NcontrolEqns /* =0 */,
+		const double *lambda1 /* =NULL */, const double *lambda_guess /* =NULL */, double *lambda_tangent /* =NULL */,
+		const double weightLambda /* =0.0 */, const double arcLength /* =0 */) {
+	static bool firstCall = true;
+
+	assert(q!=NULL && q_tangent!=NULL && q_guess != NULL);
+	if(NcontrolEqns==0)
+		assert(lambda_tangent==NULL);
+	else
+		assert(lambda_tangent!=NULL && arcLength!=0.0);
+
+	assert(weightLambda == 1.0 || weightLambda == 0.0);  // Note: The formulation in time-stepping assumes that weightLambda (WEIGHT_LAMBDA_IN_ARCLENGTH) is always 1.0
+
+	int m = nScal+5; // number of variables (rho, rhou, rhov, rhow, rhoE, and scalars)
+
+	int countNegative = 0; // number of negative rho or press. If this is greater than 0, backtracking becomes active
+
+	/********************/
+	/*  Initialization  *
+	 ********************/
+	// Weight in the tangential condition
+	// Note: The tangential equation is
+	//           dLambda
+	//         V ------- = -( q_tangent^T*(u-u_guess) + lambda_tangent*(lambda-lambda_guess) ) * sign(lambda_tangent),
+	//              dt
+	//       where V = 1 / weightTangentCond / |lambda_tangent|.
+	//       With this setting (and weightTangentCond = 1), RHS is the same as the tangential condition of the original pseudo-arclength continuation.
+	double vol_lambda = 1.0;
+	if(NcontrolEqns > 0) {
+		double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Small weight means that dLambda is small: Optimal value should be 1.0
+		if(firstCall && mpi_rank==0)
+			cout << "> WEIGHT_TANGENT_COND = " << weightTangentCond << endl;
+		vol_lambda *= 1.0 / weightTangentCond / fabs(lambda_tangent[0]);  // Note: Just take the magnitude of the lambda_tangent of the first control Eqn.!!
+	}
+
+	// Set up MAX_DLAMBDA_MAG
+    double MAX_DLAMBDA_MAG = 0.0;
+    if(NcontrolEqns > 0)
+    	MAX_DLAMBDA_MAG = 0.01 * arcLength * fabs(lambda_tangent[0]);  // Note: 1 percent of dLambda (Note: lambda_tangent has been already normalized)
+
+	// Set iterTS to zero
+	int iterTS = 0;
+
+	int startingTSstep = 0;
+	if(initThirdFromQ1) {
+		if(step - startingStep == 2) {
+			startingTSstep = getIntParam("INIT_THIRD_TS_STEP", "0");
+			if(firstCall && mpi_rank==0)
+				cout << "> INIT_THIRD_TS_STEP = " << startingTSstep << endl;
+			iterTS += startingTSstep;
+
+			MPI_Barrier(mpi_comm);
+		}
+	}
+
+	/******************************************/
+	/*  Time stepping:                        *
+	 ******************************************/
+	double *myResidual = new double[5+nScal];
+	assert(Residual == NULL);
+	Residual = new double[5+nScal];
+
+	// RHS vectors are member variables (thus you don't need to define them) since they are also used in other methods.
+	// On the other hand, the Jacobian matrix must be defined and assigned here.
+	assert(RHSrho  != NULL);
+	assert(RHSrhou != NULL);
+	assert(RHSrhoE != NULL);
+	if(nScal > 0)
+		assert(RHSrhoScal != NULL);
+
+	double (*A)[5][5] = new double[nbocv_s][5][5];
+	double (*dq)[5]   = new double[ncv_g][5];
+	double (*rhs)[5]  = new double[ncv][5];
+
+	double ***AScal  = NULL;  if (nScal > 0) getMem3D(&AScal, 0, nScal-1, 0, 5, 0, nbocv_s-1, "AScal");
+	double **dScal   = NULL;  if (nScal > 0) getMem2D(&dScal, 0, nScal-1, 0, ncv_g-1, "dScal");
+
+	double *RHSlambda = NULL;
+	double **ALambda  = NULL;
+	double *dLambda   = NULL;
+	if(NcontrolEqns > 0) {
+		RHSlambda = new double[NcontrolEqns];
+		getMem2D(&ALambda, 0, NcontrolEqns-1, 0, NcontrolEqns-1, "ALambda");
+		dLambda = new double[NcontrolEqns];
+	}
+
+	//------------------------------------
+	// some parameters that are only relevant for backward Euler
+	//------------------------------------
+	double underRelax = getDoubleParam("UNDER_RELAXATION", "0.5");
+
+	if (!checkParam("LINEAR_SOLVER_NS_TRESHOLDS")) {
+		ParamMap::add("LINEAR_SOLVER_NS_TRESHOLDS  MAX_ITER=10  ABS_RESID=1.0e-8  REL_RESID=1.0e-4");    // add default values
+		if (firstCall && mpi_rank == 0)
+			cout << "WARNING: added keyword \"LINEAR_SOLVER_NS_TRESHOLDS  MAX_ITER=10  ABS_RESID=1.0e-8  REL_RESID=1.0e-4\"" <<
+			" to parameter map!" << endl;
+	}
+	int maxIterLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getInt("MAX_ITER");
+	double zeroAbsLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getDouble("ABS_RESID");
+	double zeroRelLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getDouble("REL_RESID");
+
+	if (!checkParam("CFL_RAMP")) {
+		ParamMap::add("CFL_RAMP AFTER_ITER=100  INTERVAL_ITER=10  FACTOR_CFL=1.0  MAX_CFL=100.0");    // add default: no increase of CFL number!
+		if (firstCall && mpi_rank == 0)
+			cout << "WARNING: added \"CFL_RAMP AFTER_ITER=100  INTERVAL_ITER=10  FACTOR_CFL=1.0  MAX_CFL=100.0\" to parameter map" << endl;
+	}
+	int startIncCFL = getParam("CFL_RAMP")->getInt("AFTER_ITER");
+	int intervalIncCFL = getParam("CFL_RAMP")->getInt("INTERVAL_ITER");
+	double incCFL = getParam("CFL_RAMP")->getDouble("FACTOR_CFL");
+	double maxCFL = getParam("CFL_RAMP")->getDouble("MAX_CFL");
+
+	//------------------------------------
+	// Run the iterations for few more steps even after it converges
+	//------------------------------------
+	int moreTSstepsBelowConv_moreSteps;
+	double moreTSstepsBelowConv_resid, moreTSstepsBelowConv_deltaQ;
+	if (!checkParam("MORE_TS_STEPS_BELOW_CONV")) {
+		ParamMap::add("MORE_TS_STEPS_BELOW_CONV  MORE_STEPS=0  RESID=1.0e-15  DELTA_Q=1.0e-15"); // add default values
+		if (firstCall && mpi_rank == 0)
+			cout<< "WARNING: added keyword \"MORE_TS_STEPS_BELOW_CONV  MORE_STEPS=0  RESID=1.0e-15  DELTA_Q=1.0e-15\""<< " to parameter map!" << endl;
+	}
+	moreTSstepsBelowConv_moreSteps = getParam("MORE_TS_STEPS_BELOW_CONV")->getInt("MORE_STEPS");
+	moreTSstepsBelowConv_resid     = getParam("MORE_TS_STEPS_BELOW_CONV")->getDouble("RESID");
+	moreTSstepsBelowConv_deltaQ    = getParam("MORE_TS_STEPS_BELOW_CONV")->getDouble("DELTA_Q");
+
+	if(firstCall && mpi_rank==0)
+		cout<<"> MORE_TS_STEPS_BELOW_CONV  MORE_STEPS="<<moreTSstepsBelowConv_moreSteps<<"  RESID="<<moreTSstepsBelowConv_resid<<"  DELTA_Q="<<moreTSstepsBelowConv_deltaQ<<endl;
+
+	// -------------------------------------------------------------------------------------------
+	// Note: The flow field (rho, rhou, rhoE, and scalars) should have been updated
+	//       before calling this method
+	// -------------------------------------------------------------------------------------------
+
+	// -------------------------------------------------------------------------------------------
+	// update state properties: velocity, pressure, temperature, enthalpy, gamma and R
+	// -------------------------------------------------------------------------------------------
+	calcStateVariables();
+
+	// -------------------------------------------------------------------------------------------
+	// update material properties: laminar viscosity and heat conductivity
+	// -------------------------------------------------------------------------------------------
+	calcMaterialProperties();
+
+	// -------------------------------------------------------------------------------------------
+	// set BC's for NS and scalars
+	// -------------------------------------------------------------------------------------------
+	setBC();
+
+	// -------------------------------------------------------------------------------------------
+	// update turbulent properties: mut and initialize strain rate, vort mag, ... for turb scalars
+	// -------------------------------------------------------------------------------------------
+	calcRansTurbViscMuet();
+
+	// -------------------------------------------------------------------------------------------
+	//
+	//   Loop over time steps
+	//
+	// -------------------------------------------------------------------------------------------
+
+	int done = 0;
+
+	if ((maxTimeStep >= 0) && (iterTS >= maxTimeStep))  done = 1;
+
+	if (initial_flowfield_output == "YES")
+		writeData(step, maxTimeStep);
+
+	// provide total runtime
+	double wtime, wtime0;
+	MPI_Barrier(mpi_comm);
+	if (mpi_rank == 0)
+		wtime = MPI_Wtime();
+
+	cfl = startCFL;
+
+	double initTotResidual = 0.0;
+	double TotResidual;
+
+	if(firstCall && mpi_rank == 0)
+		cout<<"> Staring Time-stepping with TIME STEP MODE = " << timeStepMode << endl;
+
+	int TSdumpQ1Interval = getIntParam("TS_DUMP_Q1_TECPLOT_INTERVAL", "0");
+
+	while (done != 1) {
+		iterTS++;
+		if ((iterTS >= startIncCFL) && (iterTS%intervalIncCFL == 0) && (cfl < maxCFL))      cfl *= incCFL;
+		double dt_min = calcDt(cfl);
+
+		// find dt_max, too
+		double dt_maxCPU = 0.0;
+		for(int icv=0; icv<ncv; ++icv)
+			dt_maxCPU = max(dt_maxCPU, local_dt[icv]);
+		double dt_max;
+		MPI_Allreduce(&dt_maxCPU, &dt_max, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+		// ---------------------------------------------------------------------------------
+		// Set matrices and vectors to zero
+		// ---------------------------------------------------------------------------------
+		for (int noc = 0; noc < nbocv_s; noc++)                             // set A, dq to zero! rhs is set zero in calcRHS
+			for (int i = 0; i < 5; i++)
+				for (int j = 0; j < 5; j++)
+					A[noc][i][j] = 0.0;
+		for (int icv = 0; icv < ncv_g; icv++)
+			for (int i = 0; i < 5; i++)
+				dq[icv][i] = 0.0;
+
+		for (int iScal = 0; iScal < nScal; iScal++) {                        // set AScal, dScal to zero! rhs is set zero in calcRHS
+			for (int i = 0; i <= 5; i++)
+				for (int noc = 0; noc < nbocv_s; noc++)
+					AScal[iScal][i][noc] = 0.0;
+			for (int icv = 0; icv < ncv_g; icv++)
+				dScal[iScal][icv] = 0.0;
+		}
+
+		for (int iEqn = 0; iEqn < NcontrolEqns; ++iEqn) {
+			ALambda[iEqn][iEqn] = 0.0;
+			dLambda[iEqn] = 0.0;
+		}
+
+		// ---------------------------------------------------------------------------------
+		// calculate RHS for both NSE and scalars
+		// ---------------------------------------------------------------------------------
+		countNegative = calcRhs(RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, A, AScal, true);
+		if(countNegative > 0 && mpi_rank == 0)
+			printf(">> WARNING! getSteadySolnByTimeStepping(): Negative rho, press, or kine occurs at total %d places\n", countNegative);
+
+		bool useBarrier = true;
+		if(useBarrier) {
+			barrierSourceNS(RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, A, AScal, true);      // Add barrier functions
+			barrierSourceTurbScalars(RHSrhoScal, nScal, iterTS, ABSURDLY_BIG_NUMBER); // Add barrier functions
+		}
+
+		// Add penalty terms to RHS: This will make the solution not to go too far from the initial guess
+		double pentaltyStrength = 1.0; // This is a very important constant but hasn't been tested yet.
+
+		if(NcontrolEqns > 0) {
+			assert(q_tangent != NULL);
+			for(int iEqn = 0; iEqn < NcontrolEqns; ++iEqn) {
+				double dummyInnerProductRatio;
+				double tangentDotUvecFromUguess = calcUnweightedTangentVecDotFlowVecMinusGuess(dummyInnerProductRatio,
+						iEqn, q_tangent, q_guess, lambda_tangent, lambda, lambda_guess,
+						m, NcontrolEqns); // Note: tangentDotUvecFromUguess = [q_tangent; lambda_tangent]^T [flowVec - q_guess; lambda - lambda_guess]
+				                          //       is calculated here to avoid passing too many arguments to sourcePenalty().
+
+				// TO DO: sourcePenalty() has not been implemented yet!! Currently this method is empty!!
+				sourcePenalty(iEqn, pentaltyStrength, tangentDotUvecFromUguess, q_tangent, lambda_tangent, RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, A, AScal, true);
+			}
+		}
+
+		// ---------------------------------------------------------------------------------
+		// calculate RHS for lambda
+		// ---------------------------------------------------------------------------------
+		if(NcontrolEqns > 0)
+			calcRhsLambda(RHSlambda, ALambda, true, q_tangent, lambda_tangent, q_guess, lambda_guess, vol_lambda, NcontrolEqns, arcLength);
+
+		// ---------------------------------------------------------------------------------
+		// solve linear system for the NSE
+		// ---------------------------------------------------------------------------------
+		for (int icv=0; icv<ncv; ++icv) {                                // prepare rhs and A
+			rhs[icv][0] = underRelax*RHSrho[icv];
+			rhs[icv][1] = underRelax*RHSrhou[icv][0];
+			rhs[icv][2] = underRelax*RHSrhou[icv][1];
+			rhs[icv][3] = underRelax*RHSrhou[icv][2];
+			rhs[icv][4] = underRelax*RHSrhoE[icv];
+
+			residField[icv] = RHSrhoE[icv];
+
+			double tmp = cv_volume[icv]/(local_dt[icv]);
+			for (int i = 0; i < 5; i++)
+				A[nbocv_i[icv]][i][i] += tmp;                               // diagonal part ( vol/dt + A )
+		}
+
+		solveCoupledLinSysNS(dq, A, rhs, zeroAbsLS, zeroRelLS, maxIterLS);  // solve linear system
+
+		for (int icv=0; icv<ncv; icv++) {                                // update solution: Q_new = Q_old + Delta_Q
+			rho[icv]     += dq[icv][0];
+			rhou[icv][0] += dq[icv][1];
+			rhou[icv][1] += dq[icv][2];
+			rhou[icv][2] += dq[icv][3];
+			rhoE[icv]    += dq[icv][4];
+		}
+
+		UpdateCvDataStateVec(dq);                                       // update dq since neighbors needed to compute RHS of scalars
+
+
+		// ---------------------------------------------------------------------------------
+		// solve linear system for the scalars
+		// ---------------------------------------------------------------------------------
+
+		// the scalars are solved separately from the NSE but in order to ensure consistency with
+		// the continuity equation, the implicit terms (i.e., dependence of the scalars on rho, rhou)
+		// are used on the RHS of the equations. This means that AScal[iScal][4] is the only implicit
+		// term on the LHS, while AScal[iScal][0-3] are put back to the right side.
+
+		for (int iScal = 0; iScal < nScal; iScal++) {                              // prepare rhs and A
+			string scalname = scalarTranspEqVector[iScal].getName();
+			for (int icv = 0; icv < ncv; ++icv) {
+				//RHSrhoScal[iScal][icv] *= underRelax;
+				RHSrhoScal[iScal][icv] *= scalarTranspEqVector[iScal].relax;
+
+				int noc_f = nbocv_i[icv];
+				int noc_l = nbocv_i[icv + 1] - 1;
+
+				double tmp = cv_volume[icv] / local_dt[icv];
+
+				if (iScal == getScalarTransportIndex("f")) {
+					// do nothing
+				} else {
+					AScal[iScal][5][noc_f] += tmp;                                 // diagonal part ( vol/dt + A )
+				}
+
+				// move the other implicit terms to the RHS
+				for (int noc = noc_f; noc <= noc_l; noc++)
+					RHSrhoScal[iScal][icv] = RHSrhoScal[iScal][icv]
+					                      - AScal[iScal][0][noc] * dq[nbocv_v[noc]][0]
+					                      - AScal[iScal][1][noc] * dq[nbocv_v[noc]][1]
+					                      - AScal[iScal][2][noc] * dq[nbocv_v[noc]][2]
+					                      - AScal[iScal][3][noc] * dq[nbocv_v[noc]][3]
+					                      - AScal[iScal][4][noc] * dq[nbocv_v[noc]][4];
+			}
+
+			solveLinSysScalar(dScal[iScal], AScal[iScal][5], RHSrhoScal[iScal],
+					scalarTranspEqVector[iScal].phiZero,
+					scalarTranspEqVector[iScal].phiZeroRel,
+					scalarTranspEqVector[iScal].phiMaxiter,
+					scalarTranspEqVector[iScal].getName());
+
+			// update scalars and clip
+			double *phi = scalarTranspEqVector[iScal].phi;
+			for (int icv = 0; icv < ncv; icv++) {
+				//if(iScal == getScalarTransportIndex("f"))
+				//phi[icv] = min(max((phi[icv] + dScal[iScal][icv]), scalarTranspEqVector[iScal].lowerBound), scalarTranspEqVector[iScal].upperBound);
+				//else
+				phi[icv] = min(max((phi[icv]*(rho[icv]-dq[icv][0]) + dScal[iScal][icv])/rho[icv], scalarTranspEqVector[iScal].lowerBound), scalarTranspEqVector[iScal].upperBound);
+			}
+		}
+
+		// -------------------------------------------------------------------------------------------
+		// solve linear system for lambdas: every cpu calculate dLambda because it makes code simpler
+		// -------------------------------------------------------------------------------------------
+		// Note: The tangential equation is
+		//           dLambda
+		//         V ------- = -( q_tangent^T*(u-u_guess) + lambda_tangent*(lambda-lambda_guess) ) * sign(lambda_tangent),
+		//              dt
+		//         where V = 1 / weightTangentCond / |lambda_tangent|.
+		//       With this setting (and weightTangentCond = 1), RHS is the same as the tangential condition of the original
+		//       pseudo-arclength continuation.
+		//       Note that in the code q_tangent and lambda_tangent have been already normalized before calling this method,
+		//       i.e. q_tangent = q_tangent / arcLength,  lambda_tangent = lambda_tangent / arcLength.
+		if(NcontrolEqns > 0) {
+			for (int iEqn = 0; iEqn < NcontrolEqns; ++iEqn)
+				RHSlambda[iEqn] *= underRelax;
+
+			for (int iEqn = 0; iEqn < NcontrolEqns; ++iEqn) {
+				double tmp = vol_lambda / dt_max;  // Take dt_max for lambda
+				ALambda[iEqn][iEqn] += tmp;        // diagonal part ( vol/dt + A )
+			}
+
+			// move the other implicit terms to the RHS as you did for scalars: q_tangent*dq*sign(lambda_tangent)
+			for (int iEqn = 0; iEqn < NcontrolEqns; ++iEqn) {
+				double sign_lambda_tangent = (lambda_tangent[iEqn]>=0.0 ? 1.0 : -1.0);
+
+				double flowImplicitTerms = -calcUnweightedTangentVecDotJOEdq(iEqn, q_tangent, lambda_tangent, dq, dScal, m) * sign_lambda_tangent;
+				RHSlambda[iEqn] += flowImplicitTerms;
+			}
+
+			// Solve Linear system for lambda
+			for (int iEqn = 0; iEqn < NcontrolEqns; ++iEqn)
+				dLambda[iEqn] = RHSlambda[iEqn] / ALambda[iEqn][iEqn];   // Assuming that ALambda is a diagonal matrix
+
+			// update lambdas and clip
+			for (int iEqn = 0; iEqn < NcontrolEqns; ++iEqn) {
+				if(fabs(dLambda[iEqn]) > MAX_DLAMBDA_MAG) {
+					if(mpi_rank == mpi_size - 1)
+						cout << "WARNING: dLambda[" << iEqn << "] = " << dLambda[iEqn] << " is too big: clip to ";
+					dLambda[iEqn] = min(max(dLambda[iEqn], -MAX_DLAMBDA_MAG), MAX_DLAMBDA_MAG);  // note: -MAX_DLAMBDA_MAG <= dLambda <= MAX_DLAMBDA_MAG
+					if(mpi_rank == mpi_size - 1)
+						cout << dLambda[iEqn] << endl;
+				}
+				lambda[iEqn] += dLambda[iEqn];
+			}
+		}
+
+		// -------------------------------------------------------------------------------------------
+		// update state properties: velocity, pressure, temperature, enthalpy, gamma and R
+		// -------------------------------------------------------------------------------------------
+		updateCvDataG1G2(rho, REPLACE_DATA);
+		updateCvDataG1G2(rhou, REPLACE_ROTATE_DATA);
+		updateCvDataG1G2(rhoE, REPLACE_DATA);
+
+		for (int iScal = 0; iScal < nScal; iScal++)
+			updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
+
+		// -------------------------------------------------------------------------------------------
+		// update state properties: velocity, pressure, temperature, enthalpy, gamma and R
+		// -------------------------------------------------------------------------------------------
+		calcStateVariables();
+
+		// -------------------------------------------------------------------------------------------
+		// update material properties: laminar viscosity and heat conductivity
+		// -------------------------------------------------------------------------------------------
+		calcMaterialProperties();
+
+		// -------------------------------------------------------------------------------------------
+		// set BC's for NS and scalars
+		// -------------------------------------------------------------------------------------------
+		setBC();
+
+		// -------------------------------------------------------------------------------------------
+		// update turbulent properties: mut and initialize strain rate, vort mag, ... for turb scalars
+		// -------------------------------------------------------------------------------------------
+		calcRansTurbViscMuet();
+
+
+		// =========================================================================================
+		// calculate and show residual
+		// =========================================================================================
+		for (int i = 0; i < 5+nScal; i++) {
+			myResidual[i] = 0.0;
+			Residual[i] = 0.0;
+		}
+
+		for (int icv = 0; icv < ncv; icv++) {
+			myResidual[0] += fabs(RHSrho[icv]);
+			for (int i=0; i<3; i++)
+				myResidual[i+1] += fabs(RHSrhou[icv][i]);
+			myResidual[4] += fabs(RHSrhoE[icv]);
+		}
+		for (int iScal = 0; iScal < nScal; iScal++)
+			for (int icv = 0; icv < ncv; icv++)
+				myResidual[5+iScal] += fabs(RHSrhoScal[iScal][icv]/underRelax);
+
+		MPI_Allreduce(myResidual, Residual, 5+nScal, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
+		TotResidual = 0.0;
+		for(int i=0; i<5+nScal; ++i)
+			TotResidual += Residual[i];
+		for (int iEqn = 0; iEqn < NcontrolEqns; ++iEqn)
+			TotResidual += fabs(RHSlambda[iEqn]);
+
+		// The following part is adapted from JoeWithModels::showResidue()
+		if (iterTS%check_interval == 0 || iterTS == startingTSstep+1) {
+			if ((mpi_rank == 0) && (iterTS%(check_interval*10) == 0))
+				cout << "\ndone step: "<< iterTS << ", cfl: " << cfl << ", min. dt: " << dt_min << " time: " << time << endl;
+
+			// residual label at every 10 output steps
+			if ((mpi_rank == 0) && ((iterTS%(check_interval*10) == 0) || (iterTS == startingTSstep+1))) {
+				printf("                rho          rhou-X       rhou-Y       rhou-Z       rhoE      ");
+				for (int iScal = 0; iScal < nScal; iScal++)
+					printf("%12s", scalarTranspEqVector[iScal].getName());
+				if(NcontrolEqns > 0)
+					printf("   RHSlambda");
+				cout << endl;
+			}
+
+			// residual value at each output step
+			if (mpi_rank == 0) {
+				printf("RESID: %6d %12.4e %12.4e %12.4e %12.4e %12.4e", iterTS, Residual[0], Residual[1], Residual[2], Residual[3], Residual[4]);
+				for (int iScal = 0; iScal < nScal; iScal++)
+					printf("%12.4e", Residual[5+iScal]);
+				if(NcontrolEqns > 0)
+					printf("%12.4e", fabs(RHSlambda[0]));
+				cout << endl;
+			}
+		}
+
+		// IKJ: For output display (Metric to see the convergence of the simulation)
+		if(log10_resid_rhoE != NULL)
+			for (int icv = 0; icv < ncv; icv++)
+				log10_resid_rhoE[icv] = log10(fabs(RHSrhoE[icv]) + MACHINE_EPS);
+		if(log10_resid_scalar0 != NULL)
+			for (int iScal = 0; iScal < nScal; iScal++)
+				for (int icv = 0; icv < ncv; icv++)
+					log10_resid_scalar0[icv] = log10(fabs(RHSrhoScal[iScal][icv]/underRelax) + MACHINE_EPS);
+		updateCvDataG1G2(residField,       REPLACE_DATA);
+		updateCvDataG1G2(log10_resid_rhoE, REPLACE_DATA);
+		if(nScal>0)
+			updateCvDataG1G2(log10_resid_scalar0, REPLACE_DATA);
+
+		temporalHook();
+//		dumpProbes(iterTS, 0.0);
+//		writeData(step, iterTS);
+
+		if(iterTS > startingTSstep+1 && TSdumpQ1Interval > 0) { // If the user wants to dump the data at every "newtonDumpQ1Interval" Newton step
+			if(iterTS%TSdumpQ1Interval == 0) {
+				if(NcontrolEqns>0) {
+					char filename[50];
+					sprintf(filename, "Q1_PT%05d.dumped.TS%05d.bin", step, iterTS);
+					if(mpi_rank==0)
+						cout<<"   > Dump the current Q vector on "<<filename<<": lambda[0]="<<std::setprecision(15)<<lambda[0]<<endl;
+					writePsALCdumpedDataParallel(filename, step, arcLength, lambda1, lambda, NcontrolEqns, q);
+				}
+
+				writeData(step, iterTS);
+			}
+		}
+
+
+		// ---------------------------------------------------------------------------------
+		// save convergence history on a file
+		// ---------------------------------------------------------------------------------
+		if(mpi_rank==0) {
+			if(iterTS == startingTSstep + 1) {
+				FILE *fp;
+				if(firstCall)
+					fp = fopen(TIMESTEP_STATUS_FILENAME, "w");
+				else
+					fp = fopen(TIMESTEP_STATUS_FILENAME, "a");
+
+				fprintf(fp, "CONTINUATION STEP = %d\n", step);
+				fprintf(fp, "  ITER,  total     ,  rho       ,  rhou-X    ,  rhou-Y    ,  rhou-Z    ,  rhoE      ");
+				for (int iScal = 0; iScal < nScal; iScal++)
+					fprintf(fp, ",%12s", scalarTranspEqVector[iScal].getName());
+				if(NcontrolEqns > 0)
+					fprintf(fp, ",%12s,%12s", "tangential", "lambda");
+				fprintf(fp, "\n");
+				fclose(fp);
+			}
+
+			FILE *fp = fopen(TIMESTEP_STATUS_FILENAME, "a");
+			fprintf(fp, "%6d,%12.4e,%12.4e,%12.4e,%12.4e,%12.4e,%12.4e", iterTS, TotResidual, Residual[0], Residual[1], Residual[2], Residual[3], Residual[4]);
+			for (int iScal = 0; iScal < nScal; iScal++)
+				fprintf(fp, ",%12.4e", Residual[5+iScal]);
+			if(NcontrolEqns > 0)
+				fprintf(fp, ",%12.4e,%12.4e", fabs(RHSlambda[0]), lambda[0]);
+			fprintf(fp, "\n");
+			fclose(fp);
+		}
+
+		// ---------------------------------------------------------------------------------
+		// check tolerance
+		// ---------------------------------------------------------------------------------
+		double tolerance = absTolTS + initTotResidual * relTolTS;
+		if ((iterTS >= maxTimeStep) || (TotResidual <= tolerance))   done = 1;
+
+		// Update at the first iteration
+		if(initTotResidual == 0.0)
+			initTotResidual = TotResidual;
+	}
+
+	double tolerance = absTolTS + initTotResidual * relTolTS;
+	if(TotResidual > tolerance) {
+		if(mpi_rank == 0)
+			cout << "TIME STEPPING has not been converged: maxTimeStep = " << maxTimeStep << ", total residual = " << TotResidual << " > tolerance = " << tolerance << endl;
+		throw(PSALC_ERROR_CODE);
+	}
+
+
+	MPI_Barrier(mpi_comm);
+	if (mpi_rank == 0) {
+		double wtime0 = wtime;
+		wtime = MPI_Wtime();
+		cout << " > runtime for iterations[s]: " << wtime - wtime0 << endl;
+	}
+
+//	// ---------------------------------------------------------------------------------
+//	// output
+//	// ---------------------------------------------------------------------------------
+//
+//	temporalHook();
+//	finalHook();
+//
+//	writeRestart(step);
+//	writeData(step, iterTS);
+
+	// ---------------------------------------------------------------------------------
+	// Update q
+	// ---------------------------------------------------------------------------------
+	for (int icv = 0; icv < ncv; ++icv) {
+		int indexStart = icv*m;
+		q[indexStart] = rho[icv];
+		for(int i=0; i<3; ++i)
+			q[indexStart+1+i] = rhou[icv][i];
+		q[indexStart+4] = rhoE[icv];
+
+		for (int iScal = 0; iScal < nScal; iScal++) {
+			double *phi = scalarTranspEqVector[iScal].phi;
+			q[indexStart+5+iScal] = phi[icv];
+		}
+	}
+	if(NcontrolEqns > 0 && mpi_rank == mpi_size-1) {
+		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+			q[ncv*m+iEqn] = lambda[iEqn];
+	}
+
+	// ---------------------------------------------------------------------------------
+	// delete memory
+	// ---------------------------------------------------------------------------------
+
+	delete [] A;
+	delete [] rhs;
+
+	delete [] dq;
+
+	delete [] myResidual;
+	delete [] Residual; 	Residual = NULL;
+
+	if (nScal > 0) freeMem3D(AScal, 0, nScal-1, 0, 5, 0, nbocv_s-1);
+	if (nScal > 0) freeMem2D(dScal, 0, nScal-1, 0, ncv_g-1);
+
+	delete [] RHSlambda;
+	freeMem2D(ALambda, 0, NcontrolEqns-1, 0, NcontrolEqns-1);
+	delete [] dLambda;
+
+    if (petscSolver != NULL)        	{ delete petscSolver;         petscSolver = NULL; }
+    if (petscSolverScalars != NULL) 	{ delete petscSolverScalars;  petscSolverScalars = NULL; }
+
+	firstCall = false;
+
+	MPI_Barrier(mpi_comm);
+}
+
+/*
+ * Method: sourcePenalty
+ * ---------------------
+ * Add penalty to prevent diverging solution
+ */
+void IkeWithPsALC_AD::sourcePenalty(const int iEqn, const double pentaltyStrength, const double tangentDotUvecFromUguess,
+		double** q_tangent, const double *lambda_tangent,
+		double *RHSrho, double (*RHSrhou)[3], double *RHSrhoE, double **RHSrhoScal, double (*A)[5][5], double ***AScal, const bool flagImplicit) {
+//	for(int icv=0; icv<ncv; ++icv) {
+//		RHSrho[icv] += ;
+//	}
+
+	// Note: We are not doing anything for the Jacobian matrix even for implicit case because it is very hard to provide analytic Jacobian.
+	return;
+}
+
+/*
+ * Method: calcRhsLambda
+ * ---------------------
+ * Calculate RHS for lambda evolution equation
+ */
+void IkeWithPsALC_AD::calcRhsLambda(double* RHSlambda, double** ALambda, const bool flagImplicit,
+		double** q_tangent, const double* lambda_tangent, const double* q_initGuess, const double* lambda_initGuess,
+		const double vol_lambda, const int NcontrolEqns, const double arcLength) {
+	assert(RHSlambda!=NULL && q_tangent!=NULL && lambda_tangent!=NULL && q_initGuess!=NULL && lambda_initGuess!=NULL);
+	assert(NcontrolEqns != 0);
+
+	// Set RHS zero
+	for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+		RHSlambda[iEqn] = 0.0;
+
+	// Solve RHS
+	// Note: The tangential equation is
+	//           dLambda
+	//         V ------- = -( q_tangent^T*(u-u_guess) + lambda_tangent*(lambda - lambda_tangent) ) * sign(lambda_tangent),
+	//              dt
+	//         where V = 1 / weightTangentCond / |lambda_tangent|.
+	//       Note that in the code q_tangent and lambda_tangent have been already normalized before calling this method,
+	//       i.e. q_tangent = q_tangent / arcLength,  lambda_tangent = lambda_tangent / arcLength.
+	for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
+		double dummyInnerProductRatio;
+		double tangentDotUvecFromUguess = calcUnweightedTangentVecDotFlowVecMinusGuess(dummyInnerProductRatio,
+				iEqn, q_tangent, q_initGuess, lambda_tangent, lambda, lambda_initGuess,
+				5+nScal, NcontrolEqns);
+//		RHSlambda[iEqn] -= arcLength * tangentDotUvecFromUguess * ((lambda_tangent[iEqn]>=0.0) ? 1.0 : -1.0);
+		RHSlambda[iEqn] -= tangentDotUvecFromUguess * ((lambda_tangent[iEqn]>=0.0) ? 1.0 : -1.0);
+
+		if(flagImplicit) {
+			assert(ALambda != NULL);
+//			ALambda[iEqn][iEqn] += arcLength * lambda_tangent[iEqn] * (lambda_tangent[iEqn]>=0.0 ? 1.0 : -1.0); // Note: In Joe, A is actually minus of Jacobian
+			ALambda[iEqn][iEqn] += lambda_tangent[iEqn] * (lambda_tangent[iEqn]>=0.0 ? 1.0 : -1.0); // Note: In Joe, A is actually minus of Jacobian
+		}
+	}
 }
 
 /*
@@ -3702,18 +4300,7 @@ int IkeWithPsALC_AD::calcJacobian1DAD(MatComprsedSTL &jacMatrixSTL, double *rhsS
 		}
 	}
 
-// IKJ
-//	int    totNonDiagAdd_count;
-//	double totNonDiagAdd_rhsAbsSum;
-//	MPI_Allreduce(&myNonDiagAdd_count,     &totNonDiagAdd_count,     1, MPI_INT,    MPI_SUM, mpi_comm);
-//	MPI_Allreduce(&myNonDiagAdd_rhsAbsSum, &totNonDiagAdd_rhsAbsSum, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//	if(mpi_rank==0 && totNonDiagAdd_count>0)
-//		cout<<"           >> WARNING! calcJacobian1DAD(): Total "<<totNonDiagAdd_count<<" diagonal entries are modified to avoid zero-diagnonal for RHO"<<endl
-//			<<"                                           Total added values to RHS norm = "<<totNonDiagAdd_rhsAbsSum<<endl;
-//
-//	showMessageParallel(warningsVectorIkeModels1D, 50, "WARNING_IKE_RHS_CALC_1D");
-
-	jacMatrixSTL.finalizeMat();
+	jacMatrixSTL.finalizeMat(); // Set jacMatrixSTL.ncols_eachRow_i for empty rows on the bottom of the matrix
 
 	// Show some statistics to the user
 //	double totBarrierMassSourceSum1D_AD;
@@ -5457,7 +6044,7 @@ double IkeWithPsALC_AD::backtrackForNegativeVals(int &negativeValCount_CV, int &
 double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const double* qArray, const double* delQ, bool &notConverged,
 		const int maxBacktrackingIter, const double relaxationOld, const double relaxationLowerBound, const double relaxationUpperBound,
 		const double* ResidVecOld, double* ResidVecNew, const int whichNorm, const double backtrackBarrierCoeff,
-		const int NcontrolEqns, double** q_tangent, const double* lambda_tangent, const double weightLambda, const double WeightTangentCond,
+		const int NcontrolEqns, double** q_tangent, const double* lambda_tangent, const double weightLambda,
 		const double* qArrayOld, const double* NresOld, const double* lambdaOld, const double arcLength) {
 	// Store the history of backtracking
 	vector<pair<double, double> > backtrackHistory; // This vector stores the history of <relax, residNormTot> from relax1 to the final backtracking
@@ -5529,8 +6116,6 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 	if (NcontrolEqns > 0) {
 		bool tangentialSatisfied = calcNresForJOE(NresTemp, nVars, NcontrolEqns, qArrayOld, q_tangent, lambda_tangent, lambda, lambdaOld, weightLambda, arcLength);
-		for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-			NresTemp[iParam] *= WeightTangentCond;
 
 		residNormTot2 = updateTotResidualWithNres(residNormFlow2, NresTemp, NcontrolEqns, whichNorm);
 	} else
@@ -5594,8 +6179,6 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 			if (NcontrolEqns > 0) {
 				bool tangentialSatisfied = calcNresForJOE(NresTemp, nVars, NcontrolEqns, qArrayOld, q_tangent, lambda_tangent, lambda, lambdaOld, weightLambda, arcLength);
-				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-					NresTemp[iParam] *= WeightTangentCond;
 
 				residNormTot2 = updateTotResidualWithNres(residNormFlow2, NresTemp, NcontrolEqns, whichNorm);
 			} else
@@ -5682,8 +6265,6 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 		if (NcontrolEqns > 0) {
 			bool tangentialSatisfied = calcNresForJOE(NresTemp, nVars, NcontrolEqns, qArrayOld, q_tangent, lambda_tangent, lambda, lambdaOld, weightLambda, arcLength);
-			for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-				NresTemp[iParam] *= WeightTangentCond;
 
 			residNormTot2 = updateTotResidualWithNres(residNormFlow2, NresTemp, NcontrolEqns, whichNorm);
 		} else
@@ -5790,8 +6371,6 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 		if (NcontrolEqns > 0) {
 			bool tangentialSatisfied = calcNresForJOE(NresTemp, nVars, NcontrolEqns, qArrayOld, q_tangent, lambda_tangent, lambda, lambdaOld, weightLambda, arcLength);
-			for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-				NresTemp[iParam] *= WeightTangentCond;
 
 			residNormTot2 = updateTotResidualWithNres(residNormFlow2, NresTemp, NcontrolEqns, whichNorm);
 		} else
@@ -6040,8 +6619,8 @@ double IkeWithPsALC_AD::backtrackWithJOEcoupled_calcRelaxAndRHS(double* rhs, con
  */
 int IkeWithPsALC_AD::calcRhsWithBarrier(double* rhs, const bool useBarrier) {
 	/* Allocate memory */
-	assert(RHSrho!=NULL && RHSrhou!=NULL && RHSrhoE!=NULL); // Note that RHSrho, RHSrhou, and RHSrhoE were already allocated for tecplot output, but the 2D RHSrhoScal array hasn't
-	double **RHSrhoScal  = NULL;  if (nScal > 0) getMem2D(&RHSrhoScal,  0, nScal-1, 0, ncv_g-1, "rhsScal"); // Actually, this is rho*scal residual
+	assert(RHSrho!=NULL && RHSrhou!=NULL && RHSrhoE!=NULL); // Note that RHSrho, RHSrhou, RHSrhoE, and RHSrhoScal were already allocated for tecplot output
+	assert(RHSrhoScal!= NULL);
 	double (*A)[5][5] = NULL;
 	double ***AScal   = NULL;
 
@@ -6090,10 +6669,6 @@ int IkeWithPsALC_AD::calcRhsWithBarrier(double* rhs, const bool useBarrier) {
 //	if(debugLevel>0 && mpi_rank==0) {
 //		printf("              >> Barrier: Total mass source = %.4e, Total energy source = %.4e \n", totBarrierMassSourceSumJOE, totBarrierEnergySourceSumJOE);
 //	}
-
-	/* Clear memory */
-	if (nScal > 0)
-		freeMem2D(RHSrhoScal, 0, nScal-1, 0, ncv-1);
 
 	/* Return */
 	return countNegative;
@@ -6795,6 +7370,114 @@ void IkeWithPsALC_AD::barrierSourceNS(double* rhs) {
 	}
 }
 
+/*
+ * Method: barrierSourceNS
+ * -----------------------
+ * Add barrier functions to the RHS of the N-S equations for JOE-type RHS vectors (with Jacobian matrix update)
+ */
+void IkeWithPsALC_AD::barrierSourceNS(double *RHSrho, double (*RHSrhou)[3], double *RHSrhoE, double **rhsScal, double (*A)[5][5], double ***AScal, int flagImplicit) {
+	string functionName;    // If functionName=="NO_METHOD",            skip the barrier
+	int    maxIter;         // If maxIter==0,                           skip the barrier
+	double threshold_resid; // If resid_norm_tot_old < threshold_resid, skip the barrier
+	double coeffRho;
+	double coeffPress;
+	bool useBarrier = readBarrierParamNS(functionName, maxIter, threshold_resid, coeffRho, coeffPress, iterNewton, residNormTotOld);
+	// Note: iterNewton and residNormTotOld are member variables of the IkeWithPsALC_AD class
+
+	if(useBarrier) {
+		int nVars = 5+nScal;
+
+		double *kineArray = NULL;
+		int kine_Index = getScalarTransportIndex("kine");
+		if(kine_Index>=0)
+			kineArray = scalarTranspEqVector[kine_Index].phi;
+
+		myBarrierMassSourceSumJOE   = 0.0;
+		myBarrierEnergySourceSumJOE = 0.0;
+
+		if (strcmp(functionName.c_str(), "LOG") == 0) {
+			for (int icv=0; icv<ncv; ++icv) {
+				// source term in the mass equation
+				double massSource = max(-coeffRho*log(fabs(rho[icv]/rho_ref)), 0.0)*cv_volume[icv];
+				RHSrho[icv] += massSource;
+
+				// Jacobian matrix for the mass conservation equation
+				if(-coeffRho*log(fabs(rho[icv]/rho_ref)) > 0.0)
+					A[icv][0][0] += -coeffRho / rho[icv];
+
+				// source term in the energy equation
+				double kinecv = 0.0;
+				if(kine_Index>=0)
+					kinecv = kineArray[icv];
+				double tempPress = calcPress(UgpWithCvCompFlow::gamma[icv], rhoE[icv], rhou[icv], rho[icv], kinecv);
+				double energySource = max(-coeffPress*log(fabs(tempPress/p_ref)), 0.0)*cv_volume[icv];
+				RHSrhoE[icv] += energySource;
+
+				// Jacobian matrix for the energy equation
+				if(-coeffPress*log(fabs(tempPress/p_ref)) > 0.0) {
+					// Note: Even though pressure can be calculated in a different way than calcPress(),
+					//       here I assume calcPress() for simplicity.
+					double coeffOverPressTimesGammaMinusOne = coeffPress/UgpWithCvCompFlow::press[icv] * (UgpWithCvCompFlow::gamma[icv]-1.0);
+					double rhouSq = 0.0;
+					for(int i=0; i<3; ++i)
+						rhouSq += rhou[icv][i]*rhou[icv][i];
+
+					A[icv][4][0] += -coeffOverPressTimesGammaMinusOne * (0.5*rhouSq/rho[icv]/rho[icv] - kinecv) *cv_volume[icv];
+					for(int i=1; i<4; ++i)
+						A[icv][4][i] += coeffOverPressTimesGammaMinusOne * (rhou[icv][i]/rho[icv]) *cv_volume[icv];
+					A[icv][4][4] += -coeffOverPressTimesGammaMinusOne *cv_volume[icv];
+				}
+
+				// statistics
+				myBarrierMassSourceSumJOE   += massSource;
+				myBarrierEnergySourceSumJOE += energySource;
+			}
+		} else if (strcmp(functionName.c_str(), "RECIPROCAL") == 0) {
+			for (int icv=0; icv<ncv; ++icv) {
+				// source term in the mass equation
+				double massSource = coeffRho/(fabs(rho[icv]/rho_ref))*cv_volume[icv];
+				RHSrho[icv] += massSource;
+
+				// Jacobian matrix for the mass conservation equation
+				double signRho = (rho[icv]>=0.0) ? 1.0 : -1.0;
+				A[icv][0][0] += -signRho*coeffRho / pow(rho[icv], 2.0);
+
+				// source term in the energy equation
+				double kinecv = 0.0;
+				if(kine_Index>=0)
+					kinecv = kineArray[icv];
+				double tempPress = calcPress(UgpWithCvCompFlow::gamma[icv], rhoE[icv], rhou[icv], rho[icv], kinecv);
+				double energySource = coeffPress/(fabs(tempPress/p_ref))*cv_volume[icv];
+				RHSrhoE[icv] += energySource;
+
+				// Jacobian matrix for the energy equation
+				double signPress = (tempPress>=0.0) ? 1.0 : -1.0;
+				// Note: Even though pressure can be calculated in a different way than calcPress(),
+				//       here I assume calcPress() for simplicity.
+				double signedCoeffOverPressSqTimesGammaMinusOne = signPress * coeffPress/pow(UgpWithCvCompFlow::press[icv], 2.0) * (UgpWithCvCompFlow::gamma[icv]-1.0);
+				double rhouSq = 0.0;
+				for(int i=0; i<3; ++i)
+					rhouSq += rhou[icv][i]*rhou[icv][i];
+
+				A[icv][4][0] += -signedCoeffOverPressSqTimesGammaMinusOne * (0.5*rhouSq/rho[icv]/rho[icv] - kinecv) *cv_volume[icv];
+				for(int i=1; i<4; ++i)
+					A[icv][4][i] += signedCoeffOverPressSqTimesGammaMinusOne * (rhou[icv][i]/rho[icv]) *cv_volume[icv];
+				A[icv][4][4] += -signedCoeffOverPressSqTimesGammaMinusOne *cv_volume[icv];
+
+				// statistics
+				myBarrierMassSourceSumJOE   += massSource;
+				myBarrierEnergySourceSumJOE += energySource;
+			}
+		} else {
+			if(debugLevel>1 && mpi_rank==0)
+				cout<<"barrierSourceNS() is not active: No barrier method"<<endl;
+		}
+	} else {
+		if(debugLevel>1 && mpi_rank==0)
+			cout<<"IkeWithPsALC_AD::barrierSourceNS(): Barrier function = NO_METHOD"<<endl;
+	}
+}
+
 // Note: barrierSourceTurbScalars() is in IkeUgpWithCvCompFlow.h
 
 /*
@@ -6959,7 +7642,7 @@ void IkeWithPsALC_AD::calcWeightRhs(const int icvCenter, WEIGHT_RHS_METHOD weigh
 
 		if(mpi_rank==0 && firstCall) {
 			cout<<"           > IkeWithPsALC_AD::calcWeightRhs(): REF_VALUES weighting =";
-			for(int i=0; i<5+nScal; ++i) cout<<" "<<weightRhs[startingIndex+i]<<" ";
+			for(int i=0; i<5+nScal; ++i) cout<<" "<<std::setprecision(3)<<weightRhs[startingIndex+i]<<" ";
 			cout<<endl;
 		}
 	} else if(weightRhsMethod == LOCAL_VALUES) {
@@ -7577,6 +8260,109 @@ double IkeWithPsALC_AD::calcWeighted2NormForVecMinusVec(const double* qVec1, con
 }
 
 /*
+ * Method: calcUnweightedTangentVecDotFlowVecMinusGuess
+ * ----------------------------------------------------
+ * Calculate unweighted vector multiplication of [q_tangent; lambda_tangent]^T [flowVec - q_guess; lambda - lambda_guess],
+ * where flowVec = [rho; rhou; rhoE; scalars].
+ *
+ * This will be often called if time stepping is used instead of Newton's method
+ *
+ * Note: 1. The dimension of qTangent and qGuess must be ncv*nVars and the dimension of lambda and lambdaGuess can be either zero or NcontrolEqns.
+ *       2. This is a MPI call, i.e., all the cores must have the q vectors,
+ *          and only the last core (mpi_rank==mpi_size-1) can have the lambda vectors.
+ *       3. If NcontrolEqns == 0, innerProductRatio will be set as -1.
+ *
+ * Return:
+ *   By value     = the weighted norm
+ *   By reference = normSqRatio
+ */
+double IkeWithPsALC_AD::calcUnweightedTangentVecDotFlowVecMinusGuess(double &innerProductRatio,
+		const int iEqn, double** q_tangent, const double* q_guess, const double* lambda_tangent, const double* lambda, const double* lambda_guess,
+		const int Nvars, const int NcontrolEqns) {
+	assert(q_tangent != NULL && q_guess != NULL);
+	if(NcontrolEqns != 0 && mpi_rank == mpi_size-1)
+		assert(lambda_tangent != NULL && lambda != NULL && lambda_guess != NULL);
+	assert(Nvars >= 5);
+
+	// Allocate memory for qVecDiff and lambdaVecDiff
+	double* qVecDiff      = new double [ncv*Nvars];
+	double* lambdaVecDiff = NULL;
+	if(mpi_rank == mpi_size-1 && NcontrolEqns > 0)
+		lambdaVecDiff = new double [NcontrolEqns];
+
+	// Calculate qVecDiff and lambdaVecDiff
+	for(int icv=0; icv<ncv; ++icv) {
+		int index = icv*Nvars;
+
+		// Primary variables
+		qVecDiff[index] = rho[icv] - q_guess[index];
+		for (int i=0; i<3; ++i)
+			qVecDiff[index+1+i] = rhou[icv][i] - q_guess[index+1+i];
+		qVecDiff[index+4] = rhoE[icv] - q_guess[index+4];
+		// Scalars
+		for (int iScal=0; iScal < Nvars-5; ++iScal) {
+			double *phi = scalarTranspEqVector[iScal].phi;
+			qVecDiff[index+5+iScal] = phi[icv] - q_guess[index+5+iScal];
+		}
+	}
+	if(mpi_rank == mpi_size-1 && NcontrolEqns > 0)
+		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+			lambdaVecDiff[iEqn] = lambda[iEqn] - lambda_guess[iEqn];
+
+	// Calculate the squre of the unweighted 2-norm
+	double vecDotVec;
+	if(NcontrolEqns == 0) {
+		double myQvecCalc = 0.0;
+		for(int i=0; i<ncv*Nvars; ++i)
+			myQvecCalc += q_tangent[iEqn][i] * qVecDiff[i];
+		MPI_Allreduce(&myQvecCalc, &vecDotVec, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
+		innerProductRatio = -1; // Just set it as -1 (actually it is infinity)
+	} else {
+		double myQvecCalc = 0.0;
+		for(int i=0; i<ncv*Nvars; ++i)
+			myQvecCalc += q_tangent[iEqn][i] * qVecDiff[i];
+		if(mpi_rank == mpi_size -1) {
+			for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
+				myQvecCalc += lambda_tangent[iEqn] * lambdaVecDiff[iEqn];
+			}
+		}
+		MPI_Allreduce(&myQvecCalc, &vecDotVec, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+	}
+
+	// Free memory
+	delete [] qVecDiff;
+	if(mpi_rank == mpi_size-1 && NcontrolEqns > 0)
+		delete [] lambdaVecDiff;
+
+	// Return
+	return vecDotVec;
+}
+
+/*
+ * Method: calcUnweightedTangentVecDotJOEdq
+ * ----------------------------------------------------
+ * Calculate unweighted vector multiplication of [q_tangent; lambda_tangent]^T [dq; dLambda],
+ * where dq is JOE vector
+ */
+double IkeWithPsALC_AD::calcUnweightedTangentVecDotJOEdq(const int iEqn, double** q_tangent, double* lambda_tangent, double (*dq)[5], double** dScal, const int Nvars) {
+	double myVecDotVec = 0.0;
+
+	for(int icv=0; icv<ncv; ++icv) {
+		int indexStart = icv*Nvars;
+		for(int i=0; i<5; ++i)
+			myVecDotVec += q_tangent[iEqn][indexStart+i] * dq[icv][i];
+		for(int iScal=0; iScal<nScal; ++iScal)
+			myVecDotVec += q_tangent[iEqn][indexStart+5+iScal] * dScal[iScal][icv];
+	}
+
+	double vecDotVec;
+	MPI_Allreduce(&myVecDotVec, &vecDotVec, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
+	return vecDotVec;
+}
+
+/*
  * Method: calcUnitVecWithWeightedNorm
  * -----------------------------------
  * Calculate the normalized form of a given vector [q; lambda],
@@ -7765,7 +8551,7 @@ double IkeWithPsALC_AD::calcTotResidual(const double *Residual, const int whichN
 /*
  * Method: calcNres
  * ----------------
- * Calculate Nres == q_tangent*(q_guess-q1) + lambda_tangent*(lambda_guess-lambda1) - ds)
+ * Calculate Nres == ds - { q_tangent*(q_guess-q1) + lambda_tangent*(lambda_guess-lambda1) }
  * (Nres is the last element of the rhs vector at mpi_rank=mpi_size-1)
  *
  * Return: True if the tangential condition is satisfied
@@ -7798,8 +8584,8 @@ bool IkeWithPsALC_AD::calcNres(double* Nres, const double *q, double* rhs, const
 		throw(PSALC_ERROR_CODE);
 	}
 
-	// Calculate Nres = (new arclength) - (old arclength)
-	double NresVal = arcLengthNew - arcLength;
+	// Calculate Nres = (old arclength) - (new arclength)
+	double NresVal = arcLength - arcLengthNew;
 
 	for(int iParam=0; iParam<NcontrolEqns; ++iParam)
 		Nres[iParam] = NresVal;
@@ -7819,7 +8605,7 @@ bool IkeWithPsALC_AD::calcNres(double* Nres, const double *q, double* rhs, const
 /*
  * Method: calcNresForJOE
  * ----------------------
- * Calculate Nres == q_tangent*(q_guess-q1) + lambda_tangent*(lambda_guess-lambda1) - ds)
+ * Calculate Nres == ds - {q_tangent*(q_guess-q1) + lambda_tangent*(lambda_guess-lambda1)}
  * (Nres is the last element of the rhs vector at mpi_rank=mpi_size-1)
  *
  * The calcNres() method uses the q arrays (q_guess and q1). Thus, it cannot be used if q is not updated (e.g. in the backtracking algorithm).
@@ -7861,7 +8647,7 @@ bool IkeWithPsALC_AD::calcNresForJOE(double* Nres, const int Nvars, const int Nc
 	}
 
 	// Calculate Nres = (new arclength) - (old arclength)
-	double NresVal = arcLengthNew-arcLength;
+	double NresVal = arcLength - arcLengthNew;
 
 	for(int iParam=0; iParam<NcontrolEqns; ++iParam)
 		Nres[iParam] = NresVal;

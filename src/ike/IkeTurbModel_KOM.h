@@ -357,7 +357,73 @@ public:
             }
         } else {
             if(debugLevel>1 && mpi_rank==0)
-                cout<<"IkeWithPsALC_AD::barrierSourceTurbScalars(): Barrier function = NO_METHOD"<<endl;
+                cout<<"IkeRansTurbKOm_AD::barrierSourceTurbScalars(): Barrier function = NO_METHOD"<<endl;
+        }
+    }
+
+    /*
+     * Method: barrierSourceTurbScalars
+     * --------------------------------
+     * Add barrier functions to the RHS of the scalars equations
+     */
+    void barrierSourceTurbScalars(double **RHSrhoScal, const int nScal, const int iterTS, const double residNormTotOld) {
+        int debugLevel = getDebugLevel();
+
+		int kine_index = getScalarTransportIndex("kine");       assert(kine_index>-1);
+		int omega_index = getScalarTransportIndex("omega");     assert(omega_index>-1);
+
+        double kineRef = 1.0e-14;
+        Param *pmy;
+        if (getParam(pmy, "INITIAL_CONDITION_TURB"))
+            kineRef = pmy->getDouble(1);
+        double omegaRef = 1.0e-14;
+        if (getParam(pmy, "INITIAL_CONDITION_TURB"))
+            omegaRef = pmy->getDouble(2);
+
+
+        string functionName;    // If functionName=="NO_METHOD",            skip the barrier
+        int    maxIter;         // If maxIter==0,                           skip the barrier
+        double threshold_resid; // If resid_norm_tot_old < threshold_resid, skip the barrier
+        vector<double> coeffScalars;
+        bool useBarrier = readBarrierParamTurbScalars(functionName, maxIter, threshold_resid, coeffScalars, iterTS, residNormTotOld);
+        // Note: iterNewton and residNormTotOld are member variables of the IkeWithPsALC_AD class
+
+        if(useBarrier) {
+            int nVars = 5+nScal;
+
+            double *kineArray  = NULL;
+            double *omegaArray = NULL;
+            if(kine_index>=0)
+                kineArray  = scalarTranspEqVector[kine_index].phi;
+            if(omega_index>=0)
+                omegaArray = scalarTranspEqVector[omega_index].phi;
+
+            if (strcmp(functionName.c_str(), "LOG") == 0) {
+                for (int icv=0; icv<ncv; ++icv) {
+                    // source term in the kine equation
+                    double kineSource = max(-coeffScalars[0]*log(fabs(kineArray[icv]/kineRef)), 0.0)*cv_volume[icv];
+                    RHSrhoScal[kine_index][icv]  += kineSource;
+
+                    // source term in the omega equation
+                    double omegaSource = max(-coeffScalars[1]*log(fabs(omegaArray[icv]/omegaRef)), 0.0)*cv_volume[icv];
+                    RHSrhoScal[omega_index][icv] += omegaSource;
+                }
+            } else if (strcmp(functionName.c_str(), "RECIPROCAL") == 0) {
+                for (int icv=0; icv<ncv; ++icv) {
+                    // source term in the kine equation
+                    double kineSource = coeffScalars[0]/(fabs(kineArray[icv]/kineRef))*cv_volume[icv];
+                    RHSrhoScal[kine_index][icv]  += kineSource;
+                    // source term in the omega equation
+                    double omegaSource = coeffScalars[1]/(fabs(omegaArray[icv]/omegaRef))*cv_volume[icv];
+                    RHSrhoScal[omega_index][icv] += omegaSource;
+                }
+            } else {
+                if(debugLevel>1 && mpi_rank==0)
+                    cout<<"barrierSourceTurbScalars() is not active: No barrier method"<<endl;
+            }
+        } else {
+            if(debugLevel>1 && mpi_rank==0)
+                cout<<"IkeRansTurbKOm_AD::barrierSourceTurbScalars(): Barrier function = NO_METHOD"<<endl;
         }
     }
 
@@ -442,7 +508,7 @@ public:
             }
         } else {
             if(debugLevel>1 && mpi_rank==0)
-                cout<<"IkeWithPsALC_AD::barrierSourceTurbScalars_AD(): Barrier function = NO_METHOD"<<endl;
+                cout<<"IkeRansTurbKOm_AD::barrierSourceTurbScalars_AD(): Barrier function = NO_METHOD"<<endl;
         }
     }
 
@@ -515,7 +581,7 @@ public:
             }
         } else {
             if(debugLevel>1 && mpi_rank==0)
-                cout<<"IkeWithPsALC_AD::barrierSourceTurbScalars1D_AD(): Barrier function = NO_METHOD"<<endl;
+                cout<<"IkeRansTurbKOm_AD::barrierSourceTurbScalars1D_AD(): Barrier function = NO_METHOD"<<endl;
         }
     }
 

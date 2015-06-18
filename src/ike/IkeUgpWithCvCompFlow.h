@@ -1373,6 +1373,15 @@
     //	if(debugLevel>0 && mpi_rank==0) cout<<"barrierSourceTurbScalars() is currently empty!"<<endl;
     }
 
+   /*
+    * Method: barrierSourceTurbScalars
+    * ----------------------------
+    * Add barrier functions to the RHS of the scalars equations
+    */
+   virtual void barrierSourceTurbScalars(double** RHSrhoScal, const int nScal, const int iterNewton, const double residNormTotOld) {
+   //	if(debugLevel>0 && mpi_rank==0) cout<<"barrierSourceTurbScalars() is currently empty!"<<endl;
+   }
+
     /*
      * Method: barrierSourceTurbScalars_AD
      * -----------------------------------

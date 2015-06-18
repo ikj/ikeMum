@@ -224,17 +224,6 @@ public:
 			                                       // the user can manipulate the amount of messages that should be
 			                                       // printed out on the screen.
 
-// IKJ
-	double* DELQ_RHO;
-	double (*DELQ_RHOU)[3];
-	double* DELQ_RHOE;
-
-	double* DELQ_KINE;
-	double* DELQ_OMEGA;
-	double* DELQ_ZMEAN;
-	double* DELQ_ZVAR;
-	double* DELQ_CMEAN;
-
 #ifdef USE_DT_OVER_VOL_SCALING
 	// Local dt/dV: u^{n+1}-u{n} = RHS * (dt/dV)
 	double *local_dtOverVol;
