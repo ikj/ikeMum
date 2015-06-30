@@ -574,6 +574,13 @@ void IkeWithPsALC_AD::runPsALC() {
 		cout<<"    RATIO BETWEEN THE NORM OF THE FLOW VARIABLES AND THE LAMBDAS (BEFORE WEIGHT_FOR_LAMBDA) = "<< sqrt(normSqRatioInArclength) <<")"<<endl;
 	}
 
+//IKJ
+	// Set the R.H.S. weighting for the tangential equation
+	AreaLambda = min(1.0, 100.0/arclength);
+	if(mpi_rank ==0)
+		cout<<endl
+		    <<">> AreaLambda = "<<AreaLambda<<endl;
+
 	//---------------------
 	// Pseudo-arclength continuation
 	if (nsteps-step < 1) {
@@ -1550,7 +1557,6 @@ void IkeWithPsALC_AD::singlePsALCstep(double *qVec, const double *q0, const doub
 		printf("\n");
 	}
 
-
 	/***********************************************/
 	/* Corrector step                              *
 	 ***********************************************/
@@ -1723,27 +1729,15 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 
 	int countNegative = 0; // number of negative rho or press. If this is greater than 0, the backtracking line search becomes active
 
-	/********************/
-	/*  Initialization  *
-	 ********************/
+	/******************************/
+	/*  Parameter initialization  *
+	 ******************************/
 	/* Read parameters from input file */
+	// Read basic Newton parameters
+	getNewtonParam();
+
 	// How to calculate the Jacobian matrix (ROW_1D, ORDINARY_2D): For a better maintenance of the code, call a separated function
 	HOW_TO_CALC_JAC howToCalcJac = getHowToCalcJac();
-
-	// Linear solver setting (PETSc)
-	int maxIterLS; 		// "LINEAR_SOLVER_NEWTON_TRESHOLDS"-->"MAX_ITER" in the Ike.in file
-	double zeroAbsLS; 	// "LINEAR_SOLVER_NEWTON_TRESHOLDS"-->"ABS_RESID"
-	double zeroRelLS; 	// "LINEAR_SOLVER_NEWTON_TRESHOLDS"-->"REL_RESID"
-	int startDecLS; 		// "LSNT_RAMP"-->"AFTER_NEWTON_ITER"
-	int intervalDecLS; 		// "LSNT_RAMP"-->"INTERVAL_NEWTON_ITER"
-	int incIterLS; 			// "LSNT_RAMP"-->"FACTOR_ITER"
-	int maxFinalIterLS; 	// "LSNT_RAMP"-->"MAX_ITER"
-	double decZeroLS; 		// "LSNT_RAMP"-->"FACTOR_RESID"
-	double minZeroAbsLS; 	// "LSNT_RAMP"-->"MIN_ABS_RESID"
-	double minZeroRelLS; 	// "LSNT_RAMP"-->"MIN_REL_RESID"
-	getParamsLinSolverNewton(maxIterLS, zeroAbsLS, zeroRelLS,
-			startDecLS, intervalDecLS, incIterLS, maxFinalIterLS, decZeroLS, minZeroAbsLS, minZeroRelLS,
-			firstCall, debugLevel);
 
 	// Modified Newton method
 	MODIFIED_NEWTON modifiedNewtonMethod; // "MODIFIED_NEWTON_NS"
@@ -1759,27 +1753,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	else                                                         weightRhsMethod = NO_RHSWEIGHT;
 	if(firstCall && mpi_rank==0)
 		cout<<"> WEIGHT_RHS_METHOD == "<<weightRhsMethod<<" ("<<tempString<<")"<<endl;
-
-	// Relaxation reducing based on negative values
-	double clipParameter; // "RELAXATION_CLIP_THRESHOLD"
-	double safeParameter; // "RELAXATION_CLIP_SAFETY"
-	getParamsReducingRelax(clipParameter, safeParameter, firstCall);
-
-	// Backtracking
-	int backtrackMaxIter; 				// "BACKTRACKING_PARAMETERS"-->"MAX_ITER"
-	double backtrackRelax_LowerBound; 	// "BACKTRACKING_PARAMETERS"-->"RELAX_LOWER_BOUND"
-	double backtrackRelax_UpperBound; 	// "BACKTRACKING_PARAMETERS"-->"RELAX_UPPER_BOUND"
-	double backtrackBarrierCoeff; 		// "BACKTRACKING_PARAMETERS"-->"BARRIER_COEFF"
-	bool skipBT_firstITer;   // "BACKTRACKING_SKIP"-->"FIRST_ITER"
-	int  skipBT_freq;        // "BACKTRACKING_SKIP"-->"FREQUENCY"
-	getParamsBacktrackNewton(backtrackMaxIter, backtrackRelax_LowerBound, backtrackRelax_UpperBound, backtrackBarrierCoeff, skipBT_firstITer, skipBT_freq, firstCall, debugLevel);
-
-	//  Stabilized Newton's method for the problem with a singular Jacobian
-	int    stabilizationMethodType;   // "STABILIZATION_FOR_SINGULAR_JAC"-->"MATRIX_TYPE"
-	double stabilizationAlpha;        // "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA"
-	double stabilizationAlphaEps;     // "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA_EPS"
-	int    stabilizationStartingIter; // "STABILIZATION_FOR_SINGULAR_JAC"-->"STARTING_ITER"
-	getParamStabilizedNewton(stabilizationMethodType, stabilizationAlpha, stabilizationAlphaEps, stabilizationStartingIter, firstCall, debugLevel);
 
 	// A-priori regularization
 	//      Function: If x<=x_2, w = 10^(-digit) + (1.0-10^(-digit)) * exp(-beta*(x-x2)^2)
@@ -1804,10 +1777,7 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	double x2AprioriWeight    = getParam("A_PRIORI_WEIGHT_REGULARIZ")->getDouble("X2"); ;  // Slightly upstream of combustion start
 	double betaAprioriWeight  = digitAprioriWeight*2.302585093/pow(x2AprioriWeight - x1AprioriWeight, 2.0); // Note: ln(10) = 2.302585093
 
-	// Trust-region size
-	double trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
-
-	// Run the interations for few more steps even after they converges
+	// Run the iterations for few more steps even after they converges
 	int moreNTstepsBelowConv_moreSteps;
 	double moreNTstepsBelowConv_resid, moreNTstepsBelowConv_deltaQ;
 	getParamMoreNewtonSteps(moreNTstepsBelowConv_moreSteps, moreNTstepsBelowConv_resid, moreNTstepsBelowConv_deltaQ, firstCall);
@@ -1820,22 +1790,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	if(mpi_rank==mpi_size-1)
 		for(int iParam=0; iParam<NcontrolEqns; ++iParam)
 			rhs[ncv*(5+nScal)+iParam] = 0.0;
-
-	/* Assign an array for the SAS-form stabilized Newton's method */
-	double *sasScaling   = NULL; // Scaling is required for the diagonal of the Jacobian
-	double *sasScaledPHI = NULL;
-	if(stabilizationMethodType == 2 || stabilizationMethodType == 5) { // Only for the 2nd or 5th method
-		if(mpi_rank != mpi_size-1)
-			sasScaling = new double [ncv*(5+nScal)];
-		else
-			sasScaling = new double [ncv*(5+nScal) + NcontrolEqns];
-	}
-	if(stabilizationMethodType == 5) { // Only for the 5th method
-		if(mpi_rank != mpi_size-1)
-			sasScaledPHI = new double [ncv*(5+nScal)];
-		else
-			sasScaledPHI = new double [ncv*(5+nScal) + NcontrolEqns];
-	}
 
 	// Set iterNewton to zero (Some messages will be printed in some methods if iterNewton == 0. Also the barrier works correctly for the first time only if iterNewton is reset)
 	iterNewton = 0;
@@ -1883,10 +1837,26 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	/*  Newton iteration:                     *
 	 *    Solve Q_{n+1} = Q_{n} - L^{-1}*RES  *
 	 ******************************************/
+	if(NcontrolEqns > 0 && mpi_rank == mpi_size-1) {
+		if(fabs(lambda_tangent[0]) < 1.0e-6)
+			cout<<"> CAUTION!! lambda_tangent (="<<lambda_tangent[0]<<") is TOO small, which can cause a convergence problem"<<endl;
+	}
+
 	// Settings for the modified Newton's method
 	bool useExactJac = true, useExactJacTempo = true;
 	int countModifiedNewton = 0;
 	int myNnzJac = 0, nnzJac = 0;
+
+	// Allocate and initialize q_tangent_inJacMat and lambda_tangent_inJacMat.
+	//   Note: In the while loop below, they will be initialized again in every iteration because they can be modified to stabilize the Newton's method.
+	double **q_tangent_inJacMat     = NULL; // Note: q_tangent may need to be modified: minus sign, stabilization for singular Jacobian, ...
+	double *lambda_tangent_inJacMat = NULL; // Note: lambda_tangent may need to be modified: minus sign, stabilization for singular Jacobian, ...
+	if(NcontrolEqns > 0) {
+		getMem2D(&q_tangent_inJacMat, 0, NcontrolEqns-1, 0, (ncv*m)-1, "q_tangent_inJacMat");
+		// Note: The size of q_tangent is the same for both ORDINARY_2D and ROW_1D: In the matrix used for Newton's method, you don't need to have ncv_gg even for ORDINARY_2D
+
+		lambda_tangent_inJacMat = new double [NcontrolEqns];
+	}
 
 	// Allocate and initialize phi
 	double *phi; // note: this array will be used while solving the linear system
@@ -1895,7 +1865,7 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	else
 		phi = new double [ncv*m];
 
-	if(q1 != NULL) {
+	if(q1 != NULL) { // Actually this step is not important
 		for(int i=0; i<ncv*(5+nScal) + ((mpi_rank==mpi_size-1) ? NcontrolEqns : 0); ++i)
 			phi[i] = q[i] - q1[i];
 	} else {
@@ -1909,10 +1879,11 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		cout<<endl
 		    <<"> NORM = "<<whichNorm<<"-norm"<<endl;
 
-	double* residNormVec    = new double [5+nScal];
-	residNormTot            = ABSURDLY_BIG_NUMBER;
-	double* residNormVecOld = new double [5+nScal];
-	residNormTotOld         = ABSURDLY_BIG_NUMBER;
+	double* residNormVecFlow    = new double [5+nScal];
+	double* residNormVecFlowOld = new double [5+nScal];
+	double residNormTotFlowOnly = ABSURDLY_BIG_NUMBER;
+	residNormTot                = ABSURDLY_BIG_NUMBER;
+	residNormTotOld             = ABSURDLY_BIG_NUMBER;
 
 	// The residuals of the tangential conditions (For the details, google "pseudo-arclength continuation method")
 	double* Nres = NULL; // Note: 1. Nres = q_tangent*(q_guess-q1) + lambda_tangent*(lambda_guess-lambda1) - ds
@@ -1944,27 +1915,24 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			countNegative = calcJacobianAD(jacMatrix, rhs, debugLevel, NcontrolEqns);
 			myNnzJac      = jacMatrix.get_nnz();
 		} else { // ERROR
-			freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+			freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 			assert(true);
 		}
 		MPI_Allreduce(&myNnzJac, &nnzJac, 1, MPI_INT, MPI_SUM, mpi_comm);
 
-		calcResidualsFrom1Drhs(residNormVec, rhs, whichNorm);
-		residNormTot = calcTotResidual(residNormVec, whichNorm);
-			// Note: The actual total residual is the sum of residual from the flow variables plus and the residual from the tangential condition.
-			//       "residNormTot" will be updated soon after calculating Nres (the residual from the tangential condition).
-			//       However, Nres should not change residNormTot much since Nres must be very close to zero
+		calcResidualsFrom1Drhs(residNormVecFlow, rhs, whichNorm);
+		residNormTotFlowOnly = calcSumResidual(residNormVecFlow, whichNorm);
 	}
 	catch(int e) { // Catch and re-throw
-		freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+		freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 		throw(e);
 	}
 	catch(...) { // Catch and re-throw
-		freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+		freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 		throw;
 	}
 
-	// Fill up the last element of rhs ( Nres == ds - q_tangent*(q_guess-q1) + weightLambda*lambda_tangent*(lambda_guess-lambda1) ) for mpi_rank == mpi_size-1
+	// Fill up the last element of rhs ( Nres == ds - q_tangent*(q_guess-q1) - weightLambda*lambda_tangent*(lambda_guess-lambda1) ) for mpi_rank == mpi_size-1
 	// Note: 1. Even though this part of the code is designed to handle multiple parameters (or lambdas), the actual formulation here is only for one parameters.
 	//       2. You don't have to pass weighted_q_tangent instead of q_tangent since it will be weighted in getFlowWeightsForInnerProduct() called by vecDotVecWithWeight().
 	if(NcontrolEqns>0) {
@@ -1990,23 +1958,22 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		}
 	}
 
-	// Show the total residual calculated with the flow variables
-	if(debugLevel>0 && mpi_rank==0)
-		printf("           >> Residual of the flow RHS = %.5e", residNormTot);
-
-	// Update residNormTot with Nres
+	// Update residNormTot with Nres and Show the total residual calculated with the flow variables
 	if(NcontrolEqns>0) {
-		residNormTot = updateTotResidualWithNres(residNormTot, Nres, NcontrolEqns, whichNorm);
+		residNormTot = updateTotResidualWithNres(residNormTotFlowOnly, Nres, NcontrolEqns, whichNorm);
+
 		if(debugLevel>0 && mpi_rank==0)
-			printf(",  Total residual (includ. tangential) = %.5e\n", residNormTot);
+			printf("           >> Residual: flow RHS = %.5e, tangential RHS[0] = %.5e --> Total residual = %.5e\n", residNormTotFlowOnly, fabs(Nres[0]), residNormTot);
 	} else {
+		residNormTot = residNormTotFlowOnly;
+
 		if(debugLevel>0 && mpi_rank==0)
-			printf("\n");
+			printf("           >> Residual of the flow RHS = %.5e\n", residNormTot);
 	}
 
 	// Update residNormOld and residNormTotOld (It will be used for backtracking)
 	for(int i=0; i<5+nScal; ++i)
-		residNormVecOld[i] = residNormVec[i];
+		residNormVecFlowOld[i] = residNormVecFlow[i];
 	residNormTotOld = residNormTot;
 
 	// Calculate deltaQ from the previous point (q1) to the initial guess (q)
@@ -2026,12 +1993,12 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		deltaQnorm = sqrt(sumPhiSq);
 	}
 
-	if(trustRegionSize > 8.0*deltaQnorm && NcontrolEqns > 0) {
+	if(newtonParam.trustRegionSize > 8.0*deltaQnorm && NcontrolEqns > 0) {
 		if(mpi_rank==0)
-			cout<<"WARNING in getSteadySolnByNewton(): TRUST_REGION_SIZE="<<trustRegionSize<<" is larger than 8 * DELTA_Q of the init. guess="<<deltaQnorm<<endl;
-		trustRegionSize = 8.0*deltaQnorm;
+			cout<<"WARNING in getSteadySolnByNewton(): TRUST_REGION_SIZE="<<newtonParam.trustRegionSize<<" is larger than 8 * DELTA_Q of the init. guess="<<deltaQnorm<<endl;
+		newtonParam.trustRegionSize = 8.0*deltaQnorm;
 		if(mpi_rank==0)
-			cout<<"                                    Reduce TRUST_REGION_SIZE to "<<trustRegionSize<<endl
+			cout<<"                                    Reduce TRUST_REGION_SIZE to "<<newtonParam.trustRegionSize<<endl
 			    <<endl;
 	}
 
@@ -2136,7 +2103,7 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 
 			writeData(step, iterNewton-1);
 
-			freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+			freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 			throw (PSALC_ERROR_CODE);
 		} else {
 			if(iterNewton>startingNewtonIter+1 && newtonDumpQ1Interval>0) { // If the user wants to dump the data at every "newtonDumpQ1Interval" Newton step
@@ -2157,122 +2124,147 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		/******
 		 ** Ramp maximum iterations and residual (For iterative solver)
 		 ******/
-		if(intervalDecLS > 0)
-			if ((iterNewton > startingNewtonIter+1) && (iterNewton >= startDecLS)) {
-				if((iterNewton-startDecLS)%intervalDecLS == 0) {
-					if(maxIterLS < maxFinalIterLS)
-						maxIterLS += incIterLS;
-					if(zeroAbsLS > minZeroAbsLS+MACHINE_EPS || zeroRelLS > minZeroRelLS+MACHINE_EPS) {
-						zeroAbsLS *= decZeroLS;
-						zeroRelLS *= decZeroLS;
+		if(newtonParam.intervalDecLS > 0)
+			if ((iterNewton > startingNewtonIter+1) && (iterNewton >= newtonParam.startDecLS)) {
+				if((iterNewton-newtonParam.startDecLS) % newtonParam.intervalDecLS == 0) {
+					if(newtonParam.maxIterLS < newtonParam.maxFinalIterLS)
+						newtonParam.maxIterLS += newtonParam.incIterLS;
+					if(newtonParam.zeroAbsLS > newtonParam.minZeroAbsLS+MACHINE_EPS || newtonParam.zeroRelLS > newtonParam.minZeroRelLS+MACHINE_EPS) {
+						newtonParam.zeroAbsLS *= newtonParam.decZeroLS;
+						newtonParam.zeroRelLS *= newtonParam.decZeroLS;
 					}
-					petscSolver2->setTresholds(zeroAbsLS, zeroRelLS, maxIterLS);
+					petscSolver2->setTresholds(newtonParam.zeroAbsLS, newtonParam.zeroRelLS, newtonParam.maxIterLS);
 
 					if(debugLevel>1 && mpi_rank==0) {
-						printf("RAMP_LSNT_PARAMETERS: MAX_ITER=%d  MIN_ABS_RESID=%.2e  MIN_REL_RESID=%.2e\n", maxIterLS, zeroAbsLS, zeroRelLS);
+						printf("RAMP_LSNT_PARAMETERS: MAX_ITER=%d  MIN_ABS_RESID=%.2e  MIN_REL_RESID=%.2e\n", newtonParam.maxIterLS, newtonParam.zeroAbsLS, newtonParam.zeroRelLS);
 					}
 				}
 			}
 
 		/******
+		 ** Get q_tangent_inJacMat and lambda_tangent_inJacMat that will be actually used in the Jacobian matrix
+		 ******/
+		if(NcontrolEqns > 0) {
+			assert(q_tangent_inJacMat != NULL && q_tangent != NULL && lambda_tangent_inJacMat != NULL && lambda_tangent != NULL);
+
+			if(howToCalcJac == ROW_1D) {
+				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
+					for(int i=0; i<ncv*m; ++i)
+//						q_tangent_inJacMat[iParam][i] = -q_tangent[iParam][i];
+						q_tangent_inJacMat[iParam][i] = -q_tangent[iParam][i] * AreaLambda;
+				for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+//					lambda_tangent_inJacMat[iEqn] = -lambda_tangent[iEqn];
+					lambda_tangent_inJacMat[iEqn] = -lambda_tangent[iEqn] * AreaLambda;
+			} else if(howToCalcJac == ORDINARY_2D) { // Note: ORDINARY_2D is still using old formulation unlike ROW_1D
+				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
+					for(int i=0; i<ncv*m; ++i)
+						q_tangent_inJacMat[iParam][i] = q_tangent[iParam][i];
+				for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+					lambda_tangent_inJacMat[iEqn] = lambda_tangent[iEqn];
+			} else {
+				throw(PSALC_ERROR_CODE);
+			}
+		}
+
+		/******
 		 ** Stabilized Newton's method for ill-conditioned (or almost singular) Jacobians: This will modify the Jacobian matrix
 		 ******/
-		if(stabilizationMethodType > 0) {
+		if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON) {
 			MPI_Barrier(mpi_comm);
 
-			if(stabilizationMethodType == 1) { // Just apply the diagonal matrix: Often unstable!! (SAS form)
-				// Calculate the actual alpha
-				double addedValue = max( min(residNormTot, stabilizationAlpha), stabilizationAlphaEps );
-
-				// Matrix
+			if(newtonParam.stabilizationMethodType == CONST_DIAG) { // Apply constant diagonal scaled by local volume
+				double mySumVolume = 0.0;
 				for(int icv=0; icv<ncv; ++icv) {
+					double diagValue = cv_volume[icv] * newtonParam.stabilizationAlpha;
+
+					mySumVolume += cv_volume[icv];
+
 					for(int ivar=0; ivar<m; ++ivar) {
 						int row = icv*m + ivar;
 						int diagIndex = jacMatrixSTL.get_diag_index(row);
-
 						double oldValue = jacMatrixSTL.get_values(diagIndex);
 
-						jacMatrixSTL.set_values(diagIndex, oldValue - addedValue); // Note that the Jacobian matrix is negative (semi-) definite
-
+						jacMatrixSTL.set_values(diagIndex, oldValue - diagValue); // Note that the Jacobian matrix is negative (semi-) definite
 						++myNonDiagAdd_count; // Just for Statistics
 					}
 				}
-				MPI_Barrier(mpi_comm);
-			} else if(stabilizationMethodType == 2) { // Apply a scaled diagonal matrix - scaled with local flow variables (Second SAS form)
-				// Calculate the actual alpha
-				double addedValue = max( min(residNormTot, stabilizationAlpha), stabilizationAlphaEps );
+				double sumVolume;
+				MPI_Allreduce(&mySumVolume, &sumVolume, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
 
-				// Calculate the scaling factor
-				for(int icv=0; icv<ncv; ++icv) {
-					int row = icv*m;
-
-					sasScaling[row]   = ADDITIONAL_SCALING_VALUE / (fabs(rho[icv]) + MACHINE_EPS);
-					++row;
-
-					double rhouMag = sqrt(vecDotVec3d(rhou[icv], rhou[icv]) + MACHINE_EPS);
-					for(int i=0; i<3; ++i) {
-						sasScaling[row]   = ADDITIONAL_SCALING_VALUE / (max(0.001, fabs(rhou[icv][i])/rhouMag)*rhouMag);
-						++row;
-					}
-
-					sasScaling[row]   = ADDITIONAL_SCALING_VALUE / (fabs(rhoE[icv]) + MACHINE_EPS);
-					++row;
-
-					for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++) {
-						sasScaling[row]   = ADDITIONAL_SCALING_VALUE / (max(fabs(scalarTranspEqVector[iScal].phi[icv]), 0.001*RefFlowParams.scalar_ref[iScal] + MACHINE_EPS));
-						++row;
-					}
-				}
-				if(mpi_rank==mpi_size-1)
+				if(NcontrolEqns > 0 && mpi_rank == mpi_size-1) {
+					double diagValueLambda = sumVolume * newtonParam.stabilizationAlpha; // Use total volume for lambda
 					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-						int row = ncv*m+iEqn;
-						sasScaling[row]   = ADDITIONAL_SCALING_VALUE / q[row];
-					}
-				MPI_Barrier(mpi_comm);
-
-				// Matrix
-				for(int icv=0; icv<ncv; ++icv) {
-					for(int ivar=0; ivar<m; ++ivar) {
-						int row = icv*m + ivar;
-						int diagIndex = jacMatrixSTL.get_diag_index(row);
-
-						double oldValue = jacMatrixSTL.get_values(diagIndex);
-						jacMatrixSTL.set_values(diagIndex, oldValue - addedValue*sasScaling[row]); // Note that the Jacobian matrix is negative (semi-) definite
-
+						lambda_tangent_inJacMat[iEqn] -= diagValueLambda;
 						++myNonDiagAdd_count; // Just for Statistics
 					}
 				}
+			} else if(newtonParam.stabilizationMethodType == CFL_BASED_DIAG) { // Apply diagonal scaled by CFL and local volume
+				double dt_min = calcDt(newtonParam.stabilizationAlpha);  // Take CFL = stabilizationAlpha
 
-				MPI_Barrier(mpi_comm);
-			} else if(stabilizationMethodType == 3) { // Apply a scaled diagonal matrix - scaled with rhs: See X.Wu, Applied Mathematics and Computation, vol.189, 2007.
+				double my_dt_max = 0.0, my_vol_sum = 0.0;
+				double myMinDiagValue = ABSURDLY_BIG_NUMBER, myMaxDiagValue = 0.0;
+				for(int icv=0; icv<ncv; ++icv) {
+					my_dt_max = max(my_dt_max, local_dt[icv]);
+					my_vol_sum += cv_volume[icv];
+
+					double diagValue = cv_volume[icv] / local_dt[icv];
+					myMinDiagValue = min(myMinDiagValue, diagValue);
+					myMaxDiagValue = max(myMaxDiagValue, diagValue);
+
+					for(int ivar=0; ivar<m; ++ivar) {
+						int row = icv*m + ivar;
+						int diagIndex = jacMatrixSTL.get_diag_index(row);
+						double oldValue = jacMatrixSTL.get_values(diagIndex);
+
+						jacMatrixSTL.set_values(diagIndex, oldValue - diagValue); // Note that the Jacobian matrix is negative (semi-) definite
+						++myNonDiagAdd_count; // Just for Statistics
+					}
+				}
+				double dt_max, vol_sum;
+				MPI_Allreduce(&my_dt_max,  &dt_max,  1, MPI_DOUBLE, MPI_MAX, mpi_comm);
+				MPI_Allreduce(&my_vol_sum, &vol_sum, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+				double minDiagValue, maxDiagValue;
+				MPI_Allreduce(&myMinDiagValue, &minDiagValue, 1, MPI_DOUBLE, MPI_MIN, mpi_comm);
+				MPI_Allreduce(&myMaxDiagValue, &maxDiagValue, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+				if(NcontrolEqns > 0 && mpi_rank == mpi_size-1) {
+					double VolumeLambda = 1.0-2 * AreaLambda;  // V = 1 / |lambda_tangent|.
+					double diagValueLambda = VolumeLambda / newtonParam.stabilizationAlpha;
+cout<<"** Note: max diag for flow = "<<maxDiagValue<<", diag for lambda = "<<diagValueLambda<<endl;
+					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
+						lambda_tangent_inJacMat[iEqn] -= diagValueLambda; // Note that the Jacobian matrix is negative (semi-) definite
+						++myNonDiagAdd_count; // Just for Statistics
+					}
+				}
+			} else if(newtonParam.stabilizationMethodType == GENERAL_NEWTON_HU) {
+				                                      // Apply a scaled diagonal matrix - scaled with rhs: See X.Wu, Applied Mathematics and Computation, vol.189, 2007.
 				                                      // Basically finding x that minimize "0.5 * || diag(exp(w*(x-x*))) * f(x) ||_2^2"
 				                                      //           or finding the root of "diag(exp(w*(x-x*))) * f(x) = 0"
 				// Calculate the actual alpha
-				double alpha = max( min(residNormTot, stabilizationAlpha), stabilizationAlphaEps);
+				double alpha = max( min(residNormTot, newtonParam.stabilizationAlpha), newtonParam.stabilizationAlphaEps);
 
 				// Matrix
-				if(iterNewton>=stabilizationStartingIter) {
-					for(int icv=0; icv<ncv; ++icv) {
-						for(int ivar=0; ivar<m; ++ivar) {
-							int row = icv*m + ivar;
-							int diagIndex = jacMatrixSTL.get_diag_index(row);
+				for(int icv=0; icv<ncv; ++icv) {
+					for(int ivar=0; ivar<m; ++ivar) {
+						int row = icv*m + ivar;
+						int diagIndex = jacMatrixSTL.get_diag_index(row);
 
-							double oldValue = jacMatrixSTL.get_values(diagIndex);
-							double addVal   = - max(MACHINE_EPS, alpha*fabs(rhs[row])) - stabilizationAlphaEps;
-							jacMatrixSTL.set_values(diagIndex, oldValue + addVal); // Note that the Jacobian matrix is negative (semi-) definite
+						double oldValue = jacMatrixSTL.get_values(diagIndex);
+						double addVal   = - max(MACHINE_EPS, alpha*fabs(rhs[row])) - newtonParam.stabilizationAlphaEps;
+						jacMatrixSTL.set_values(diagIndex, oldValue + addVal); // Note that the Jacobian matrix is negative (semi-) definite
 
-							++myNonDiagAdd_count; // Just for Statistics
-						}
+						++myNonDiagAdd_count; // Just for Statistics
 					}
 				}
-			} else if(stabilizationMethodType == 4) { // Apply both scaled diagonal matrix and scaled rhs: See J.L.Hueso, J. Comp. and Applied Math., vol.224, 2009.
+			} else if(newtonParam.stabilizationMethodType == GENERAL_NEWTON_HUSEO) {
+				                                      // Apply both scaled diagonal matrix and scaled rhs: See J.L.Hueso, J. Comp. and Applied Math., vol.224, 2009.
 				                                      // More generalized version than X.Wu, 2007.
 				                                      // Note: 1. We will use the same weight in the A-priori regularization for the exponent (m in the formula)
 				                                      //       2. If this version is active, you must deactivate the A-priori regularization in the next part of Newton iteration.
 				                                      // Basically finding x that minimize "0.5 * || diag(exp(w*(x-x*))) * f(x)^(1/m) ||_2^2"
 				                                      //           or finding the root of "diag(exp(w*m*(x-x*))) * diag(m) * f(x) = 0"
 				// Calculate the actual alpha
-				double alpha = max( min(residNormTot, stabilizationAlpha), stabilizationAlphaEps);
+				double alpha = max( min(residNormTot, newtonParam.stabilizationAlpha), newtonParam.stabilizationAlphaEps);
 
 				// The coefficients to calculate the exponent (m in the formulation) were already set-up at the beginning of this method (search for A-priori regularization)
 				// If a region should not be modfied based on a priori knowledge (e.g. upstream of scramjet inlet), apply a weight function that is close to zero:
@@ -2282,27 +2274,25 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 				double minWeight = pow(10.0, -digitAprioriWeight); // If digitAprioriWeight==3, minWeight=0.001
 
 				// Matrix
-				if(iterNewton>=stabilizationStartingIter) {
-					for(int icv=0; icv<ncv; ++icv) {
-						double xCoord = x_cv[icv][0];
+				for(int icv=0; icv<ncv; ++icv) {
+					double xCoord = x_cv[icv][0];
 
-						double exponent = 1.0;
+					double exponent = 1.0;
 //						if(xCoord <= x2AprioriWeight) {
 //							exponent = minWeight + max( (1-minWeight)*exp(-betaAprioriWeight*pow(xCoord-x2AprioriWeight, 2.0)), MACHINE_EPS );
 //							exponent = max(MACHINE_EPS, min(exponent, 1.0)); // Make sure that 0 < exponent <= 1.0
 //						}
 
-						for(int ivar=0; ivar<m; ++ivar) {
-							int row = icv*m + ivar;
-							int diagIndex = jacMatrixSTL.get_diag_index(row);
+					for(int ivar=0; ivar<m; ++ivar) {
+						int row = icv*m + ivar;
+						int diagIndex = jacMatrixSTL.get_diag_index(row);
 
-							double oldValue = jacMatrixSTL.get_values(diagIndex);
+						double oldValue = jacMatrixSTL.get_values(diagIndex);
 //							double addVal   = - max(MACHINE_EPS, alpha*exponent*fabs(rhs[row])) - stabilizationAlphaEps;
-							double addVal   = -alpha*exponent*rhs[row] - stabilizationAlphaEps;
-							jacMatrixSTL.set_values(diagIndex, oldValue + addVal); // Note that the Jacobian matrix is negative (semi-) definite
+						double addVal   = -alpha*exponent*rhs[row] - newtonParam.stabilizationAlphaEps;
+						jacMatrixSTL.set_values(diagIndex, oldValue + addVal); // Note that the Jacobian matrix is negative (semi-) definite
 
-							++myNonDiagAdd_count; // Just for Statistics
-						}
+						++myNonDiagAdd_count; // Just for Statistics
 					}
 				}
 			}
@@ -2331,19 +2321,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			if(firstCall && iterNewton==startingNewtonIter+1 && debugLevel>0 && mpi_rank==0)
 				wtime0 = MPI_Wtime();
 
-			double **minus_q_tangent     = NULL;
-			double *minus_lambda_tangent = NULL;
-			if(NcontrolEqns > 0) {
-				getMem2D(&minus_q_tangent, 0, NcontrolEqns-1, 0, (ncv*m)-1, "minus_q_tangent"); // The size of q_tangent is the same for both ORDINARY_2D and ROW_1D: In the matrix used for Newton's method, you don't need to have ncv_gg even for ORDINARY_2D
-				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-					for(int i=0; i<ncv*m; ++i)
-						minus_q_tangent[iParam][i] = -q_tangent[iParam][i];
-
-				minus_lambda_tangent = new double [NcontrolEqns];
-				for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
-					minus_lambda_tangent[iEqn] = -lambda_tangent[iEqn];
-			}
-
 			// Note: If you want to print out the matrix stored in PETSc on the screen, set the ShowPetscMatrixMatlab variable as true
 			//       ShowPetscMatrixMatlab is defined as a static variable in the PetscSolver2.h file
 			//       e.g. if(iterNewton==1 && NcontrolEqns>0) ShowPetscMatrixMatlab = true;
@@ -2351,12 +2328,9 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			                                    // Otherwise, apply PC(pre-conditioner) to get the inital guess (the Knoll trick) -- For Bifurcation, this works better.
 
 			solveLinSysNSCoupled2<MatComprsedSTL>(phi, jacMatrixSTL, rhs, nIter, absResid, kspMonitorHistory,
-					useOldSolnAsInitGuess, zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
-					NcontrolEqns, ncv_gg, minus_q_tangent, minus_lambda_tangent, step, iterNewton);
+					useOldSolnAsInitGuess, newtonParam.zeroAbsLS, newtonParam.zeroRelLS, newtonParam.maxIterLS, nScal, monitorConvergInterval,
+					NcontrolEqns, ncv_gg, q_tangent_inJacMat, lambda_tangent_inJacMat, step, iterNewton);
 			// Note that you should pass nScal to this function instead of m(=5+nScal)
-
-			if(minus_q_tangent != NULL)       freeMem2D(minus_q_tangent, 0, NcontrolEqns-1, 0, (ncv*m)-1);
-			if(minus_lambda_tangent != NULL)  delete [] minus_lambda_tangent;
 
 			if(firstCall && iterNewton==startingNewtonIter+1 && debugLevel>0 && mpi_rank==0)
 				wtimeLS = MPI_Wtime();
@@ -2371,15 +2345,15 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			int saveConvergInterval = int(max(monitorConvergInterval/10, 1.01));
 
 			solveLinSysNSCoupled2<MatComprsed>(phi, jacMatrix, rhs, nIter, absResid, kspMonitorHistory,
-					useOldSolnAsInitGuess, zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
-					NcontrolEqns, ncv_gg, q_tangent, lambda_tangent, step, iterNewton);
+					useOldSolnAsInitGuess, newtonParam.zeroAbsLS, newtonParam.zeroRelLS, newtonParam.maxIterLS, nScal, monitorConvergInterval,
+					NcontrolEqns, ncv_gg, q_tangent_inJacMat, lambda_tangent_inJacMat, step, iterNewton);
 			// Note that you should pass nScal to this function instead of m(=5+nScal)
 		} else {
 			throw(PSALC_ERROR_CODE);
 		}
 
-		if(nIter == maxIterLS  &&  absResid > zeroAbsLS) {
-			if(debugLevel>0 || (incIterLS==0 && incIterLS==1.0)) { // TO DO
+		if(nIter == newtonParam.maxIterLS  &&  absResid > newtonParam.zeroAbsLS) {
+			if(debugLevel>0 || (newtonParam.incIterLS==0 && newtonParam.incIterLS==1.0)) { // TO DO
 				// Show the warning message on the screen
 				double trueAbsResid = petscSolver2->calcTrueResidualNorm(); // Since "absResid" contains the last approximate & left-preconditioned residual norm,
 				                                                            // we want to calculate the true residual here.
@@ -2428,38 +2402,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		MPI_Barrier(mpi_comm);
 
 		/******
-		 ** A-priori regularization
-		 ******/
-
-		// If a region should not be modfied based on a priori knowledge (e.g. upstream of scramjet inlet), apply a weight function that is close to zero:
-		// Function: If x<=x_2, w = 10^(-digit) + (1.0-10^(-digit)) * exp(-beta*(x-x2)^2)
-		//           Otherwise, w = 1.0
-		// i.e., The function is uni-directional Gaussian
-
-		if(stabilizationMethodType != 4) {
-			if(useAprioriWeightFunction) {
-				double minWeight = pow(10.0, -digitAprioriWeight);
-
-				for(int icv=0; icv<ncv; ++icv) {
-					double xCoord = x_cv[icv][0];
-
-					if(xCoord <= x2AprioriWeight) {
-						double weight = minWeight + max( (1-minWeight)*exp(-betaAprioriWeight*pow(xCoord-x2AprioriWeight, 2.0)), MACHINE_EPS );
-						weight = max(0.0, min(weight, 1.0)); // Make sure that weight never exceed 1.0
-
-						int index = icv*m;
-						for(int i=0; i<m; ++i) {
-							phi[index+i] *= weight;
-							if(fabs(phi[index+i]) <= MACHINE_EPS)
-								phi[index+i] = 0.0;
-						}
-					}
-				}
-				MPI_Barrier(mpi_comm);
-			}
-		}
-
-		/******
 		 ** Trust-region regularization
 		 ******/
         double mySumPhiSq= 0.0, sumPhiSq;
@@ -2481,12 +2423,12 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		double deltaQnorm_beforeRelax = sqrt(sumPhiSq);
         deltaQnorm = relaxation * deltaQnorm_beforeRelax;
 
-        if(deltaQnorm >= trustRegionSize) {
+        if(deltaQnorm >= newtonParam.trustRegionSize) {
         	if(mpi_rank==0)
         		cout<<"WARNING in getSteadySolnByNewton(): After solving the linear system,"<<endl
-        		    <<"                                    deltaQ="<<deltaQnorm<<" is greater than trustRegionSize="<<trustRegionSize<<endl
+        		    <<"                                    deltaQ="<<deltaQnorm<<" is greater than trustRegionSize="<<newtonParam.trustRegionSize<<endl
         		    <<"                                    Reduce relaxation from "<<relaxation;
-        	relaxation *= trustRegionSize / deltaQnorm;
+        	relaxation *= newtonParam.trustRegionSize / deltaQnorm;
         	if(mpi_rank==0)
         		cout<<" to "<<relaxation<<endl;
 
@@ -2504,7 +2446,8 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
         
         int maxIterFAcheck = 5;
         int negativeValCount_CV, negativeValCount_FA;
-        relaxation = backtrackForNegativeVals(negativeValCount_CV, negativeValCount_FA, clipParameter, safeParameter, relaxation, kine_index, nScal, q, phi, maxIterFAcheck);
+        relaxation = backtrackForNegativeVals(negativeValCount_CV, negativeValCount_FA, newtonParam.clipParameter, newtonParam.safeParameter,
+        		relaxation, kine_index, nScal, q, phi, maxIterFAcheck);
         
         int negativeValCount = negativeValCount_CV + negativeValCount_FA;
 
@@ -2565,8 +2508,8 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		bool useBarrier = true;
 		countNegative = calcRhsWithBarrier(rhs, useBarrier);
 
-		calcResidualsFrom1Drhs(residNormVec, rhs, whichNorm);
-		residNormTot = calcTotResidual(residNormVec, whichNorm);
+		calcResidualsFrom1Drhs(residNormVecFlow, rhs, whichNorm);
+		residNormTotFlowOnly = calcSumResidual(residNormVecFlow, whichNorm);
 
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 		if(NcontrolEqns>0) {
@@ -2577,11 +2520,11 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 											// Use calcNresForJOE() instead of calcNres() since q has not been updated yet!
 
 			for(int iParam=0; iParam<NcontrolEqns; ++iParam) {
-				if(fabs(Nres[iParam]/arcLength) > 1.0e4*double(NcontrolEqns*cvora[mpi_size])*MACHINE_EPS) // Note: Nres must be very close to zero
-					if(mpi_rank==0) {
-						cout<<"WARNING in getSteadySolnByNewton(): iterNewton=="<<iterNewton<<", The tangential condition["<<iParam<<"] was NOT satisfied."<<endl
-						    <<"                                    Tangetial-residual = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl;
-					}
+//				if(fabs(Nres[iParam]/arcLength) > 1.0e4*double(NcontrolEqns*cvora[mpi_size])*MACHINE_EPS) // Note: Nres must be very close to zero
+//					if(mpi_rank==0) {
+//						cout<<"WARNING in getSteadySolnByNewton(): iterNewton=="<<iterNewton<<", The tangential condition["<<iParam<<"] was NOT satisfied."<<endl
+//						    <<"                                    Tangetial-residual = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl;
+//					}
 
 				if(isNaN(Nres[iParam])) {
 					if(mpi_rank==0)
@@ -2593,19 +2536,20 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			MPI_Barrier(mpi_comm);
 		}
 
-		if(debugLevel>0 && mpi_rank==0)
-			printf("           >> Residual of the flow RHS = %.5e", residNormTot);
-
 		if(NcontrolEqns>0) {
-			residNormTot = updateTotResidualWithNres(residNormTot, Nres, NcontrolEqns, whichNorm);
+			residNormTot = updateTotResidualWithNres(residNormTotFlowOnly, Nres, NcontrolEqns, whichNorm);
 
 			if(debugLevel>0 && mpi_rank==0)
-				printf(",  Total residual (includ. tangential) = %.5e\n", residNormTot);
+				printf("           >> Residual: flow RHS = %.5e, tangential RHS[0] = %.5e --> Total residual = %.5e\n", residNormTotFlowOnly, fabs(Nres[0]), residNormTot);
 		} else {
+			residNormTot = residNormTotFlowOnly;
+
 			if(debugLevel>0 && mpi_rank==0)
-				printf("\n");
+				printf("           >> Residual of the flow RHS = %.5e\n", residNormTot);
 		}
 #else
+		residNormTot = residNormTotFlowOnly;
+
 		if(debugLevel>0 && mpi_rank==0)
 			printf("           >> Residual of the flow field RHS = %.5e \n", residNormTot);
 #endif
@@ -2622,24 +2566,24 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 
 		bool btNotConverged   = false;
 		bool forgiveBacktrack = false;
-		if(backtrackMaxIter > 0) {
-			bool needBacktracking = checkBacktrackFromResidInc(residNormTotOld, residNormTot, min(relaxation, backtrackRelax_UpperBound), backtrackBarrierCoeff);
+		if(newtonParam.backtrackMaxIter > 0) {
+			bool needBacktrackingDueToResid = checkBacktrackFromResidInc(residNormTotOld, residNormTot, min(relaxation, newtonParam.backtrackRelax_UpperBound), newtonParam.backtrackBarrierCoeff);
 
-			if(countNegative>0 || needBacktracking) {
+			if(countNegative>0 || needBacktrackingDueToResid) { // The primary reason to call the backtracking algorithm is negative scalars (e.g. rho, press, etc.)
 				++succeessiveBacktrack;
 
 				// Check if backtracking is required: If the conditions are satisfied, backtracking will be omitted
-				if(skipBT_freq>0)
-					forgiveBacktrack = ( (skipBT_firstITer && iterNewton==startingNewtonIter+1) || succeessiveBacktrack%skipBT_freq==0 );
+				if(newtonParam.skipBT_freq>0)
+					forgiveBacktrack = ( (newtonParam.skipBT_firstITer && iterNewton==startingNewtonIter+1) || succeessiveBacktrack%newtonParam.skipBT_freq==0 );
 				else
-					forgiveBacktrack = ( skipBT_firstITer && iterNewton==startingNewtonIter+1 );
+					forgiveBacktrack = ( newtonParam.skipBT_firstITer && iterNewton==startingNewtonIter+1 );
 
-				// Check if the user want to skip backtraking for first few times
+				// Check if the user want to skip backtracking for first few times
 				if(forgiveBacktrack && countNegative==0) { // Note: If countNegative>0, backtracking will be active anyway
-					relaxation = 0.2 * ( backtrackRelax_LowerBound + min(relaxation, backtrackRelax_UpperBound) );
+					relaxation = 0.2 * ( newtonParam.backtrackRelax_LowerBound + min(relaxation, newtonParam.backtrackRelax_UpperBound) );
 
 					updateFlow_primVars(q, phi, -relaxation, nScal);
-					if(NcontrolEqns>0)
+					if(NcontrolEqns > 0)
 						updateLambda(q, phi, -relaxation, NcontrolEqns, nScal);
 
 					if(debugLevel > 0 && mpi_rank == 0)
@@ -2653,10 +2597,10 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 							cout<<"                  Calling BACKTRACKING ";
 							if(debugLevel > 1) {
 								cout<<"due to";
-								if(countNegative>0)
-									printf("  negative vars=%d", countNegative);
-								if(needBacktracking)
-									printf("  residual=%.8e", residNormTot);
+								if(countNegative > 0)
+									printf(" negative vars=%d", countNegative);
+								if(needBacktrackingDueToResid)
+									printf(" residual=%.8e", residNormTot);
 							}
 							cout<<endl;
 						}
@@ -2665,13 +2609,13 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 					// Launch the backtracking algorithm -------
 					// First, calculate the relaxation size by calling backtrackWithJOE_calcRelaxAndRHS()
 					relaxation = backtrackWithJOE_calcRelaxAndRHS(rhs, q, phi, btNotConverged,
-							backtrackMaxIter, relaxation, backtrackRelax_LowerBound, backtrackRelax_UpperBound,
-							residNormVecOld, residNormVec, whichNorm, backtrackBarrierCoeff,
+							newtonParam.backtrackMaxIter, relaxation, newtonParam.backtrackRelax_LowerBound, newtonParam.backtrackRelax_UpperBound,
+							residNormVecFlowOld, residNormVecFlow, whichNorm, newtonParam.backtrackBarrierCoeff,
 							NcontrolEqns, q_tangent, lambda_tangent, weightLambda, q1, Nres, lambda1, arcLength);
 							// Since the reduction algorithm based on delta_lambda is heuristics, use "relaxBeforeDlambda" instead of "relaxation"
 
-					calcResidualsFrom1Drhs(residNormVec, rhs, whichNorm);
-					residNormTot = calcTotResidual(residNormVec, whichNorm);
+					calcResidualsFrom1Drhs(residNormVecFlow, rhs, whichNorm);
+					residNormTotFlowOnly = calcSumResidual(residNormVecFlow, whichNorm);
 
 					// Second, update the primary variables and lambda
 					updateFlow_primVars(q, phi, -relaxation, nScal);
@@ -2687,32 +2631,9 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 						calcNresForJOE(Nres, m, NcontrolEqns, q1, q_tangent, lambda_tangent, lambda, lambda1, weightLambda, arcLength);
 								// Use calcNresForJOE() instead of calcNres() since q has not been updated yet!
 						MPI_Barrier(mpi_comm);
-						residNormTot = updateTotResidualWithNres(residNormTot, Nres, NcontrolEqns, whichNorm);
+						residNormTot = updateTotResidualWithNres(residNormTotFlowOnly, Nres, NcontrolEqns, whichNorm);
 					}
 #endif
-//					// If backtracking fails, launch simple reducing algorithm
-//					if(residNormTot > residNormTotFresh) { // If the result got worse than before backtracking
-//						relaxation = relaxBeforeBacktrack;
-//
-//						updateFlow_primVars(q, phi, -relaxation, nScal);
-//						if(NcontrolEqns>0) {
-//#ifdef UPDATE_LAMBDA_IN_BACKTRACK
-//							updateLambda(q, phi, -relaxation, NcontrolEqns, nScal);
-//#endif
-//						}
-//
-//#ifdef USE_TOT_NORM_WITH_LAMBDA
-//						if(NcontrolEqns>0) {
-//							// Finally, update the total residual using the tangential condition
-//							calcNresForJOE(Nres, m, NcontrolEqns, q1, q_tangent, lambda_tangent, lambda, lambda1, weightLambda, arcLength);
-//									// Use calcNresForJOE() instead of calcNres() since q has not been updated yet!
-//							for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-//								Nres[iParam] *= weightTangentCond;
-//							MPI_Barrier(mpi_comm);
-//							residNormTot = updateTotResidualWithNres(residNormTot, Nres, NcontrolEqns, whichNorm);
-//						}
-//#endif
-//					}
 				}
 			} else {
 				succeessiveBacktrack = 0;
@@ -2785,33 +2706,33 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 					countNegative = calcJacobianAD(jacMatrix, rhs, debugLevel, NcontrolEqns);
 					myNnzJac = jacMatrix.get_nnz();
 				} else { // ERROR
-					freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+					freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 					throw(PSALC_ERROR_CODE);
 				}
 				MPI_Allreduce(&myNnzJac, &nnzJac, 1, MPI_INT, MPI_SUM, mpi_comm);
 			}
 			catch(int e) { // Catch and re-throw
-				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+				freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 				throw(e);
 			}
 			catch(...) { // Catch and re-throw
-				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+				freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 				throw;
 			}
 
 			if(countNegative>0) {
-				freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+				freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 				if(mpi_rank==0) cout<<"ERROR! getSteadySolnByNewton(): After negative vars = "<<countNegative<<endl;
 				throw(PSALC_ERROR_CODE);
 			}
-		} else { // Calculate rhs, residNorm, and residNormTot by using normal JOE
+		} else { // Calculate rhs, residNorm, and residNormTotFlowOnly by using normal JOE
 			bool useBarrier = true;
 			int countNegative = calcRhsWithBarrier(rhs, useBarrier);
-			calcResidualsFrom1Drhs(residNormVec, rhs, whichNorm);
-			residNormTot = calcTotResidual(residNormVec, whichNorm);
+			calcResidualsFrom1Drhs(residNormVecFlow, rhs, whichNorm);
+			residNormTotFlowOnly = calcSumResidual(residNormVecFlow, whichNorm);
 		}
 
-		calcResidualsFrom1Drhs(residNormVec, rhs, whichNorm);
+		calcResidualsFrom1Drhs(residNormVecFlow, rhs, whichNorm);
 
 		/******
 		 ** fill up the last element of rhs (Nres == q_tangent*(q_guess-q1) + weightLambda*lambda_tangent*(lambda_guess-lambda1) - ds) for mpi_rank == mpi_size-1
@@ -2820,12 +2741,27 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		if(NcontrolEqns>0) {
 			calcNres(Nres, q, rhs, m, NcontrolEqns, q1, q_tangent, lambda_tangent, lambda1, weightLambda, arcLength);
 
-			if(mpi_rank==0) {
-				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
-					if(fabs(Nres[iParam]/arcLength) > 1.0e4*double(NcontrolEqns*cvora[mpi_size])*MACHINE_EPS)
-						cout<<"WARNING in getSteadySolnByNewton(): iterNewton=="<<iterNewton<<", The tangential condition["<<iParam<<"] was NOT satisfied."<<endl
-						    <<"                                    Tangetial-residual = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl;
-			}
+			for(int iParam=0; iParam<NcontrolEqns; ++iParam)
+				if(fabs(Nres[iParam]/arcLength) > 1.0e-10 * sqrt(double(NcontrolEqns*cvora[mpi_size]))) {
+					if(mpi_rank==0) {
+						double arcLengthNew = arcLength - Nres[iParam];
+						double lambdaPart = weightLambda * lambda_tangent[iParam] * (lambda[iParam] - lambda1[iParam]);
+						cout<<"WARNING in getSteadySolnByNewton(): The tangential condition is NOT satisfied: Nres["<<iParam<<"] = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl
+							<<"                                    (lambdaPart + flowPart = "<<lambdaPart<<" + "<<arcLengthNew-lambdaPart<<" = "<<arcLengthNew<<")"<<endl;
+					}
+
+					int kine_index  = getScalarTransportIndex("kine");
+					int omega_index = getScalarTransportIndex("omega");
+					for(int icv=0; icv<ncv; ++icv) {
+						int indexStart = icv*m;
+						residField[icv]  = q_tangent[iParam][indexStart]   * (rho[icv] - q1[indexStart]);
+						residField2[icv] = q_tangent[iParam][indexStart+1] * (rhou[icv][0] - q1[indexStart+1]);
+						residField3[icv] = q_tangent[iParam][indexStart+2] * (rhou[icv][1] - q1[indexStart+2]);
+						residField4[icv] = q_tangent[iParam][indexStart+4] * (rhoE[icv] - q1[indexStart+4]);
+						residField5[icv] = q_tangent[iParam][indexStart+5] * (UgpWithCvCompFlow::scalarTranspEqVector[kine_index].phi[icv]  - q1[indexStart+5]);
+						residField6[icv] = q_tangent[iParam][indexStart+6] * (UgpWithCvCompFlow::scalarTranspEqVector[omega_index].phi[icv] - q1[indexStart+6]);
+					}
+				}
 
 			if(mpi_rank == mpi_size-1) {
 				for(int iParam=0; iParam<NcontrolEqns; ++iParam)
@@ -2833,27 +2769,26 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			}
 		}
 
-		if(debugLevel>0 && mpi_rank==0)
-			printf("           >> Residual of the flow field RHS = %.5e", residNormTot);
-
 		if(NcontrolEqns>0) {
-			residNormTot = updateTotResidualWithNres(residNormTot, Nres, NcontrolEqns, whichNorm);
+			residNormTot = updateTotResidualWithNres(residNormTotFlowOnly, Nres, NcontrolEqns, whichNorm);
 
 			if(debugLevel>0 && mpi_rank==0)
-				printf(",  Total residual including the tangential condition = %.5e\n", residNormTot);
+				printf("           >> Residual: flow RHS = %.5e, tangential RHS[0] = %.5e --> Total residual = %.5e\n", residNormTotFlowOnly, fabs(Nres[0]), residNormTot);
 		} else {
+			residNormTot = residNormTotFlowOnly;
+
 			if(debugLevel>0 && mpi_rank==0)
-				printf("\n");
+				printf("           >> Residual of the flow RHS = %.5e\n", residNormTot);
 		}
 
 		/******
-		 ** Update residNormVecOld and residNormTotOld:
+		 ** Update residNormVecFlowOld and residNormTotOld:
 		 ** Note: "residNormTotOld" is used only to compare residuals from RHS calculation without the tangential condition,
 		 **       thus it should be updated before the tangential condition.
 		 ******/
 		if(residNormTot < residNormTotOld) {
 			for(int i=0; i<5+nScal; ++i)
-				residNormVecOld[i] = residNormVec[i];
+				residNormVecFlowOld[i] = residNormVecFlow[i];
 			residNormTotOld = residNormTot;
 		}
 
@@ -2957,18 +2892,47 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 
 	// Write the Jacobian matrix on a file for post-processing(eigen-decomposition)
 	if(writeJacOnFile) {
-//		if(modifiedNewtonMethod == NO_MODIFIED_METHOD) {
-//			assert(jacMatrix.empty());
-//			calcJacobianADOLC(tagNum, jacMatrix);
-//		} else {
-//			if(!useExactJacTempo) { // if Jacobian is NOT exact
-//				jacMatrix.clear();
-//				calcJacobianADOLC(tagNum, jacMatrix);
-//			}
-//		}
+		if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON) { // i.e., If the Jacobian matrix was modified in order not to have a singular matrix
+			if(newtonParam.stabilizationMethodType == CONST_DIAG) {
+				for(int icv=0; icv<ncv; ++icv) {
+					double diagValue = cv_volume[icv] * newtonParam.stabilizationAlpha;
 
-		if(stabilizationMethodType != 0 || !useExactJacTempo) { // i.e., If the Jacobian matrix was modified in order not to have a singula matrix
-			                                                    //       or an approximate Jacobian is used, ...
+					for(int ivar=0; ivar<m; ++ivar) {
+						int row = icv*m + ivar;
+						int diagIndex = jacMatrixSTL.get_diag_index(row);
+						double oldValue = jacMatrixSTL.get_values(diagIndex);
+
+						jacMatrixSTL.set_values(diagIndex, oldValue + diagValue);
+					}
+				}
+				// Note: You don't need to worry about the tangential equation because it is not a part of jacMatrixSTL
+			} else if(newtonParam.stabilizationMethodType == CFL_BASED_DIAG) { // Apply diagonal scaled by CFL and local volume
+				double dt_min = calcDt(newtonParam.stabilizationAlpha);  // Take CFL = stabilizationAlpha
+
+				for(int icv=0; icv<ncv; ++icv) {
+					double diagValue = cv_volume[icv] / local_dt[icv];
+
+					for(int ivar=0; ivar<m; ++ivar) {
+						int row = icv*m + ivar;
+						int diagIndex = jacMatrixSTL.get_diag_index(row);
+						double oldValue = jacMatrixSTL.get_values(diagIndex);
+
+						jacMatrixSTL.set_values(diagIndex, oldValue + diagValue); // Note that the Jacobian matrix is negative (semi-) definite
+					}
+				}
+				// Note: You don't need to worry about the tangential equation because it is not a part of jacMatrixSTL
+			} else {
+				if(howToCalcJac == ROW_1D) {
+					jacMatrixSTL.clear();
+					countNegative = calcJacobian1DAD(jacMatrixSTL, rhs, debugLevel, NcontrolEqns);
+				} else if(howToCalcJac == ORDINARY_2D) {
+					jacMatrix.clear();
+					countNegative = calcJacobianAD(jacMatrix, rhs, debugLevel, NcontrolEqns);
+				}
+			}
+		}
+
+		if(!useExactJacTempo) { // i.e., If an approximated Jacobian is used
 			jacMatrix.clear();
 
 			if(howToCalcJac == ROW_1D) {
@@ -2992,10 +2956,8 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 				}
 				throw(PSALC_ERROR_CODE);
 			}
-//			writeMatrixMfile<MatComprsed>(filename, jacMatrix, nScal, cvora, nbocv_v_global);
 			writeMatrixBinaryParallel<MatComprsed>(filename, jacMatrix, nScal, cvora, nbocv_v_global);
 		} else {
-//			writeMatrixMfile<MatComprsedSTL>(filename, jacMatrixSTL, nScal, cvora, nbocv_v_global);
 			writeMatrixBinaryParallel<MatComprsedSTL>(filename, jacMatrixSTL, nScal, cvora, nbocv_v_global);
 		}
 	}
@@ -3011,15 +2973,10 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	}
 
 	/* free memory */
-	freeMemGetSteadySolnByNewton(phi, residNormVec, residNormVecOld, Nres, jacMatrix, jacMatrixSTL);
+	freeMemGetSteadySolnByNewton(phi, residNormVecFlow, residNormVecFlowOld, Nres, jacMatrix, jacMatrixSTL);
 
-//IKJ
-	if(sasScaling != NULL) {
-		delete [] sasScaling; 		sasScaling = NULL;
-	}
-	if(sasScaledPHI != NULL) {
-		delete [] sasScaledPHI; 	sasScaledPHI = NULL;
-	}
+	if(q_tangent_inJacMat != NULL)       freeMem2D(q_tangent_inJacMat, 0, NcontrolEqns-1, 0, (ncv*m)-1);
+	if(lambda_tangent_inJacMat != NULL)  delete [] lambda_tangent_inJacMat;
 
 	firstCall = false;
 
@@ -3109,20 +3066,32 @@ void IkeWithPsALC_AD::getSteadySolnByTimeStepping(double *q, const int maxTimeSt
 	//           dLambda
 	//         V ------- = -( q_tangent^T*(u-u_guess) + lambda_tangent*(lambda-lambda_guess) ) * sign(lambda_tangent),
 	//              dt
-	//       where V = 1 / weightTangentCond / |lambda_tangent|.
-	//       With this setting (and weightTangentCond = 1), RHS is the same as the tangential condition of the original pseudo-arclength continuation.
+	//         where V = 1 / weightTangentCond / |lambda_tangent|.
+	//       With this setting (and weightTangentCond = 1), RHS is the same as the tangential condition of the original
+	//       pseudo-arclength continuation.
+	//       Note that in the code q_tangent and lambda_tangent have been already normalized before calling this method,
+	//       i.e. q_tangent = q_tangent / arcLength,  lambda_tangent = lambda_tangent / arcLength.
 	double vol_lambda = 1.0;
 	if(NcontrolEqns > 0) {
 		double weightTangentCond = getDoubleParam("WEIGHT_TANGENT_COND", "1.0"); // Small weight means that dLambda is small: Optimal value should be 1.0
 		if(firstCall && mpi_rank==0)
 			cout << "> WEIGHT_TANGENT_COND = " << weightTangentCond << endl;
+
+//		double myVolSum = 0.0;
+//		for(int icv=0; icv<ncv; ++icv)
+//			myVolSum += cv_volume[icv];
+//		double totVolSum;
+//		MPI_Allreduce(&myVolSum, &totVolSum, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
 		vol_lambda *= 1.0 / weightTangentCond / fabs(lambda_tangent[0]);  // Note: Just take the magnitude of the lambda_tangent of the first control Eqn.!!
+		if(firstCall && mpi_rank==0)
+			cout << "> VOL_LAMBDA = " << vol_lambda << endl;
 	}
 
 	// Set up MAX_DLAMBDA_MAG
     double MAX_DLAMBDA_MAG = 0.0;
     if(NcontrolEqns > 0)
-    	MAX_DLAMBDA_MAG = 0.01 * arcLength * fabs(lambda_tangent[0]);  // Note: 1 percent of dLambda (Note: lambda_tangent has been already normalized)
+    	MAX_DLAMBDA_MAG = 0.05 * arcLength * fabs(lambda_tangent[0]);  // Note: 5 percents of dLambda (Note: lambda_tangent has been already normalized)
 
 	// Set iterTS to zero
 	int iterTS = 0;
@@ -3311,26 +3280,25 @@ void IkeWithPsALC_AD::getSteadySolnByTimeStepping(double *q, const int maxTimeSt
 
 		bool useBarrier = true;
 		if(useBarrier) {
-			barrierSourceNS(RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, A, AScal, true);      // Add barrier functions
-			barrierSourceTurbScalars(RHSrhoScal, nScal, iterTS, ABSURDLY_BIG_NUMBER); // Add barrier functions
+			barrierSourceNS(RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, A, AScal, true);     // Add barrier functions
+			barrierSourceTurbScalars(RHSrhoScal, nScal, iterTS, ABSURDLY_BIG_NUMBER);  // Add barrier functions
 		}
 
-		// Add penalty terms to RHS: This will make the solution not to go too far from the initial guess
-		double pentaltyStrength = 1.0; // This is a very important constant but hasn't been tested yet.
-
-		if(NcontrolEqns > 0) {
-			assert(q_tangent != NULL);
-			for(int iEqn = 0; iEqn < NcontrolEqns; ++iEqn) {
-				double dummyInnerProductRatio;
-				double tangentDotUvecFromUguess = calcUnweightedTangentVecDotFlowVecMinusGuess(dummyInnerProductRatio,
-						iEqn, q_tangent, q_guess, lambda_tangent, lambda, lambda_guess,
-						m, NcontrolEqns); // Note: tangentDotUvecFromUguess = [q_tangent; lambda_tangent]^T [flowVec - q_guess; lambda - lambda_guess]
-				                          //       is calculated here to avoid passing too many arguments to sourcePenalty().
-
-				// TO DO: sourcePenalty() has not been implemented yet!! Currently this method is empty!!
-				sourcePenalty(iEqn, pentaltyStrength, tangentDotUvecFromUguess, q_tangent, lambda_tangent, RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, A, AScal, true);
-			}
-		}
+//		// Add penalty terms to RHS: This will make the solution not to go too far from the initial guess
+//		double pentaltyStrength = 1.0; // This is a very important constant but hasn't been tested yet.
+//
+//		if(NcontrolEqns > 0) {
+//			assert(q_tangent != NULL);
+//			for(int iEqn = 0; iEqn < NcontrolEqns; ++iEqn) {
+//				double tangentDotUvecFromUguess = calcUnweightedTangentVecDotFlowVecMinusGuess(iEqn, q_tangent, q_guess,
+//						lambda_tangent, lambda, lambda_guess,
+//						m, NcontrolEqns); // Note: tangentDotUvecFromUguess = [q_tangent; lambda_tangent]^T [flowVec - q_guess; lambda - lambda_guess]
+//				                          //       is calculated here to avoid passing too many arguments to sourcePenalty().
+//
+//				// TO DO: sourcePenalty() has not been implemented yet!! Currently this method is empty!!
+//				sourcePenalty(iEqn, pentaltyStrength, tangentDotUvecFromUguess, q_tangent, lambda_tangent, RHSrho, RHSrhou, RHSrhoE, RHSrhoScal, A, AScal, true);
+//			}
+//		}
 
 		// ---------------------------------------------------------------------------------
 		// calculate RHS for lambda
@@ -3432,6 +3400,8 @@ void IkeWithPsALC_AD::getSteadySolnByTimeStepping(double *q, const int maxTimeSt
 		//       pseudo-arclength continuation.
 		//       Note that in the code q_tangent and lambda_tangent have been already normalized before calling this method,
 		//       i.e. q_tangent = q_tangent / arcLength,  lambda_tangent = lambda_tangent / arcLength.
+//		double relaxLambda = 1.0; // This variable is defined here since it will be used for dq and dScal
+
 		if(NcontrolEqns > 0) {
 			for (int iEqn = 0; iEqn < NcontrolEqns; ++iEqn)
 				RHSlambda[iEqn] *= underRelax;
@@ -3462,6 +3432,7 @@ void IkeWithPsALC_AD::getSteadySolnByTimeStepping(double *q, const int maxTimeSt
 					if(mpi_rank == mpi_size - 1)
 						cout << dLambda[iEqn] << endl;
 				}
+
 				lambda[iEqn] += dLambda[iEqn];
 			}
 		}
@@ -3530,21 +3501,21 @@ void IkeWithPsALC_AD::getSteadySolnByTimeStepping(double *q, const int maxTimeSt
 
 			// residual label at every 10 output steps
 			if ((mpi_rank == 0) && ((iterTS%(check_interval*10) == 0) || (iterTS == startingTSstep+1))) {
-				printf("                rho          rhou-X       rhou-Y       rhou-Z       rhoE      ");
+				printf("               rho         rhou-X      rhou-Y      rhou-Z      rhoE      ");
 				for (int iScal = 0; iScal < nScal; iScal++)
 					printf("%12s", scalarTranspEqVector[iScal].getName());
 				if(NcontrolEqns > 0)
-					printf("   RHSlambda");
+					printf("   RHSlambda      lambda");
 				cout << endl;
 			}
 
 			// residual value at each output step
 			if (mpi_rank == 0) {
-				printf("RESID: %6d %12.4e %12.4e %12.4e %12.4e %12.4e", iterTS, Residual[0], Residual[1], Residual[2], Residual[3], Residual[4]);
+				printf("RESID: %6d%12.4e%12.4e%12.4e%12.4e%12.4e", iterTS, Residual[0], Residual[1], Residual[2], Residual[3], Residual[4]);
 				for (int iScal = 0; iScal < nScal; iScal++)
 					printf("%12.4e", Residual[5+iScal]);
 				if(NcontrolEqns > 0)
-					printf("%12.4e", fabs(RHSlambda[0]));
+					printf("%12.4e%12.4e", fabs(RHSlambda[0]), lambda[0]);
 				cout << endl;
 			}
 		}
@@ -3627,9 +3598,13 @@ void IkeWithPsALC_AD::getSteadySolnByTimeStepping(double *q, const int maxTimeSt
 	if(TotResidual > tolerance) {
 		if(mpi_rank == 0)
 			cout << "TIME STEPPING has not been converged: maxTimeStep = " << maxTimeStep << ", total residual = " << TotResidual << " > tolerance = " << tolerance << endl;
-		throw(PSALC_ERROR_CODE);
-	}
 
+		string booleanString = getStringParam("AFTER_TIMESTEPPING_LAUNCH_NT", "FALSE");
+		std::transform(booleanString.begin(), booleanString.end(), booleanString.begin(), ::tolower);
+		bool AfterTSlaunchNT = (booleanString.compare("true")==0 || booleanString.compare("yes")==0);
+		if(!AfterTSlaunchNT)
+			throw(PSALC_ERROR_CODE);
+	}
 
 	MPI_Barrier(mpi_comm);
 	if (mpi_rank == 0) {
@@ -3703,12 +3678,30 @@ void IkeWithPsALC_AD::getSteadySolnByTimeStepping(double *q, const int maxTimeSt
 void IkeWithPsALC_AD::sourcePenalty(const int iEqn, const double pentaltyStrength, const double tangentDotUvecFromUguess,
 		double** q_tangent, const double *lambda_tangent,
 		double *RHSrho, double (*RHSrhou)[3], double *RHSrhoE, double **RHSrhoScal, double (*A)[5][5], double ***AScal, const bool flagImplicit) {
-//	for(int icv=0; icv<ncv; ++icv) {
-//		RHSrho[icv] += ;
-//	}
+	int nScal = scalarTranspEqVector.size();
+	for(int icv=0; icv<ncv; ++icv) {
+		int indexStart = icv*(5+nScal);
+		RHSrho[icv] -= pentaltyStrength * tangentDotUvecFromUguess * q_tangent[iEqn][indexStart];
+		for(int i=0; i<3; ++i)
+			RHSrhou[icv][i] -= pentaltyStrength * tangentDotUvecFromUguess * q_tangent[iEqn][indexStart+1+i];
+		RHSrhoE[icv] -= pentaltyStrength * tangentDotUvecFromUguess * q_tangent[iEqn][indexStart+4];
+		for(int iScal = 0; iScal <nScal; ++iScal)
+			RHSrhoScal[iScal][icv] -= pentaltyStrength * tangentDotUvecFromUguess * q_tangent[iEqn][indexStart+5+iScal];
+	}
 
-	// Note: We are not doing anything for the Jacobian matrix even for implicit case because it is very hard to provide analytic Jacobian.
-	return;
+	if(flagImplicit) { // Actually, it must be implicit...
+		for(int icv=0; icv<ncv; ++icv) {
+			int indexStart = icv*(5+nScal);
+			int noc00 = nbocv_i[icv];
+
+			for(int i=0; i<5; ++i)
+				A[noc00][i][i] += pentaltyStrength * pow(q_tangent[iEqn][indexStart+i], 2.0);
+
+			for (int iScal = 0; iScal < nScal; iScal++)
+				AScal[iScal][5][noc00] += pentaltyStrength * pow(q_tangent[iEqn][indexStart+5+iScal], 2.0);
+					// Note: The size of AScal for implicit Euler = [nScal][6][nbocv_s]
+		}
+	}
 }
 
 /*
@@ -3729,15 +3722,14 @@ void IkeWithPsALC_AD::calcRhsLambda(double* RHSlambda, double** ALambda, const b
 	// Solve RHS
 	// Note: The tangential equation is
 	//           dLambda
-	//         V ------- = -( q_tangent^T*(u-u_guess) + lambda_tangent*(lambda - lambda_tangent) ) * sign(lambda_tangent),
+	//         V ------- = -( q_tangent^T*(u-u_guess) + lambda_tangent*(lambda - lambda_guess) ) * sign(lambda_tangent),
 	//              dt
 	//         where V = 1 / weightTangentCond / |lambda_tangent|.
 	//       Note that in the code q_tangent and lambda_tangent have been already normalized before calling this method,
 	//       i.e. q_tangent = q_tangent / arcLength,  lambda_tangent = lambda_tangent / arcLength.
 	for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
-		double dummyInnerProductRatio;
-		double tangentDotUvecFromUguess = calcUnweightedTangentVecDotFlowVecMinusGuess(dummyInnerProductRatio,
-				iEqn, q_tangent, q_initGuess, lambda_tangent, lambda, lambda_initGuess,
+		double tangentDotUvecFromUguess = calcUnweightedTangentVecDotFlowVecMinusGuess(iEqn, q_tangent, q_initGuess,
+				lambda_tangent, lambda, lambda_initGuess,
 				5+nScal, NcontrolEqns);
 //		RHSlambda[iEqn] -= arcLength * tangentDotUvecFromUguess * ((lambda_tangent[iEqn]>=0.0) ? 1.0 : -1.0);
 		RHSlambda[iEqn] -= tangentDotUvecFromUguess * ((lambda_tangent[iEqn]>=0.0) ? 1.0 : -1.0);
@@ -4063,7 +4055,6 @@ bool IkeWithPsALC_AD::getSteadySolnByBackwardEuler(double (*dq)[5], double **dSc
 
 	return isConverged;
 }
-
 
 /*
  * Method: calcJacobian1DAD
@@ -5601,15 +5592,25 @@ void IkeWithPsALC_AD::updateFlow_primVars(const double* Q, const double* delQ, c
 void IkeWithPsALC_AD::updateLambda(const double* Q, const double* delQ, const double relaxation, const int NcontrolParams, const int nScal) {
 	if(mpi_rank==mpi_size-1) {
 		int Nflow = ncv*(5+nScal);
-		for(int i=0; i<NcontrolParams; ++i) {
-			if(fabs(relaxation*delQ[Nflow+i]) > 0.1*fabs(lambda[i]))
-				cout<<"           WARNING in updateLambda(): delta_lambda["<<i<<"] (="<<relaxation*delQ[Nflow+i]<<") is greater than 10% of lambda["<<i<<"] (="<<lambda[i]<<")"<<endl;
-			else if(fabs(relaxation*delQ[Nflow+i]) < 1.0e-10)
-				cout<<"           WARNING in updateLambda(): delta_lambda["<<i<<"] (="<<relaxation*delQ[Nflow+i]<<") is too small"<<endl;
-			lambda[i] = Q[Nflow+i] + relaxation*delQ[Nflow+i];
+		for(int iEqn=0; iEqn<NcontrolParams; ++iEqn) {
+			double lambdaBeforeUpdate = Q[Nflow+iEqn];
+			if(fabs(relaxation*delQ[Nflow+iEqn]) > 0.1*fabs(lambdaBeforeUpdate))
+				cout<<"           WARNING in updateLambda(): delta_lambda["<<iEqn<<"] (="<<relaxation*delQ[Nflow+iEqn]<<") is greater than 10% of lambda["<<iEqn<<"] (="<<lambdaBeforeUpdate<<")"<<endl;
+			else if(fabs(relaxation*delQ[Nflow+iEqn]) < 1.0e-10)
+				cout<<"           WARNING in updateLambda(): delta_lambda["<<iEqn<<"] (="<<relaxation*delQ[Nflow+iEqn]<<") is too small"<<endl;
+			lambda[iEqn] = Q[Nflow+iEqn] + relaxation*delQ[Nflow+iEqn];
+//// IKJ
+//if(iterNewton <= 1) {
+//	lambda[iEqn] = Q[Nflow+iEqn] + relaxation*delQ[Nflow+iEqn];
+//} else {
+//	lambda[iEqn] = Q[Nflow+iEqn] + 0.01*relaxation*delQ[Nflow+iEqn];
+//	cout<<"CAUTION! dLambda is relaxed by 0.01"<<endl;
+//}
+
 		}
 	}
 	MPI_Bcast(lambda, NcontrolParams, MPI_DOUBLE, mpi_size-1, mpi_comm);
+	MPI_Barrier(mpi_comm);
 }
 
 /*
@@ -6056,7 +6057,7 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 
 	double relax0 = 0.0;
 	double relax1 = relaxationOld; // Usually, 1.0. But if other relaxation algorithm (e.g. trust-region) was active, it can be less than 1.0.
-	double relax2 = relaxationOld*relaxationUpperBound;
+	double relax2 = relaxationOld * relaxationUpperBound;
 
 	double *ResidVecTemp = new double [nVars];
 	double *NresTemp = NULL;
@@ -6064,14 +6065,14 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 		NresTemp = new double [NcontrolEqns];
 
 	// ----------------------------
-	double residNormFlow0 = calcTotResidual(ResidVecOld, whichNorm);
+	double residNormFlow0 = calcSumResidual(ResidVecOld, whichNorm);
 	double residNormTot0;
 	if (NcontrolEqns > 0)
 		residNormTot0 = updateTotResidualWithNres(residNormFlow0, NresOld, NcontrolEqns, whichNorm);
 	else
 		residNormTot0 = residNormFlow0;
 
-	double residNormFlow1 = calcTotResidual(ResidVecNew, whichNorm);
+	double residNormFlow1 = calcSumResidual(ResidVecNew, whichNorm);
 	double residNormTot1;
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 	if (NcontrolEqns > 0) {
@@ -6085,8 +6086,8 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 #endif
 	backtrackHistory.push_back(std::make_pair(relax1, residNormTot1));
 
-	double residNormFlow2 = ABSURDLY_BIG_NUMBER; // Initialization with a very large value for debugging
-	double residNormTot2  = ABSURDLY_BIG_NUMBER; // Initialization with a very large value for debugging
+	double residNormFlow2 = ABSURDLY_BIG_NUMBER; // Initialize with a very large value for debugging
+	double residNormTot2  = ABSURDLY_BIG_NUMBER; // Initialize with a very large value for debugging
 
 	double residNormFlowOld = residNormFlow0;
 	double residNormTotOld  = residNormTot0;
@@ -6110,8 +6111,8 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 	bool useBarrier = true;
 
 	int countNegative = calcRhsWithBarrier(rhs, useBarrier);
-	calcResidualsFrom1Drhs(ResidVecTemp, rhs, whichNorm); // Residual in terms of each flow variable (size = nvars)
-	residNormFlow2 = calcTotResidual(ResidVecTemp, whichNorm);
+	calcResidualsFrom1Drhs(ResidVecTemp, rhs, whichNorm); // Residual in terms of each flow variable (size = nVars)
+	residNormFlow2 = calcSumResidual(ResidVecTemp, whichNorm);
 
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 	if (NcontrolEqns > 0) {
@@ -6149,9 +6150,9 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 
 	bool notConverged_check1 = checkBacktrackFromResidInc(residNormTot1, residNormTot2, relax2, backtrackBarrierCoeff);
 
-	bool notConverged_check2 = notConverged_check2 = checkBacktrackFromResidInc(residNormTotOld, residNormTot2, relax2, backtrackBarrierCoeff);
+	bool notConverged_check2 = checkBacktrackFromResidInc(residNormTotOld, residNormTot2, relax2, backtrackBarrierCoeff);
 
-	// Make sure that the final result is less than last step
+	// Make sure that the final result is less than the last step
 	notConverged = (notConverged_check1 || notConverged_check2);
 	while(countNegative>0 || notConverged) {
 		// If relation becomes too small, break the iterative procedure
@@ -6175,7 +6176,7 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 			MPI_Barrier(mpi_comm);
 			countNegative = calcRhsWithBarrier(rhs, useBarrier);
 			calcResidualsFrom1Drhs(ResidVecTemp, rhs, whichNorm);
-			residNormFlow2 = calcTotResidual(ResidVecTemp, whichNorm);
+			residNormFlow2 = calcSumResidual(ResidVecTemp, whichNorm);
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 			if (NcontrolEqns > 0) {
 				bool tangentialSatisfied = calcNresForJOE(NresTemp, nVars, NcontrolEqns, qArrayOld, q_tangent, lambda_tangent, lambda, lambdaOld, weightLambda, arcLength);
@@ -6261,7 +6262,7 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 		MPI_Barrier(mpi_comm);
 		countNegative = calcRhsWithBarrier(rhs, useBarrier);
 		calcResidualsFrom1Drhs(ResidVecTemp, rhs, whichNorm);
-		residNormFlow2 = calcTotResidual(ResidVecTemp, whichNorm);
+		residNormFlow2 = calcSumResidual(ResidVecTemp, whichNorm);
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 		if (NcontrolEqns > 0) {
 			bool tangentialSatisfied = calcNresForJOE(NresTemp, nVars, NcontrolEqns, qArrayOld, q_tangent, lambda_tangent, lambda, lambdaOld, weightLambda, arcLength);
@@ -6328,7 +6329,7 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 
 		/*
 		 * Check if converged:
-		 *   Creterion: 1. Residual decreases compared to the previous backtracking step
+		 *   Criterion: 1. Residual decreases compared to the previous backtracking step
 		 *              2. Residual is smaller than the initial residual (Important !!)
 		 */
 		bool notConverged_check1 = checkBacktrackFromResidInc(residNormTot1, residNormTot2, relax2, backtrackBarrierCoeff);
@@ -6367,7 +6368,7 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 		MPI_Barrier(mpi_comm);
 		int countNegativeTemp = calcRhsWithBarrier(rhs, useBarrier);
 		calcResidualsFrom1Drhs(ResidVecTemp, rhs, whichNorm);
-		residNormFlow2 = calcTotResidual(ResidVecTemp, whichNorm);
+		residNormFlow2 = calcSumResidual(ResidVecTemp, whichNorm);
 #ifdef USE_TOT_NORM_WITH_LAMBDA
 		if (NcontrolEqns > 0) {
 			bool tangentialSatisfied = calcNresForJOE(NresTemp, nVars, NcontrolEqns, qArrayOld, q_tangent, lambda_tangent, lambda, lambdaOld, weightLambda, arcLength);
@@ -6381,9 +6382,11 @@ double IkeWithPsALC_AD::backtrackWithJOE_calcRelaxAndRHS(double* rhs, const doub
 
 		// Show the result on the screen
 		if(debugLevel > 0 && mpi_rank == 0) {
-			double threshold = calcBacktrackThreshold(residNormTotOld, relax2, backtrackBarrierCoeff);
+			double relax2Max = relaxationOld*relaxationUpperBound;
+			double threshold1 = calcBacktrackThreshold(residNormTot1,   relax2Max, backtrackBarrierCoeff);
+			double threshold2 = calcBacktrackThreshold(residNormTotOld, relax2Max, backtrackBarrierCoeff);
 			printf("                  >> backtrackWithJOE_calcRelaxAndRHS(): Backtracking result: iter = %d  RELAX=%.3e  RESID_TOT=%.5e --> %.5e (> THRESHOLD=%.4e)\n",
-					minResidIter, relax2, residNormTotInit, residNormTot2, threshold);
+					minResidIter, relax2, residNormTotInit, residNormTot2, min(threshold1, threshold2));
 		}
 	}
 
@@ -6452,8 +6455,8 @@ double IkeWithPsALC_AD::backtrackWithJOEcoupled_calcRelaxAndRHS(double* rhs, con
 
 	double relax0 = 0.0, relax1 = 1.0, relax2 = relaxationUpperBound;
 	double *ResidTemp = new double [nVars];
-	double residNormTot0 = calcTotResidual(ResidOld, whichNorm);
-	double residNormTot1 = calcTotResidual(ResidNew, whichNorm);
+	double residNormTot0 = calcSumResidual(ResidOld, whichNorm);
+	double residNormTot1 = calcSumResidual(ResidNew, whichNorm);
 	double residNormTot2 = ABSURDLY_BIG_NUMBER;
 
 	double **rhs2D; 	getMem2D(&rhs2D, 0, ncv-1, 0, 5+nScal-1, "IkeWithPsALC_AD::backtrackWithJOEcoupled_calcRelaxAndRHS->rhs2D", true);
@@ -6481,7 +6484,7 @@ double IkeWithPsALC_AD::backtrackWithJOEcoupled_calcRelaxAndRHS(double* rhs, con
 	barrierSourceTurbScalars(rhs, nScal, iterNewton, residNormTotOld); // Add barrier functions
 
 	calcResidualsFrom1Drhs(ResidTemp, rhs, whichNorm);
-	residNormTot2 = calcTotResidual(ResidTemp, whichNorm);
+	residNormTot2 = calcSumResidual(ResidTemp, whichNorm);
 
 	// show residual on screen
 	if(debugLevel > 1 && mpi_rank == 0)
@@ -6566,7 +6569,7 @@ double IkeWithPsALC_AD::backtrackWithJOEcoupled_calcRelaxAndRHS(double* rhs, con
 		barrierSourceTurbScalars(rhs, nScal, iterNewton, residNormTotOld); // Add barrier functions
 
 		calcResidualsFrom1Drhs(ResidTemp, rhs, whichNorm);
-		residNormTot2 = calcTotResidual(ResidTemp, whichNorm);
+		residNormTot2 = calcSumResidual(ResidTemp, whichNorm);
 
 		/*
 		 * show residual on screen
@@ -7685,37 +7688,36 @@ void IkeWithPsALC_AD::calcWeightRhsHook(const int icvCenter, const int nVars) { 
  * UTILITY FUNCTIONS
  ****************************/
 /*
- * Method: getParamsLinSolverNewton
- * --------------------------------
- * Obtain the linear solver parameters for Newton's method
- * Parameters:
- *   1. Linear solver thresholds
- *   	maxIterLS = maximum number of Newton (outer) iterations
- *   	zeroAbsLS = absolute residual of Newton (outer) iterations
- *   	zeroRelLS = relative residual of Newton (outer) iterations
- *   2. Ramp
- * 		startDecLS     = After "startDecLS" iteration, ramp starts
- * 		intervalDecLS  = At every "intervalDecLS" iteration, ramp occurs
- * 		incIterLS      = When ramps occurs, "maxIterLS" increases by "incIterLS"
- * 		maxFinalIterLS = After "maxFinalIterLS" iteration, ramp no longer occurs
- * 		decZeroLS      = When ramps occurs, "zeroAbsLS" and "zeroRelLS" drops by "decZeroLS"
- * 		minZeroAbsLS   =
- * 		minZeroRelLS   =
+ * Method: getNewtonParam
+ * ----------------------
+ * Read parameters for Newton's method from the input file
  */
-void IkeWithPsALC_AD::getParamsLinSolverNewton(int &maxIterLS, double &zeroAbsLS, double &zeroRelLS,
-		int &startDecLS, int &intervalDecLS, int &incIterLS, int &maxFinalIterLS, double &decZeroLS, double &minZeroAbsLS, double &minZeroRelLS,
-		const bool firstCall, const int debugLevel) {
-	// Linear solver settings
+void IkeWithPsALC_AD::getNewtonParam() {
+	static bool firstCall = true;
+
+	// Linear solver setting (PETSc)
+	//		 *   1. Linear solver thresholds
+	//		 *   	maxIterLS = maximum number of Newton (outer) iterations
+	//		 *   	zeroAbsLS = absolute residual of Newton (outer) iterations
+	//		 *   	zeroRelLS = relative residual of Newton (outer) iterations
+	//		 *   2. Ramp
+	//		 * 		startDecLS     = After "startDecLS" iteration, ramp starts
+	//		 * 		intervalDecLS  = At every "intervalDecLS" iteration, ramp occurs
+	//		 * 		incIterLS      = When ramps occurs, "maxIterLS" increases by "incIterLS"
+	//		 * 		maxFinalIterLS = After "maxFinalIterLS" iteration, ramp no longer occurs
+	//		 * 		decZeroLS      = When ramps occurs, "zeroAbsLS" and "zeroRelLS" drops by "decZeroLS"
+	//		 * 		minZeroAbsLS   =
+	//		 * 		minZeroRelLS   =
 	if (!checkParam("LINEAR_SOLVER_NEWTON_TRESHOLDS")) {
 		ParamMap::add("LINEAR_SOLVER_NEWTON_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-3"); // add default values
 		if (mpi_rank == 0)
 			cout<< "WARNING: added keyword \"LINEAR_SOLVER_NEWTON_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-3\""<< " to parameter map!" << endl;
 	}
-	maxIterLS = getParam("LINEAR_SOLVER_NEWTON_TRESHOLDS")->getInt("MAX_ITER");
-	zeroAbsLS = getParam("LINEAR_SOLVER_NEWTON_TRESHOLDS")->getDouble("ABS_RESID");
-	zeroRelLS = getParam("LINEAR_SOLVER_NEWTON_TRESHOLDS")->getDouble("REL_RESID");
+	newtonParam.maxIterLS = getParam("LINEAR_SOLVER_NEWTON_TRESHOLDS")->getInt("MAX_ITER");
+	newtonParam.zeroAbsLS = getParam("LINEAR_SOLVER_NEWTON_TRESHOLDS")->getDouble("ABS_RESID");
+	newtonParam.zeroRelLS = getParam("LINEAR_SOLVER_NEWTON_TRESHOLDS")->getDouble("REL_RESID");
 	if(firstCall && mpi_rank==0)
-		printf("> LINEAR_SOLVER_NEWTON_TRESHOLDS  MAX_ITER=%d  ABS_RESID=%.2e  REL_RESID=%.2e\n", maxIterLS, zeroAbsLS, zeroRelLS);
+		printf("> LINEAR_SOLVER_NEWTON_TRESHOLDS  MAX_ITER=%d  ABS_RESID=%.2e  REL_RESID=%.2e\n", newtonParam.maxIterLS, newtonParam.zeroAbsLS, newtonParam.zeroRelLS);
 
 	// Ramp maximum iterations and residual
 	if (!checkParam("LSNT_RAMP")) {
@@ -7724,52 +7726,59 @@ void IkeWithPsALC_AD::getParamsLinSolverNewton(int &maxIterLS, double &zeroAbsLS
 			cout<< "WARNING: added keyword \"LSNT_RAMP  AFTER_NEWTON_ITER=10  INTERVAL_NEWTON_ITER=1  FACTOR_ITER=0  MAX_ITER=30  FACTOR_RESID=1.0  MIN_ABS_RESID=1.0e-8  MIN_REL_RESID=1.0e-3\""<< " to parameter map!" << endl;
 	}
 
-	startDecLS = getParam("LSNT_RAMP")->getInt("AFTER_NEWTON_ITER");
-	intervalDecLS = getParam("LSNT_RAMP")->getInt("INTERVAL_NEWTON_ITER");
-	incIterLS = getParam("LSNT_RAMP")->getInt("FACTOR_ITER");
-	maxFinalIterLS = getParam("LSNT_RAMP")->getInt("MAX_ITER");
-	decZeroLS = getParam("LSNT_RAMP")->getDouble("FACTOR_RESID");
-	minZeroAbsLS = getParam("LSNT_RAMP")->getDouble("MIN_ABS_RESID");
-	minZeroRelLS = getParam("LSNT_RAMP")->getDouble("MIN_REL_RESID");
+	newtonParam.startDecLS = getParam("LSNT_RAMP")->getInt("AFTER_NEWTON_ITER");
+	newtonParam.intervalDecLS = getParam("LSNT_RAMP")->getInt("INTERVAL_NEWTON_ITER");
+	newtonParam.incIterLS = getParam("LSNT_RAMP")->getInt("FACTOR_ITER");
+	newtonParam.maxFinalIterLS = getParam("LSNT_RAMP")->getInt("MAX_ITER");
+	newtonParam.decZeroLS = getParam("LSNT_RAMP")->getDouble("FACTOR_RESID");
+	newtonParam.minZeroAbsLS = getParam("LSNT_RAMP")->getDouble("MIN_ABS_RESID");
+	newtonParam.minZeroRelLS = getParam("LSNT_RAMP")->getDouble("MIN_REL_RESID");
 	if(firstCall && mpi_rank==0)
 		printf("> LSNT_RAMP  AFTER_NEWTON_ITER=%d  INTERVAL_NEWTON_ITER=%d  FACTOR_ITER=%d  MAX_ITER=%d  FACTOR_RESID=%.2e  MIN_ABS_RESID=%.2e  MIN_REL_RESID=%.2e\n",
-				startDecLS, intervalDecLS, incIterLS, maxIterLS, decZeroLS, minZeroAbsLS, minZeroRelLS);
-	if(incIterLS<0 && mpi_rank==0)
-		printf("  WARNING: FACTOR_ITER is a negative number = %d \n",incIterLS);
-	if((decZeroLS>1.0 || decZeroLS<=0.0) && mpi_rank==0)
-		printf("  WARNING: FACTOR_RESID is out of range (should be 0.0<FACTOR_RESID<=1.0) = %.2e \n",decZeroLS);
-}
+				newtonParam.startDecLS, newtonParam.intervalDecLS, newtonParam.incIterLS, newtonParam.maxIterLS,
+				newtonParam.decZeroLS, newtonParam.minZeroAbsLS, newtonParam.minZeroRelLS);
+	if(newtonParam.incIterLS<0 && mpi_rank==0)
+		printf("  WARNING: FACTOR_ITER is a negative number = %d \n", newtonParam.incIterLS);
+	if((newtonParam.decZeroLS>1.0 || newtonParam.decZeroLS<=0.0) && mpi_rank==0)
+		printf("  WARNING: FACTOR_RESID is out of range (should be 0.0<FACTOR_RESID<=1.0) = %.2e \n", newtonParam.decZeroLS);
 
-/*
- * Method: getParamsBacktrackNewton
- * --------------------------------
- * Obtain the backtracking parameters for the Newton method
- * Parameters:
- *   backtrackMaxIter 			= "BACKTRACKING_PARAMETERS"->"MAX_ITER"
- *   backtrackRelax_LowerBound 	= "BACKTRACKING_PARAMETERS"->"RELAX_LOWER_BOUND"
- *   backtrackRelax_UpperBound 	= "BACKTRACKING_PARAMETERS"->"RELAX_UPPER_BOUND"
- *   backtrackBarrierCoeff 		= "BACKTRACKING_PARAMETERS"->"BARRIER_COEFF"
- *
- *   skipBT_firstITer  = "BACKTRACKING_SKIP"->"FIRST_ITER"
- *   skipBT_freq       = "BACKTRACKING_SKIP"->"FREQUENCY"
- */
-void IkeWithPsALC_AD::getParamsBacktrackNewton(int &backtrackMaxIter, double &backtrackRelax_LowerBound, double &backtrackRelax_UpperBound, double &backtrackBarrierCoeff,
-		bool &skipBT_firstITer, int &skipBT_freq,
-		const bool firstCall, const int debugLevel) {
-	// BACKTRACKING_PARAMETERS
+
+	// Relaxation reducing based on negative values
+	if (!checkParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")) {
+		ParamMap::add("RELAXATION_CLIP_FOR_NEGATIVE_VALS  CLIP_PARAM=1.0e-9  SAFE_PARAM=0.8"); // add default values
+		if (mpi_rank == 0)
+			cout << "WARNING: added keyword \"RELAXATION_CLIP_NEGATIVE_VALS  CLIP_PARAM=1.0e-9  SAFE_PARAM=0.8\" to parameter map!"<<endl;
+	}
+
+	newtonParam.clipParameter  = getParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")->getDouble("CLIP_PARAM");
+	newtonParam.safeParameter  = getParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")->getDouble("SAFE_PARAM");
+
+	if(firstCall && mpi_rank==0) {
+		cout<<"> RELAXATION_CLIP_FOR_NEGATIVE_VALS (if some scalars become negative during NT, reduce relax): CLIP_PARAM = "
+		    <<newtonParam.clipParameter<<"  SAFE_PARAM="<<newtonParam.safeParameter<<endl;
+	}
+
+	// Backtracking
+	//		 *   backtrackMaxIter 			= "BACKTRACKING_PARAMETERS"->"MAX_ITER"
+	//		 *   backtrackRelax_LowerBound 	= "BACKTRACKING_PARAMETERS"->"RELAX_LOWER_BOUND"
+	//		 *   backtrackRelax_UpperBound 	= "BACKTRACKING_PARAMETERS"->"RELAX_UPPER_BOUND"
+	//		 *   backtrackBarrierCoeff 		= "BACKTRACKING_PARAMETERS"->"BARRIER_COEFF"
+	//		 *
+	//		 *   skipBT_firstITer  = "BACKTRACKING_SKIP"->"FIRST_ITER"
+	//		 *   skipBT_freq       = "BACKTRACKING_SKIP"->"FREQUENCY"
 	if (!checkParam("BACKTRACKING_PARAMETERS")) {
 		ParamMap::add("BACKTRACKING_PARAMETERS  MAX_ITER=10  RELAX_LOWER_BOUND=0.1  RELAX_UPPER_BOUND=0.5  BARRIER_COEFF=0.01"); // add default values
 		if (mpi_rank == 0)
 			cout << "WARNING: added keyword \"BACKTRACKING_PARAMETERS  MAX_ITER=10  RELAX_LOWER_BOUND=0.1  RELAX_UPPER_BOUND=0.5  BARRIER_COEFF=0.01\" to parameter map!"<<endl;
 	}
-	backtrackMaxIter = getParam("BACKTRACKING_PARAMETERS")->getInt("MAX_ITER");
-	backtrackRelax_LowerBound = getParam("BACKTRACKING_PARAMETERS")->getDouble("RELAX_LOWER_BOUND");
-	backtrackRelax_UpperBound = getParam("BACKTRACKING_PARAMETERS")->getDouble("RELAX_UPPER_BOUND");
-	backtrackBarrierCoeff = getParam("BACKTRACKING_PARAMETERS")->getDouble("BARRIER_COEFF");
+	newtonParam.backtrackMaxIter = getParam("BACKTRACKING_PARAMETERS")->getInt("MAX_ITER");
+	newtonParam.backtrackRelax_LowerBound = getParam("BACKTRACKING_PARAMETERS")->getDouble("RELAX_LOWER_BOUND");
+	newtonParam.backtrackRelax_UpperBound = getParam("BACKTRACKING_PARAMETERS")->getDouble("RELAX_UPPER_BOUND");
+	newtonParam.backtrackBarrierCoeff = getParam("BACKTRACKING_PARAMETERS")->getDouble("BARRIER_COEFF");
 	if(firstCall && mpi_rank==0)
-		printf("> BACKTRACKING_PARAMETERS  MAX_ITER=%d  RELAX_LOWER_BOUND=%.2e  RELAX_UPPER_BOUND=%.2e  BARRIER_COEFF=%.2e\n", backtrackMaxIter, backtrackRelax_LowerBound, backtrackRelax_UpperBound, backtrackBarrierCoeff);
+		printf("> BACKTRACKING_PARAMETERS  MAX_ITER=%d  RELAX_LOWER_BOUND=%.2e  RELAX_UPPER_BOUND=%.2e  BARRIER_COEFF=%.2e\n",
+				newtonParam.backtrackMaxIter, newtonParam.backtrackRelax_LowerBound, newtonParam.backtrackRelax_UpperBound, newtonParam.backtrackBarrierCoeff);
 
-	// BACKTRACKING_SKIP
 	if (!checkParam("BACKTRACKING_SKIP")) {
 		ParamMap::add("BACKTRACKING_SKIP  FIRST_ITER=FALSE  FREQUENCY=0"); // add default values
 		if (mpi_rank == 0)
@@ -7777,42 +7786,68 @@ void IkeWithPsALC_AD::getParamsBacktrackNewton(int &backtrackMaxIter, double &ba
 	}
 	string skipBacktrack_firstIter = getParam("BACKTRACKING_SKIP")->getString("FIRST_ITER");
 	if(strcmp(skipBacktrack_firstIter.c_str(), "TRUE")==0 || strcmp(skipBacktrack_firstIter.c_str(), "T")==0)
-		skipBT_firstITer = true;
+		newtonParam.skipBT_firstITer = true;
 	else
-		skipBT_firstITer = false;
-	skipBT_freq = getParam("BACKTRACKING_SKIP")->getInt("FREQUENCY");
+		newtonParam.skipBT_firstITer = false;
+	newtonParam.skipBT_freq = getParam("BACKTRACKING_SKIP")->getInt("FREQUENCY");
 	if(firstCall && mpi_rank==0)
-		printf("> BACKTRACKING_SKIP  FIRST_ITER=%d  FREQUENCY=%d\n", skipBT_firstITer, skipBT_freq);
-}
+		printf("> BACKTRACKING_SKIP  FIRST_ITER=%d  FREQUENCY=%d\n", newtonParam.skipBT_firstITer, newtonParam.skipBT_freq);
 
-/*
- * Method: getParamStabilizedNewton
- * --------------------------------
- * Obtain the parameters for the stabilized Newton's method for the problems with singular Jacobians
- *   "STABILIZATION_FOR_SINGULAR_JAC"-->"MATRIX_TYPE"
- *   "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA"
- *   "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA_EPS"
- *   "STABILIZATION_FOR_SINGULAR_JAC"-->"STARTING_ITER"
- */
-void IkeWithPsALC_AD::getParamStabilizedNewton(int &stabilizationMethodType, double &stabilizationAlpha, double &stabilizationAlphaEps, int &stabilizationStartingIter,
-		const bool firstCall, const int debugLevel) {
+	//  Stabilized Newton's method for the problem with a singular Jacobian
+	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"MATRIX_TYPE"
+	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA"
+	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA_EPS"
+	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"STARTING_ITER"
 	if (!checkParam("STABILIZATION_FOR_SINGULAR_JAC")) {
 		ParamMap::add("STABILIZATION_FOR_SINGULAR_JAC  MATRIX_TYPE=0  ALPHA=0.0  ALPHA_EPS=0.0  STARTING_ITER==1"); // add default values
 		if (mpi_rank == 0)
 			cout << "WARNING: added keyword \"STABILIZATION_FOR_SINGULAR_JAC  MATRIX_TYPE=0  ALPHA=0.0  ALPHA_EPS=0.0  STARTING_ITER==1\" to parameter map!"<<endl;
 	}
 
-	stabilizationMethodType   = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getInt("MATRIX_TYPE"); // Note: 0 : Do not apply any method
-																					               //       1 : Identity matrix (alpha*I)
-																					               //       2 : Identity-like but scaled matrix
-                                                                                                   //       3 : Generalized Newton's method (X.Hu, 2007)
-                                                                                                   //       4 : Generalized Newton's method (J.L.Hueso et al., 2009)
-	stabilizationAlpha        = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getDouble("ALPHA"); // Model coefficient
-	stabilizationAlphaEps     = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getDouble("ALPHA_EPS"); // Minimum coefficient
-	stabilizationStartingIter = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getInt("STARTING_ITER");
+	string methodTypeString = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getString("METHOD_TYPE");
+		// Note: Possible options are: NO_STAB_NEWTON, CONST_DIAG, CFL_BASED_DIAG, GENERAL_NEWTON_HU, GENERAL_NEWTON_HUSEO
+	std::transform(methodTypeString.begin(), methodTypeString.end(), methodTypeString.begin(), ::toupper);
+	if(methodTypeString.compare("CONST_DIAG") == 0)
+		newtonParam.stabilizationMethodType = CONST_DIAG;
+	else if(methodTypeString.compare("CFL_BASED_DIAG") == 0)
+		newtonParam.stabilizationMethodType = CFL_BASED_DIAG;
+	else if(methodTypeString.compare("GENERAL_NEWTON_HU") == 0)
+		newtonParam.stabilizationMethodType = GENERAL_NEWTON_HU;
+	else if(methodTypeString.compare("GENERAL_NEWTON_HUSEO") == 0)
+		newtonParam.stabilizationMethodType = GENERAL_NEWTON_HUSEO;
+	else
+		newtonParam.stabilizationMethodType = NO_STAB_NEWTON;
+
+	if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON)
+		newtonParam.stabilizationAlpha    = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getDouble("ALPHA"); // Model coefficient
+	if(newtonParam.stabilizationMethodType == GENERAL_NEWTON_HU || newtonParam.stabilizationMethodType == GENERAL_NEWTON_HUSEO)
+		newtonParam.stabilizationAlphaEps = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getDouble("ALPHA_EPS"); // Minimum coefficient
+
+	if(firstCall && mpi_rank==0) {
+		cout<<"> Stabilization for singular Jacobians: METHOD_TYPE=";
+		switch(newtonParam.stabilizationMethodType) {
+			case NO_STAB_NEWTON:       cout<<"NO_STAB_NEWTON";       break;
+			case CONST_DIAG:           cout<<"CONST_DIAG";           break;
+			case CFL_BASED_DIAG:       cout<<"CFL_BASED_DIAG";       break;
+			case GENERAL_NEWTON_HU:    cout<<"GENERAL_NEWTON_HU:";   break;
+			case GENERAL_NEWTON_HUSEO: cout<<"GENERAL_NEWTON_HUSEO"; break;
+			default: cerr<<"ERROR"; throw(PSALC_ERROR_CODE);
+		}
+
+		if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON)
+			cout<<"  ALPHA="<<newtonParam.stabilizationAlpha;
+		if(newtonParam.stabilizationMethodType == GENERAL_NEWTON_HU || newtonParam.stabilizationMethodType == GENERAL_NEWTON_HUSEO)
+			cout<<" (ALPHA_EPS = "<<newtonParam.stabilizationAlphaEps<<")";
+		cout<<endl;
+	}
+
+	// Trust-region size
+	newtonParam.trustRegionSize = getDoubleParam("TRUST_REGION_SIZE", "1.0e6");
 
 	if(firstCall && mpi_rank==0)
-		cout<<"> Stabilization for singular Jacobians: MATRIX_TYPE="<<stabilizationMethodType<<"  ALPHA="<<stabilizationAlpha<<" (ALPHA_EPS = "<<stabilizationAlphaEps<<")"<<"  STARTING_ITER="<<stabilizationStartingIter<<endl;
+		cout<<"> TRUST_REGION_SIZE="<<newtonParam.trustRegionSize<<endl;
+
+	firstCall = false;
 }
 
 /*
@@ -7884,26 +7919,6 @@ void IkeWithPsALC_AD::getParamsModifiedNewtonMethod(MODIFIED_NEWTON& modifiedNew
 	}
 }
 
-/*
- * Method: getParamsReducingRelax
- * ------------------------------
- * Get the parameters for the relaxation reducing algorithm:
- *   If positive values (rho, press, kine) become negative during Newton's method, reduce "relaxtion"
- */
-void IkeWithPsALC_AD::getParamsReducingRelax(double &clipParameter, double &safeParameter, bool showOnScreen) {
-	if (!checkParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")) {
-		ParamMap::add("RELAXATION_CLIP_FOR_NEGATIVE_VALS  CLIP_PARAM=1.0e-9  SAFE_PARAM=0.8"); // add default values
-		if (mpi_rank == 0)
-			cout << "WARNING: added keyword \"RELAXATION_CLIP_NEGATIVE_VALS  CLIP_PARAM=1.0e-9  SAFE_PARAM=0.8\" to parameter map!"<<endl;
-	}
-
-	clipParameter  = getParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")->getDouble("CLIP_PARAM");
-	safeParameter  = getParam("RELAXATION_CLIP_FOR_NEGATIVE_VALS")->getDouble("SAFE_PARAM");
-
-	if(showOnScreen && mpi_rank==0) {
-		cout<<"> RELAXATION_CLIP_FOR_NEGATIVE_VALS (if some scalars become negative during NT, reduce relax): CLIP_PARAM = "<<clipParameter<<"  SAFE_PARAM="<<safeParameter<<endl;
-	}
-}
 
 /*
  * Method: getParamsBEuler
@@ -8262,10 +8277,10 @@ double IkeWithPsALC_AD::calcWeighted2NormForVecMinusVec(const double* qVec1, con
 /*
  * Method: calcUnweightedTangentVecDotFlowVecMinusGuess
  * ----------------------------------------------------
- * Calculate unweighted vector multiplication of [q_tangent; lambda_tangent]^T [flowVec - q_guess; lambda - lambda_guess],
+ * Calculate unweighted vector multiplication of [q_tangent; lambda_tangent]^T * [flowVec - q_guess; lambda - lambda_guess],
  * where flowVec = [rho; rhou; rhoE; scalars].
  *
- * This will be often called if time stepping is used instead of Newton's method
+ * This will be called mainly if time stepping is used instead of Newton's method
  *
  * Note: 1. The dimension of qTangent and qGuess must be ncv*nVars and the dimension of lambda and lambdaGuess can be either zero or NcontrolEqns.
  *       2. This is a MPI call, i.e., all the cores must have the q vectors,
@@ -8276,8 +8291,8 @@ double IkeWithPsALC_AD::calcWeighted2NormForVecMinusVec(const double* qVec1, con
  *   By value     = the weighted norm
  *   By reference = normSqRatio
  */
-double IkeWithPsALC_AD::calcUnweightedTangentVecDotFlowVecMinusGuess(double &innerProductRatio,
-		const int iEqn, double** q_tangent, const double* q_guess, const double* lambda_tangent, const double* lambda, const double* lambda_guess,
+double IkeWithPsALC_AD::calcUnweightedTangentVecDotFlowVecMinusGuess(const int iEqn, double** q_tangent, const double* q_guess,
+		const double* lambda_tangent, const double* lambda, const double* lambda_guess,
 		const int Nvars, const int NcontrolEqns) {
 	assert(q_tangent != NULL && q_guess != NULL);
 	if(NcontrolEqns != 0 && mpi_rank == mpi_size-1)
@@ -8309,15 +8324,13 @@ double IkeWithPsALC_AD::calcUnweightedTangentVecDotFlowVecMinusGuess(double &inn
 		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
 			lambdaVecDiff[iEqn] = lambda[iEqn] - lambda_guess[iEqn];
 
-	// Calculate the squre of the unweighted 2-norm
+	// Calculate the square of the unweighted 2-norm
 	double vecDotVec;
 	if(NcontrolEqns == 0) {
 		double myQvecCalc = 0.0;
 		for(int i=0; i<ncv*Nvars; ++i)
 			myQvecCalc += q_tangent[iEqn][i] * qVecDiff[i];
 		MPI_Allreduce(&myQvecCalc, &vecDotVec, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-
-		innerProductRatio = -1; // Just set it as -1 (actually it is infinity)
 	} else {
 		double myQvecCalc = 0.0;
 		for(int i=0; i<ncv*Nvars; ++i)
@@ -8504,7 +8517,7 @@ void IkeWithPsALC_AD::calcResidualsFrom1Drhs(double *Residual, double *rhs1Darra
 }
 
 /*
- * Method: calcTotResidual
+ * Method: calcSumResidual
  * -----------------------
  * Calculate total residual from the residual vector
  * Supported norm: inf-norm, one-norm, two-norm
@@ -8513,7 +8526,7 @@ void IkeWithPsALC_AD::calcResidualsFrom1Drhs(double *Residual, double *rhs1Darra
  *                   whichNorm==2 -> two-norm
  * Note: "Residual" should have been defined as " double *Residual = new double[5+nScal]; "
  */
-double IkeWithPsALC_AD::calcTotResidual(const double *Residual, const int whichNorm) {
+double IkeWithPsALC_AD::calcSumResidual(const double *Residual, const int whichNorm) {
 	assert(Residual != NULL);
 
 	int nVars = 5+nScal;
@@ -8540,7 +8553,7 @@ double IkeWithPsALC_AD::calcTotResidual(const double *Residual, const int whichN
 		break;
 	default:
 		if(mpi_rank==0)
-			cout<<"ERROR in IkeWithPsALC_AD::calcTotResidual(): unsupported norm = "<<whichNorm<<endl;
+			cout<<"ERROR in IkeWithPsALC_AD::calcSumResidual(): unsupported norm = "<<whichNorm<<endl;
 		throw(PSALC_ERROR_CODE);
 		break;
 	}
@@ -8586,6 +8599,9 @@ bool IkeWithPsALC_AD::calcNres(double* Nres, const double *q, double* rhs, const
 
 	// Calculate Nres = (old arclength) - (new arclength)
 	double NresVal = arcLength - arcLengthNew;
+
+//IKJ
+NresVal *= AreaLambda;
 
 	for(int iParam=0; iParam<NcontrolEqns; ++iParam)
 		Nres[iParam] = NresVal;
@@ -8648,6 +8664,9 @@ bool IkeWithPsALC_AD::calcNresForJOE(double* Nres, const int Nvars, const int Nc
 
 	// Calculate Nres = (new arclength) - (old arclength)
 	double NresVal = arcLength - arcLengthNew;
+
+//IKJ
+NresVal *= AreaLambda;
 
 	for(int iParam=0; iParam<NcontrolEqns; ++iParam)
 		Nres[iParam] = NresVal;

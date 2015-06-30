@@ -294,6 +294,8 @@ public:
      * Add barrier functions to the RHS of the scalars equations
      */
     void barrierSourceTurbScalars(double* rhs, const int nScal, const int iterNewton, const double residNormTotOld) {
+    	static bool firstCall = true;
+
         int debugLevel = getDebugLevel();
 
 		int kine_index = getScalarTransportIndex("kine");       assert(kine_index>-1);
@@ -352,13 +354,15 @@ public:
                     // statistics
                 }
             } else {
-                if(debugLevel>1 && mpi_rank==0)
+                if(debugLevel>1 && firstCall && mpi_rank==0)
                     cout<<"barrierSourceTurbScalars() is not active: No barrier method"<<endl;
             }
         } else {
-            if(debugLevel>1 && mpi_rank==0)
+            if(debugLevel>1 && firstCall && mpi_rank==0)
                 cout<<"IkeRansTurbKOm_AD::barrierSourceTurbScalars(): Barrier function = NO_METHOD"<<endl;
         }
+
+        firstCall = false;
     }
 
     /*
@@ -367,6 +371,8 @@ public:
      * Add barrier functions to the RHS of the scalars equations
      */
     void barrierSourceTurbScalars(double **RHSrhoScal, const int nScal, const int iterTS, const double residNormTotOld) {
+    	static bool firstCall = true;
+
         int debugLevel = getDebugLevel();
 
 		int kine_index = getScalarTransportIndex("kine");       assert(kine_index>-1);
@@ -418,13 +424,15 @@ public:
                     RHSrhoScal[omega_index][icv] += omegaSource;
                 }
             } else {
-                if(debugLevel>1 && mpi_rank==0)
+                if(debugLevel>1 && firstCall && mpi_rank==0)
                     cout<<"barrierSourceTurbScalars() is not active: No barrier method"<<endl;
             }
         } else {
-            if(debugLevel>1 && mpi_rank==0)
+            if(debugLevel>1 && firstCall && mpi_rank==0)
                 cout<<"IkeRansTurbKOm_AD::barrierSourceTurbScalars(): Barrier function = NO_METHOD"<<endl;
         }
+
+        firstCall = false;
     }
 
     /*
@@ -433,6 +441,8 @@ public:
      * Add barrier functions to the RHS of the scalars equations
      */
     void barrierSourceTurbScalars_AD(REALAS **rhs_rhoScal_AD, const int nScal, const int iterNewton, const double residNormTotOld) {
+    	static bool firstCall = true;
+
         int debugLevel = getDebugLevel();
 
 		int kine_index = getScalarTransportIndex("kine");       assert(kine_index>-1);
@@ -503,13 +513,15 @@ public:
                     // statistics
                 }
             } else {
-                if(debugLevel>1 && mpi_rank==0)
+                if(debugLevel>1 && firstCall && mpi_rank==0)
                     cout<<"barrierSourceTurbScalars_AD() is not active: No barrier method"<<endl;
             }
         } else {
-            if(debugLevel>1 && mpi_rank==0)
+            if(debugLevel>1 && firstCall && mpi_rank==0)
                 cout<<"IkeRansTurbKOm_AD::barrierSourceTurbScalars_AD(): Barrier function = NO_METHOD"<<endl;
         }
+
+        firstCall = false;
     }
 
     /*
@@ -518,6 +530,8 @@ public:
      * Add barrier functions to the RHS of the scalars equations
      */
     void barrierSourceTurbScalars1D_AD(const int icvCenter, REALAS* rhs_rhoScal_AD, const int nScal, const int iterNewton, const double residNormTotOld) {
+    	static bool firstCall = true;
+
         int debugLevel = getDebugLevel();
 
 		int kine_index = getScalarTransportIndex("kine");       assert(kine_index>-1);
@@ -576,13 +590,15 @@ public:
                     // statistics
                 }
             } else {
-                if(debugLevel>1 && mpi_rank==0)
+                if(debugLevel>1 && firstCall && mpi_rank==0)
                     cout<<"barrierSourceTurbScalars1D_AD() is not active: No barrier method"<<endl;
             }
         } else {
-            if(debugLevel>1 && mpi_rank==0)
+            if(debugLevel>1 && firstCall && mpi_rank==0)
                 cout<<"IkeRansTurbKOm_AD::barrierSourceTurbScalars1D_AD(): Barrier function = NO_METHOD"<<endl;
         }
+
+        firstCall = false;
     }
 
 	// ============================================
@@ -598,6 +614,7 @@ public:
 	 *                 2. initialHookScalarRansCombModel1D_AD in IkeTurbModel_KOM.h
 	 */
 	virtual void initialHookScalarRansTurbModel1D_AD(vector<int> &nbocv2ff, bool &firstCall) {
+
 		// debug level
 		int debugLevel = getDebugLevel();
 
@@ -612,7 +629,7 @@ public:
 				kine = &(scalarTranspEqVector_AD[i].phi);
 				grad_kine = &(scalarTranspEqVector_AD[i].grad_phi);
 				kine_diff = &(scalarTranspEqVector_AD[i].diff);
-				if (debugLevel > 1 && mpi_rank == 0)
+				if (debugLevel > 1 && firstCall && mpi_rank == 0)
 					cout<< "IkeRansTurbKOm_AD::initialHookScalarRansTurbModel1D_AD(): Connected Scalar Pointer "
 					<< scalarTranspEqVector_AD[i].name << endl;
 			}
@@ -623,7 +640,7 @@ public:
 				omega = &(scalarTranspEqVector_AD[i].phi);
 				grad_omega = &(scalarTranspEqVector_AD[i].grad_phi);
 				omega_diff = &(scalarTranspEqVector_AD[i].diff);
-				if (debugLevel > 1 && mpi_rank == 0)
+				if (debugLevel > 1 && firstCall && mpi_rank == 0)
 					cout<< "IkeRansTurbKOm_AD::initialHookScalarRansTurbModel1D_AD(): Connected Scalar Pointer "
 					<< scalarTranspEqVector_AD[i].name << endl;
 			}
@@ -643,6 +660,8 @@ public:
 	 *
 	 */
 	virtual void finalHookScalarRansTurbModel1D_AD() {
+		static bool firstCall = true;
+
 		// debug level
 		int debugLevel = getDebugLevel();
 
@@ -655,7 +674,7 @@ public:
 		if(!(*kine_diff).empty())
 			(*kine_diff).clear();
 		kine_diff = NULL;
-		if (debugLevel > 1 && mpi_rank == 0)
+		if (debugLevel > 1 && firstCall && mpi_rank == 0)
 			cout<<"IkeRansTurbKOm_AD::finalHookScalarRansTurbModel1D_AD(): Reset kine-related pointers as NULL "<<endl;
 
 		if(!(*omega).empty())
@@ -667,8 +686,10 @@ public:
 		if(!(*omega_diff).empty())
 			(*omega_diff).clear();
 		omega_diff = NULL;
-		if (debugLevel > 1 && mpi_rank == 0)
+		if (debugLevel > 1 && firstCall && mpi_rank == 0)
 			cout<<"IkeRansTurbKOm_AD::finalHookScalarRansTurbModel1D_AD(): Reset omega-related pointers as NULL "<<endl;
+
+		firstCall = false;
 	}
 #endif
 
@@ -701,7 +722,7 @@ public:
 					grad_kine = scalarTranspEqVector_AD[i].grad_phi;
 					kine_diff = scalarTranspEqVector_AD[i].diff;
 #endif
-					if (debugLevel > 1 && mpi_rank == 0)
+					if (debugLevel > 1 && firstCall && mpi_rank == 0)
 						cout<< "IkeRansTurbKOm_AD::initialHookScalarRansTurbModel1D_AD(): Connected Scalar Pointer "
 							<< scalarTranspEqVector_AD[i].name << endl;
 				}
@@ -716,7 +737,7 @@ public:
 					grad_omega = scalarTranspEqVector_AD[i].grad_phi;
 					omega_diff = scalarTranspEqVector_AD[i].diff;
 #endif
-					if (debugLevel > 1 && mpi_rank == 0)
+					if (debugLevel > 1 && firstCall && mpi_rank == 0)
 						cout<< "IkeRansTurbKOm_AD::initialHookScalarRansTurbModel1D_AD(): Connected Scalar Pointer "
 							<< scalarTranspEqVector_AD[i].name << endl;
 				}

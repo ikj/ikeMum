@@ -38,6 +38,12 @@
 
 enum HOW_TO_CALC_JAC {ROW_1D, ORDINARY_2D};
 enum MODIFIED_NEWTON {BASIC, SHAMANSKII, MODIFIED_SHAMANSKII};
+enum STAB_NEWTON_TYPE {NO_STAB_NEWTON, CONST_DIAG, CFL_BASED_DIAG, GENERAL_NEWTON_HU, GENERAL_NEWTON_HUSEO};
+// Note: 0 : Do not apply any method
+//       1 : Identity matrix (alpha*I)
+//       2 : Identity-like but scaled matrix
+//       3 : Generalized Newton's method (X.Hu, 2007)
+//       4 : Generalized Newton's method (J.L.Hueso et al., 2009)
 enum WEIGHT_RHS_METHOD {NO_RHSWEIGHT, REF_VALUES, LOCAL_VALUES, REF_VALUES_AND_DT_OVER_VOL};
 #define WEIGHT_RHS_MIN 1.0e-6
 
@@ -943,55 +949,11 @@ public:
 	 * UTILITY FUNCTIONS
 	 ****************************/
 	/*
-	 * Method: getParamsLinSolverNewton
-	 * --------------------------------
-	 * Obtain the linear solver parameters for Newton's method
-	 * Parameters:
-	 *   1. Linear solver thresholds
-	 *   	maxIterLS = maximum number of Newton (outer) iterations
-	 *   	zeroAbsLS = absolute residual of Newton (outer) iterations
-	 *   	zeroRelLS = relative residual of Newton (outer) iterations
-	 *   2. Ramp
-	 * 		startDecLS     = After "startDecLS" iteration, ramp starts
-	 * 		intervalDecLS  = At every "intervalDecLS" iteration, ramp occurs
-	 * 		incIterLS      = When ramps occurs, "maxIterLS" increases by "incIterLS"
-	 * 		maxFinalIterLS = After "maxFinalIterLS" iteration, ramp no longer occurs
-	 * 		decZeroLS      = When ramps occurs, "zeroAbsLS" and "zeroRelLS" drops by "decZeroLS"
-	 * 		minZeroAbsLS   =
-	 * 		minZeroRelLS   =
+	 * Method: getNewtonParam
+	 * ----------------------
+	 * Read parameters for Newton's method from the input file
 	 */
-	void getParamsLinSolverNewton(int &maxIterLS, double &zeroAbsLS, double &zeroRelLS,
-			int &startDecLS, int &intervalDecLS, int &incIterLS, int &maxFinalIterLS, double &decZeroLS, double &minZeroAbsLS, double &minZeroRelLS,
-			const bool firstCall, const int debugLevel);
-
-	/*
-	 * Method: getParamsBacktrackNewton
-	 * --------------------------------
-	 * Obtain the backtracking parameters for the Newton method
-	 * Parameters:
-	 *   backtrackMaxIter 			= "BACKTRACKING_PARAMETERS"->"MAX_ITER"
-	 *   backtrackRelax_LowerBound 	= "BACKTRACKING_PARAMETERS"->"RELAX_LOWER_BOUND"
-	 *   backtrackRelax_UpperBound 	= "BACKTRACKING_PARAMETERS"->"RELAX_UPPER_BOUND"
-	 *   backtrackBarrierCoeff 		= "BACKTRACKING_PARAMETERS"->"BARRIER_COEFF"
-	 *
-	 *   skipBT_firstITer  = "BACKTRACKING_SKIP"->"FIRST_ITER"
-	 *   skipBT_freq       = "BACKTRACKING_SKIP"->"FREQUENCY"
-	 */
-	void getParamsBacktrackNewton(int &backtrackMaxIter, double &backtrackRelax_LowerBound, double &backtrackRelax_UpperBound, double &backtrackBarrierCoeff,
-			bool &skipBT_firstITer, int &skipBT_freq,
-			const bool firstCall, const int debugLevel);
-
-	/*
-	 * Method: getParamStabilizedNewton
-	 * --------------------------------
-	 * Obtain the parameters for the stabilized Newton's method for the problems with singular Jacobians
-	 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"MATRIX_TYPE"
-	 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA"
-	 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA_EPS"
-	 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"STARTING_ITER"
-	 */
-	void getParamStabilizedNewton(int &stabilizationMethodType, double &stabilizationAlpha, double &stabilizationAlphaEps, int &stabilizationStartingIter,
-			const bool firstCall, const int debugLevel);
+	void getNewtonParam();
 
 	/*
 	 * Method: getParamMoreNewtonSteps
@@ -1011,14 +973,6 @@ public:
 	 * Currently supported methods = BASIC, SHAMANSKII, MODIFIED_SHAMANSKII
 	 */
 	void getParamsModifiedNewtonMethod(MODIFIED_NEWTON& modifiedNewtonMethod, double& modifNewtonRelResid, int& modifNewtonFreq);
-
-	/*
-	 * Method: getParamsReducingRelax
-	 * ------------------------------
-	 * Get the parameters for the relaxation reducing algorithm:
-	 *   If positive values (rho, press, kine) become negative during Newton's method, reduce "relaxtion"
-	 */
-	void getParamsReducingRelax(double &clipParameter, double &safeParameter, bool showOnScreen);
 
 	/*
 	 * Method: getParamsBEuler
@@ -1146,8 +1100,8 @@ public:
 	 *   By value     = the weighted norm
 	 *   By reference = normSqRatio
 	 */
-	double calcUnweightedTangentVecDotFlowVecMinusGuess(double &innerProductRatio,
-			const int iEqn, double** q_tangent, const double* q_guess, const double* lambda_tangent, const double* lambda, const double* lambda_guess,
+	double calcUnweightedTangentVecDotFlowVecMinusGuess(const int iEqn, double** q_tangent, const double* q_guess,
+			const double* lambda_tangent, const double* lambda, const double* lambda_guess,
 			const int Nvars, const int NcontrolEqns);
 
 	/*
@@ -1209,7 +1163,7 @@ public:
 	virtual void calcResidualsFrom1Drhs(double *Residual, double *rhs1Darray, const int whichNorm);
 
 	/*
-	 * Method: calcTotResidual
+	 * Method: calcSumResidual
 	 * -----------------------
 	 * Calculate total residual from the residual vector
 	 * Supported norm: inf-norm, one-norm, two-norm
@@ -1218,7 +1172,7 @@ public:
 	 *                   whichNorm==2 -> two-norm
 	 * Note: "Residual" should have been defined as " double *Residual = new double[5+nScal]; "
 	 */
-	double calcTotResidual(const double *Residual, const int whichNorm);
+	double calcSumResidual(const double *Residual, const int whichNorm);
 
 	/*
 	 * Method: calcNres
@@ -1622,7 +1576,32 @@ protected:
 		double decZeroLS; 		// "LSNT_RAMP"-->"FACTOR_RESID"
 		double minZeroAbsLS; 	// "LSNT_RAMP"-->"MIN_ABS_RESID"
 		double minZeroRelLS; 	// "LSNT_RAMP"-->"MIN_REL_RESID"
+
+		// Relaxation reducing based on negative values
+		double clipParameter; // "RELAXATION_CLIP_THRESHOLD"
+		double safeParameter; // "RELAXATION_CLIP_SAFETY"
+
+		// Backtracking
+		int backtrackMaxIter; 				// "BACKTRACKING_PARAMETERS"-->"MAX_ITER"
+		double backtrackRelax_LowerBound; 	// "BACKTRACKING_PARAMETERS"-->"RELAX_LOWER_BOUND"
+		double backtrackRelax_UpperBound; 	// "BACKTRACKING_PARAMETERS"-->"RELAX_UPPER_BOUND"
+		double backtrackBarrierCoeff; 		// "BACKTRACKING_PARAMETERS"-->"BARRIER_COEFF"
+		bool skipBT_firstITer;   // "BACKTRACKING_SKIP"-->"FIRST_ITER"
+		int  skipBT_freq;        // "BACKTRACKING_SKIP"-->"FREQUENCY"
+
+		//  Stabilized Newton's method for the problem with a singular Jacobian
+		STAB_NEWTON_TYPE stabilizationMethodType;   // "STABILIZATION_FOR_SINGULAR_JAC"-->"MATRIX_TYPE"
+		double stabilizationAlpha;        // "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA"
+		double stabilizationAlphaEps;     // "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA_EPS"
+
+		// Trust-region size
+		double trustRegionSize;
 	};
+	NewtonParam newtonParam;
+
+// IKJ
+double AreaLambda;
+
 	int    myNonDiagAdd_count;     // Statistics: the number of modified diagonal
 	double myNonDiagAdd_rhsAbsSum; // Statistics: the increase of RHS due to this treatment
 
