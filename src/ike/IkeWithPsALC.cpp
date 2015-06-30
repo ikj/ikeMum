@@ -2749,18 +2749,6 @@ cout<<"** Note: max diag for flow = "<<maxDiagValue<<", diag for lambda = "<<dia
 						cout<<"WARNING in getSteadySolnByNewton(): The tangential condition is NOT satisfied: Nres["<<iParam<<"] = "<<Nres[iParam]<<" (target arclength="<<arcLength<<")"<<endl
 							<<"                                    (lambdaPart + flowPart = "<<lambdaPart<<" + "<<arcLengthNew-lambdaPart<<" = "<<arcLengthNew<<")"<<endl;
 					}
-
-					int kine_index  = getScalarTransportIndex("kine");
-					int omega_index = getScalarTransportIndex("omega");
-					for(int icv=0; icv<ncv; ++icv) {
-						int indexStart = icv*m;
-						residField[icv]  = q_tangent[iParam][indexStart]   * (rho[icv] - q1[indexStart]);
-						residField2[icv] = q_tangent[iParam][indexStart+1] * (rhou[icv][0] - q1[indexStart+1]);
-						residField3[icv] = q_tangent[iParam][indexStart+2] * (rhou[icv][1] - q1[indexStart+2]);
-						residField4[icv] = q_tangent[iParam][indexStart+4] * (rhoE[icv] - q1[indexStart+4]);
-						residField5[icv] = q_tangent[iParam][indexStart+5] * (UgpWithCvCompFlow::scalarTranspEqVector[kine_index].phi[icv]  - q1[indexStart+5]);
-						residField6[icv] = q_tangent[iParam][indexStart+6] * (UgpWithCvCompFlow::scalarTranspEqVector[omega_index].phi[icv] - q1[indexStart+6]);
-					}
 				}
 
 			if(mpi_rank == mpi_size-1) {
@@ -2780,6 +2768,24 @@ cout<<"** Note: max diag for flow = "<<maxDiagValue<<", diag for lambda = "<<dia
 			if(debugLevel>0 && mpi_rank==0)
 				printf("           >> Residual of the flow RHS = %.5e\n", residNormTot);
 		}
+
+////IKJ
+//for(int iParam=0; iParam<NcontrolEqns; ++iParam)
+//for(int icv=0; icv<ncv; ++icv) {
+//	int indexStart = icv*m;
+//	residField[icv]  = fabs(q_tangent[iParam][indexStart]);
+//	residField2[icv] = fabs(q_tangent[iParam][indexStart+1]);
+//	residField3[icv] = fabs(q_tangent[iParam][indexStart+2]);
+//	residField4[icv] = fabs(q_tangent[iParam][indexStart+4]);
+//	residField5[icv] = fabs(q_tangent[iParam][indexStart+5]);
+//	residField6[icv] = fabs(q_tangent[iParam][indexStart+6]);
+//}
+//updateCvDataG1G2(residField,  REPLACE_DATA);
+//updateCvDataG1G2(residField2, REPLACE_DATA);
+//updateCvDataG1G2(residField3, REPLACE_DATA);
+//updateCvDataG1G2(residField4, REPLACE_DATA);
+//updateCvDataG1G2(residField5, REPLACE_DATA);
+//updateCvDataG1G2(residField6, REPLACE_DATA);
 
 		/******
 		 ** Update residNormVecFlowOld and residNormTotOld:
@@ -2816,10 +2822,21 @@ cout<<"** Note: max diag for flow = "<<maxDiagValue<<", diag for lambda = "<<dia
 			if(useExactJac) cout<<"Exact)";
 			else            cout<<modifiedNewtonMethod<<")";
 			if(NcontrolEqns > 0) {
-				printf("     %15.8e\n\n",lambda[0]);
+				printf("     %15.8e\n",lambda[0]);
 			} else {
-				printf("\n\n");
+				printf("\n");
 			}
+
+			if(debugLevel > 0) {
+				printf("           RESID: ");
+				for(int i=0; i<5+nScal; ++i)
+					printf("%10.3e", residNormVecFlow[i]);
+				for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+					printf(" | %10.3e", Nres[iEqn]);
+				printf("\n");
+			}
+
+			printf("\n");
 		}
 
 		/******
@@ -8402,6 +8419,69 @@ void IkeWithPsALC_AD::calcUnitVecWithWeightedNorm(double* u_q, double* u_lambda,
 	if(mpi_rank==mpi_size-1)
 		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
 			u_lambda[iEqn] = lambdaVec[iEqn] / weighted2norm;
+
+	// Here we give the overview on the tangential vectors
+	if(debugLevel > 0) {
+		// BINning
+		int TOT_BIN_SIZE = 16;
+		int my_bin_count[TOT_BIN_SIZE];
+		for (int ibin=0; ibin<TOT_BIN_SIZE; ++ibin)
+			my_bin_count[ibin] = 0;
+
+		for(int i=0; i<ncv*Nvars; ++i) {
+			double val = fabs(u_q[i]);
+			for (int ibin=0; ibin<TOT_BIN_SIZE-1; ++ibin) {
+				if(val<=pow(10.0, -double(ibin)) && val>pow(10.0, -double(ibin+1))) {
+					++my_bin_count[ibin];
+					break;
+				}
+			}
+			if(val<=pow(10.0, -double(TOT_BIN_SIZE-1)))
+				++my_bin_count[TOT_BIN_SIZE-1];
+		}
+
+		int bin_count[TOT_BIN_SIZE];
+		MPI_Allreduce(my_bin_count, bin_count, TOT_BIN_SIZE, MPI_INT, MPI_SUM, mpi_comm);
+
+		// Min and Max for each variables
+		double my_min_uq[Nvars], my_max_uq[Nvars];
+		for(int i=0; i<Nvars; ++i) {
+			my_min_uq[i] = ABSURDLY_BIG_NUMBER;
+			my_max_uq[i] = 0;
+		}
+
+		for(int icv=0; icv<ncv; ++icv) {
+			int index = icv*Nvars;
+			for(int i=0; i<Nvars; ++i) {
+				double val = fabs(u_q[index]);
+				my_min_uq[i] = min(my_min_uq[i], val);
+				my_max_uq[i] = max(my_max_uq[i], val);
+				++index;
+			}
+		}
+
+		double min_uq[Nvars], max_uq[Nvars];
+		MPI_Allreduce(my_min_uq, min_uq, Nvars, MPI_DOUBLE, MPI_MIN, mpi_comm);
+		MPI_Allreduce(my_max_uq, max_uq, Nvars, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+		// Show the information on the screen
+		if(mpi_rank==mpi_size-1) {
+			cout<<endl
+				<<"IkeWithPsALC_AD::calcUnitVecWithWeightedNorm(): Information on q_tangent >>"<<endl;
+			for (int ibin=0; ibin<TOT_BIN_SIZE-1; ++ibin)
+				printf("     BIN%d (10^%d ~ 10^%d): count = %d\n", ibin, -(ibin+1), -ibin, bin_count[ibin]);
+			printf("     BIN%d (      ~ 10^%d): count = %d\n", TOT_BIN_SIZE-1, -(TOT_BIN_SIZE-1), bin_count[TOT_BIN_SIZE-1]);
+			cout<<"     tot # = "<<cvora[mpi_size]*Nvars<<endl;
+			cout<<"     ------------------"<<endl;
+			for(int i=0; i<Nvars; ++i)
+				printf("     VAR%d: %e ~ %e\n", i, min_uq[i], max_uq[i]);
+
+			cout<<"---------------------"<<endl
+				<<"IkeWithPsALC_AD::calcUnitVecWithWeightedNorm(): Information on lambda_tangent >>"<<endl
+				<<"     |lambda_tangent[0]| = "<<u_lambda[0]<<endl
+			    <<endl;
+		}
+	}
 }
 
 /*
