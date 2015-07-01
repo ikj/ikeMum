@@ -1130,6 +1130,13 @@ public:
 			const int Nvars, const int NcontrolEqns);
 
 	/*
+	 * Method: showOverviewOnTangentVectors
+	 * ------------------------------------
+	 * Here we give the overview on the tangential vectors
+	 */
+	void showOverviewOnTangentVectors(const double* u_q, const double* u_lambda, const int Nvars, const int NcontrolEqns);
+
+	/*
 	 * Method: calcUnitVec
 	 * -------------------
 	 * Calculate the normalized form of a given vector [q; lambda],

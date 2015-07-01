@@ -1427,6 +1427,8 @@ void IkeWithPsALC_AD::singlePsALCstep(double *qVec, const double *q0, const doub
 	 *
 	 * Note: residual = absTolNewton + relTolNewton * norm(rhs_initial)
 	 */
+	static bool firstCall = true;
+
 	if(debugLevel>1 && mpi_rank==0) cout<<"IkeWithPsALC_AD::singlePsALCstep()"<<endl;
 
 	assert(lambda0!=NULL && lambda1!=NULL);
@@ -1461,6 +1463,10 @@ void IkeWithPsALC_AD::singlePsALCstep(double *qVec, const double *q0, const doub
 
 	MPI_Bcast(lambda_tangent, NcontrolEqns, MPI_DOUBLE, mpi_size-1, mpi_comm);
 		// Note: lambda_tangent will be used only at mpi_rank==mpi_size-1, but broadcasting it just in case
+
+	if(debugLevel>0 && firstCall) {
+		showOverviewOnTangentVectors(q_tangent[0], lambda_tangent, nVars, NcontrolEqns);
+	}
 
 	if(debugLevel>1) {
 		double totalLength = vecDotVecWithWeight(q_tangent[0], q_tangent[0], lambda_tangent, lambda_tangent, weightLambda, nVars, NcontrolEqns);
@@ -1669,6 +1675,8 @@ void IkeWithPsALC_AD::singlePsALCstep(double *qVec, const double *q0, const doub
 		jacMatrixSTL.clear();
 
 	MPI_Barrier(mpi_comm);
+
+	firstCall = false;
 }
 
 /*
@@ -2081,6 +2089,10 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 
 	double relaxation = getDoubleParam("UNDER_RELAXATION", "1.0");
 
+	double alpha_stab_newton = 1.0; // This will be only used for "CFL_BASED_DIAG" stabilized-Newton
+	if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON) // Apply diagonal scaled by CFL and local volume
+		alpha_stab_newton = newtonParam.stabilizationAlpha;
+
 	while(!done) {
 		/******
 		 ** Check iterations and report error
@@ -2174,10 +2186,14 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 
 			if(newtonParam.stabilizationMethodType == CONST_DIAG) { // Apply constant diagonal scaled by local volume
 				double mySumVolume = 0.0;
+				double myMinDiagValue = ABSURDLY_BIG_NUMBER, myMaxDiagValue = 0.0;
 				for(int icv=0; icv<ncv; ++icv) {
-					double diagValue = cv_volume[icv] * newtonParam.stabilizationAlpha;
+					double diagValue = cv_volume[icv] / alpha_stab_newton;
 
 					mySumVolume += cv_volume[icv];
+
+					myMinDiagValue = min(myMinDiagValue, diagValue);
+					myMaxDiagValue = max(myMaxDiagValue, diagValue);
 
 					for(int ivar=0; ivar<m; ++ivar) {
 						int row = icv*m + ivar;
@@ -2190,16 +2206,27 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 				}
 				double sumVolume;
 				MPI_Allreduce(&mySumVolume, &sumVolume, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+				double minDiagValue, maxDiagValue;
+				MPI_Allreduce(&myMinDiagValue, &minDiagValue, 1, MPI_DOUBLE, MPI_MIN, mpi_comm);
+				MPI_Allreduce(&myMaxDiagValue, &maxDiagValue, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
 
 				if(NcontrolEqns > 0 && mpi_rank == mpi_size-1) {
-					double diagValueLambda = sumVolume * newtonParam.stabilizationAlpha; // Use total volume for lambda
+					double VolumeLambda = 1.0e-2 * AreaLambda * sumVolume;
+					double diagValueLambda = VolumeLambda / alpha_stab_newton; // Use total volume for lambda
 					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
 						lambda_tangent_inJacMat[iEqn] -= diagValueLambda;
 						++myNonDiagAdd_count; // Just for Statistics
 					}
+
+					cout<<"           >> CONST_DIAG: DT = "<<alpha_stab_newton
+					    <<" --> max diag (flow)="<<maxDiagValue<<", min diag (flow)="<<minDiagValue
+					    <<"; diag for lambda="<<diagValueLambda<<endl;
 				}
+
+				MPI_Barrier(mpi_comm);
 			} else if(newtonParam.stabilizationMethodType == CFL_BASED_DIAG) { // Apply diagonal scaled by CFL and local volume
-				double dt_min = calcDt(newtonParam.stabilizationAlpha);  // Take CFL = stabilizationAlpha
+				// Calculate dt for each CV
+				double dt_min = calcDt(alpha_stab_newton);
 
 				double my_dt_max = 0.0, my_vol_sum = 0.0;
 				double myMinDiagValue = ABSURDLY_BIG_NUMBER, myMaxDiagValue = 0.0;
@@ -2229,13 +2256,18 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 
 				if(NcontrolEqns > 0 && mpi_rank == mpi_size-1) {
 					double VolumeLambda = 1.0-2 * AreaLambda;  // V = 1 / |lambda_tangent|.
-					double diagValueLambda = VolumeLambda / newtonParam.stabilizationAlpha;
-cout<<"** Note: max diag for flow = "<<maxDiagValue<<", diag for lambda = "<<diagValueLambda<<endl;
+					double diagValueLambda = VolumeLambda / alpha_stab_newton;
 					for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
 						lambda_tangent_inJacMat[iEqn] -= diagValueLambda; // Note that the Jacobian matrix is negative (semi-) definite
 						++myNonDiagAdd_count; // Just for Statistics
 					}
+
+					cout<<"           >> CFL_BASED_DIAG: CFL = "<<alpha_stab_newton
+					    <<" --> max diag (flow)="<<maxDiagValue<<", min diag (flow)="<<minDiagValue
+					    <<"; diag for lambda="<<diagValueLambda<<endl;
 				}
+
+				MPI_Barrier(mpi_comm);
 			} else if(newtonParam.stabilizationMethodType == GENERAL_NEWTON_HU) {
 				                                      // Apply a scaled diagonal matrix - scaled with rhs: See X.Wu, Applied Mathematics and Computation, vol.189, 2007.
 				                                      // Basically finding x that minimize "0.5 * || diag(exp(w*(x-x*))) * f(x) ||_2^2"
@@ -2898,6 +2930,29 @@ cout<<"** Note: max diag for flow = "<<maxDiagValue<<", diag for lambda = "<<dia
 					cout<<"Newton-solver converged but keep running the simulation since MORE_STEPS_BELOW_CONV="<<moreNTstepsBelowConv_moreSteps<<", DELTA_Q="<<moreNTstepsBelowConv_deltaQ<<endl;
 				else
 					cout<<"Even though MORE_STEPS_BELOW_CONV="<<moreNTstepsBelowConv_moreSteps<<", do not launch more Newton steps since other conditions have met"<<endl;
+			}
+		}
+
+		if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON) { // Apply diagonal scaled by CFL and local volume
+			// Check ramping
+			if (!checkParam("RAMP_STAB_NEWTON_ALPHA")) {
+				ParamMap::add("RAMP_STAB_NEWTON_ALPHA AFTER_ITER=10  INTERVAL_ITER=10  FACTOR_INC=1.0  TARGET_ALPHA=1.0");    // add default: no increase of CFL number!
+				if (mpi_rank == 0)
+					cout << "WARNING: added \"RAMP_STAB_NEWTON_ALPHA AFTER_ITER=10  INTERVAL_ITER=10  FACTOR_INC=1.0  TARGET_ALPHA=1.0\" to parameter map" << endl;
+			}
+
+			int startIncAlpha    = getParam("RAMP_STAB_NEWTON_ALPHA")->getInt("AFTER_ITER");
+			int intervalIncAlpha = getParam("RAMP_STAB_NEWTON_ALPHA")->getInt("INTERVAL_ITER");
+			double incAlpha    = getParam("RAMP_STAB_NEWTON_ALPHA")->getDouble("FACTOR_INC");
+			double targetAlpha = getParam("RAMP_STAB_NEWTON_ALPHA")->getDouble("TARGET_ALPHA");
+
+			if ((iterNewton >= startIncAlpha) && (iterNewton%intervalIncAlpha == 0)) {
+				if(incAlpha>1.0 && alpha_stab_newton<targetAlpha)
+					if(relaxation > 1.0/incAlpha)
+						alpha_stab_newton *= incAlpha;
+				if(incAlpha<1.0 && alpha_stab_newton>targetAlpha)
+					if(relaxation > incAlpha)
+						alpha_stab_newton *= incAlpha;
 			}
 		}
 ////IKJ
@@ -8419,69 +8474,76 @@ void IkeWithPsALC_AD::calcUnitVecWithWeightedNorm(double* u_q, double* u_lambda,
 	if(mpi_rank==mpi_size-1)
 		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
 			u_lambda[iEqn] = lambdaVec[iEqn] / weighted2norm;
+}
 
-	// Here we give the overview on the tangential vectors
-	if(debugLevel > 0) {
-		// BINning
-		int TOT_BIN_SIZE = 16;
-		int my_bin_count[TOT_BIN_SIZE];
-		for (int ibin=0; ibin<TOT_BIN_SIZE; ++ibin)
-			my_bin_count[ibin] = 0;
+/*
+ * Method: showOverviewOnTangentVectors
+ * ------------------------------------
+ * Here we give the overview on the tangential vectors
+ */
+void IkeWithPsALC_AD::showOverviewOnTangentVectors(const double* u_q, const double* u_lambda, const int Nvars, const int NcontrolEqns) {
+	// BINning
+	int TOT_BIN_SIZE = 16;
+	int my_bin_count[TOT_BIN_SIZE];
+	for (int ibin=0; ibin<TOT_BIN_SIZE; ++ibin)
+		my_bin_count[ibin] = 0;
 
-		for(int i=0; i<ncv*Nvars; ++i) {
-			double val = fabs(u_q[i]);
-			for (int ibin=0; ibin<TOT_BIN_SIZE-1; ++ibin) {
-				if(val<=pow(10.0, -double(ibin)) && val>pow(10.0, -double(ibin+1))) {
-					++my_bin_count[ibin];
-					break;
-				}
+	for(int i=0; i<ncv*Nvars; ++i) {
+		double val = fabs(u_q[i]);
+		for (int ibin=0; ibin<TOT_BIN_SIZE-1; ++ibin) {
+			if(val<=pow(10.0, -double(ibin)) && val>pow(10.0, -double(ibin+1))) {
+				++my_bin_count[ibin];
+				break;
 			}
-			if(val<=pow(10.0, -double(TOT_BIN_SIZE-1)))
-				++my_bin_count[TOT_BIN_SIZE-1];
 		}
+		if(val<=pow(10.0, -double(TOT_BIN_SIZE-1)))
+			++my_bin_count[TOT_BIN_SIZE-1];
+	}
 
-		int bin_count[TOT_BIN_SIZE];
-		MPI_Allreduce(my_bin_count, bin_count, TOT_BIN_SIZE, MPI_INT, MPI_SUM, mpi_comm);
+	int bin_count[TOT_BIN_SIZE];
+	MPI_Allreduce(my_bin_count, bin_count, TOT_BIN_SIZE, MPI_INT, MPI_SUM, mpi_comm);
 
-		// Min and Max for each variables
-		double my_min_uq[Nvars], my_max_uq[Nvars];
+	// Min and Max for each variables
+	double my_min_uq[Nvars], my_max_uq[Nvars];
+	for(int i=0; i<Nvars; ++i) {
+		my_min_uq[i] = ABSURDLY_BIG_NUMBER;
+		my_max_uq[i] = 0;
+	}
+
+	for(int icv=0; icv<ncv; ++icv) {
+		int index = icv*Nvars;
 		for(int i=0; i<Nvars; ++i) {
-			my_min_uq[i] = ABSURDLY_BIG_NUMBER;
-			my_max_uq[i] = 0;
-		}
-
-		for(int icv=0; icv<ncv; ++icv) {
-			int index = icv*Nvars;
-			for(int i=0; i<Nvars; ++i) {
-				double val = fabs(u_q[index]);
-				my_min_uq[i] = min(my_min_uq[i], val);
-				my_max_uq[i] = max(my_max_uq[i], val);
-				++index;
-			}
-		}
-
-		double min_uq[Nvars], max_uq[Nvars];
-		MPI_Allreduce(my_min_uq, min_uq, Nvars, MPI_DOUBLE, MPI_MIN, mpi_comm);
-		MPI_Allreduce(my_max_uq, max_uq, Nvars, MPI_DOUBLE, MPI_MAX, mpi_comm);
-
-		// Show the information on the screen
-		if(mpi_rank==mpi_size-1) {
-			cout<<endl
-				<<"IkeWithPsALC_AD::calcUnitVecWithWeightedNorm(): Information on q_tangent >>"<<endl;
-			for (int ibin=0; ibin<TOT_BIN_SIZE-1; ++ibin)
-				printf("     BIN%d (10^%d ~ 10^%d): count = %d\n", ibin, -(ibin+1), -ibin, bin_count[ibin]);
-			printf("     BIN%d (      ~ 10^%d): count = %d\n", TOT_BIN_SIZE-1, -(TOT_BIN_SIZE-1), bin_count[TOT_BIN_SIZE-1]);
-			cout<<"     tot # = "<<cvora[mpi_size]*Nvars<<endl;
-			cout<<"     ------------------"<<endl;
-			for(int i=0; i<Nvars; ++i)
-				printf("     VAR%d: %e ~ %e\n", i, min_uq[i], max_uq[i]);
-
-			cout<<"---------------------"<<endl
-				<<"IkeWithPsALC_AD::calcUnitVecWithWeightedNorm(): Information on lambda_tangent >>"<<endl
-				<<"     |lambda_tangent[0]| = "<<u_lambda[0]<<endl
-			    <<endl;
+			double val = fabs(u_q[index]);
+			my_min_uq[i] = min(my_min_uq[i], val);
+			my_max_uq[i] = max(my_max_uq[i], val);
+			++index;
 		}
 	}
+
+	double min_uq[Nvars], max_uq[Nvars];
+	MPI_Allreduce(my_min_uq, min_uq, Nvars, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(my_max_uq, max_uq, Nvars, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+	// Show the information on the screen
+	if(mpi_rank==mpi_size-1) {
+		cout<<endl
+				<<"IkeWithPsALC_AD::showOverviewOnTangentVectors(): Information on q_tangent >>"<<endl;
+		for (int ibin=0; ibin<TOT_BIN_SIZE-1; ++ibin)
+			printf("     BIN%d (10^%d ~ 10^%d): count = %d\n", ibin, -(ibin+1), -ibin, bin_count[ibin]);
+		printf("     BIN%d (      ~ 10^%d): count = %d\n", TOT_BIN_SIZE-1, -(TOT_BIN_SIZE-1), bin_count[TOT_BIN_SIZE-1]);
+		cout<<"     tot # = "<<cvora[mpi_size]*Nvars<<endl;
+		cout<<"     ------------------"<<endl;
+		for(int i=0; i<Nvars; ++i)
+			printf("     VAR%d: %e ~ %e\n", i, min_uq[i], max_uq[i]);
+
+		if(NcontrolEqns > 0)
+			cout<<"---------------------"<<endl
+			<<"IkeWithPsALC_AD::showOverviewOnTangentVectors(): Information on lambda_tangent >>"<<endl
+			<<"     |lambda_tangent[0]| = "<<u_lambda[0]<<endl
+			<<endl;
+	}
+
+	MPI_Barrier(mpi_comm);
 }
 
 /*
