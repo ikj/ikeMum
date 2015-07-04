@@ -2621,8 +2621,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 					if(debugLevel > 0 && mpi_rank == 0)
 						cout<<"                  Forgive BACKTRACKING to escape from the current point: Instead, set relaxation="<<relaxation<<" (lambda="<<lambda[0]<<")"<<endl;
 				} else {
-                    MPI_Barrier(mpi_comm);
-                    
 					// Show the reason to use the backtracking algorithm on the screen if the debug level is high
 					if(debugLevel > 0) {
 						if(mpi_rank==0) {
@@ -2637,6 +2635,10 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 							cout<<endl;
 						}
 					}
+					MPI_Barrier(mpi_comm);
+
+//MPI_Barrier(mpi_comm);
+//if(mpi_rank==1) cout<<"*iter="<<iterNewton<<"- 1"<<endl;
 
 					// Launch the backtracking algorithm -------
 					// First, calculate the relaxation size by calling backtrackWithJOE_calcRelaxAndRHS()
@@ -2645,6 +2647,9 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 							residNormVecFlowOld, residNormVecFlow, whichNorm, newtonParam.backtrackBarrierCoeff,
 							NcontrolEqns, q_tangent, lambda_tangent, weightLambda, q1, Nres, lambda1, arcLength);
 							// Since the reduction algorithm based on delta_lambda is heuristics, use "relaxBeforeDlambda" instead of "relaxation"
+
+//MPI_Barrier(mpi_comm);
+//if(mpi_rank==1) cout<<"*iter="<<iterNewton<<"- 2"<<endl;
 
 					calcResidualsFrom1Drhs(residNormVecFlow, rhs, whichNorm);
 					residNormTotFlowOnly = calcSumResidual(residNormVecFlow, whichNorm);
