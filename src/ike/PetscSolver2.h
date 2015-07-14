@@ -34,7 +34,7 @@ static bool ShowPetscRhsMatlab = false; // If this is true, the RHS vector will 
 static bool ShowPetscXMatlab = false; // If this is true, the solution vector will be shown on the screen
 		                              // right after the vector is constructed in setLinSysForPetsc()
 
-//#define USE_SLEPC_WITH_PETSC
+#define USE_SLEPC_WITH_PETSC
 #ifdef USE_SLEPC_WITH_PETSC
 	//#include "slepcsys.h"
 	#include <slepceps.h>
@@ -153,20 +153,20 @@ public:
 	PetscSolver2(int *cvora, int *nbocv2_i, vector<int> &nbocv2_v, int m, bool hasInitialGuess=false, int NcontrolParams=0, int monitorConvergInterval=0) {
 		KspTols.convergMonitorInterv = monitorConvergInterval;
 
-	#if PETSC_DEBUG_LEVEL > 1
+#if PETSC_DEBUG_LEVEL > 1
 		if(mpi_rank==0) cout<<"PetscSolver2()"<<endl;
 		if(mpi_rank==0 && monitorConvergInterval>0) cout<<"PETSc convergence history will be saved in a vector<pair<int, double>>"<<endl;
-	#endif
+#endif
 		initPetscSolver(cvora, nbocv2_i, nbocv2_v, m, "ASM", false, hasInitialGuess, NcontrolParams); // By default, use the Additive Schwarz pre-conditioner and do not use PCreuse
 	}
 
 	PetscSolver2(int *cvora, int *nbocv2_i, vector<int> &nbocv2_v, int m, string pcType, int pcLevels, bool pcReuse, bool hasInitialGuess=false, int NcontrolParams=0, int monitorConvergInterval=0) {
 		KspTols.convergMonitorInterv = monitorConvergInterval;
 
-	#if PETSC_DEBUG_LEVEL > 1
+#if PETSC_DEBUG_LEVEL > 1
 		if(mpi_rank==0) cout<<"PetscSolver2()"<<endl;
 		if(mpi_rank==0 && monitorConvergInterval>0) cout<<"PETSc convergence history will be saved in a vector<pair<int, double>>"<<endl;
-	#endif
+#endif
 		initPetscSolver(cvora, nbocv2_i, nbocv2_v, m, pcType, pcReuse, hasInitialGuess, NcontrolParams, pcLevels); // Note: pcLevels is required only for the ILU pre-conditioner
 	}
 
@@ -174,7 +174,7 @@ public:
 	 * Destructor
 	 */
 	~PetscSolver2() {
-#if PETSC_DEBUG_LEVEL > 1
+#if PETSC_DEBUG_LEVEL > 0
 		if(mpi_rank==0)
 			cout<<"~PetscSolver2()"<<endl;
 #endif
@@ -327,10 +327,10 @@ public:
 
 				int arrIndex = 0; // array index for cindGlobalArr_eachRow or valuesArr_eachRow
 				for (int i=index_f; i<=index_l; ++i) {
-	#if PETSC_DEBUG_LEVEL > 0
+#if PETSC_DEBUG_LEVEL > 0
 					assert(arrIndex<ncols_eachRow);
 					assert(rowGlobal==A.get_global_rind(i, mpi_rank, m, cvora));
-	#endif
+#endif
 					cindGlobalArr_eachRow[arrIndex] = A.get_global_cind(i, mpi_rank, m, cvora, cv_gl, NcontrolParams, ncv_gg);
 
 					// increase arrIndex
@@ -954,10 +954,12 @@ protected:
 	PetscErrorCode finalizePetscSolver() {
 		PetscErrorCode ierr;
 
+#ifndef USE_SLEPC_WITH_PETSC
 		ierr = VecDestroy(&x_);  CHKERRQ(ierr);
 		ierr = VecDestroy(&b_);  CHKERRQ(ierr);
 		ierr = MatDestroy(&A_);  CHKERRQ(ierr);
 		ierr = KSPDestroy(&ksp); CHKERRQ(ierr); // note: you should NOT destroy PC if you call KSPDestroy
+#endif
 
 		PetscFinalize();
 				/* This routine
@@ -1179,7 +1181,7 @@ public:
 	 * Destructor
 	 */
 	~SlepcSolver2() {
-#if PETSC_DEBUG_LEVEL > 1
+#if PETSC_DEBUG_LEVEL > 0
 		if(mpi_rank==0) cout<<"~SlepcSolver2()"<<endl;
 #endif
 		finalizeSlepcSolver();
@@ -1196,7 +1198,8 @@ protected:
 	Vec         xr, xi; /* eigenvector, x */
 
 	/* Matrix information */
-	PetscBool alreadyHasMatrix;
+//	PetscBool alreadyHasMatrix;
+	bool alreadyHasMatrix;
 
 public:
 	/* ==================================
@@ -1273,14 +1276,17 @@ public:
 		if(!isOnlyJacMatrix && mpi_rank==0)
 			cout<<"WARNING in SlepcSolvers2::setJacobianMatrixForSlepc(): Given matrix is bigger than Jacobian"<<endl;
 
-//		PetscInt m_, n_;
-//		MatGetSize(A_, &m_, &n_);
-//		assert(m_ == n_);
-//		if(n_ != cvora[mpi_size]*nVars) {
-//			PetscPrintf(mpi_comm, "SlepcSolvers2::setJacobianMatrixForSlepc(): Petsc matrix size : %d x %d\n", m_, n_);
-//			PetscPrintf(mpi_comm, "                                            Target matrix size: %d x %d\n", cvora[mpi_size]*nVars, cvora[mpi_size]*nVars);
-//			assert(n_ == cvora[mpi_size]*nVars);
-//		}
+		PetscInt m_, n_;
+		MatGetSize(A_, &m_, &n_);
+		if(mpi_rank == 0)
+			cout<<"> SlepcSolver2  PETSc Matrix size = "<<m_<<" x "<<n_<<endl;
+
+		assert(m_ == n_);
+		if(n_ != cvora[mpi_size]*nVars) {
+			PetscPrintf(mpi_comm, "SlepcSolvers2::setJacobianMatrixForSlepc(): Petsc matrix size : %d x %d\n", m_, n_);
+			PetscPrintf(mpi_comm, "                                            Target matrix size: %d x %d\n", cvora[mpi_size]*nVars, cvora[mpi_size]*nVars);
+			assert(n_ == cvora[mpi_size]*nVars);
+		}
 
 		// Build matrix
 		int myEmptyRows = 0;
@@ -1386,7 +1392,8 @@ public:
 		MatGetVecs(A_, PETSC_NULL, &xi);
 
 		// Update alreadyHasMatrix
-		alreadyHasMatrix = PETSC_TRUE;
+//		alreadyHasMatrix = PETSC_TRUE;
+		alreadyHasMatrix = true;
 	}
 
 	/*
@@ -1421,7 +1428,7 @@ public:
 	 */
 	template <class MatT>
 	int solveEigenProblemSlepc(double *evalsReal, double *evalsImag, double **evecsReal, double **evecsImag, double *relError, int &numIter,
-			MatT A, const int *cvora, const int *cv_gl, const int nScal, const int ncv_gg,
+			MatT &A, const int *cvora, const int *cv_gl, const int nScal, const int ncv_gg,
 			const PetscInt nev, const PetscInt ncv, const PetscInt mpd, const double tol, const int max_iter) {
 		// Set-up the matrix
 		if(!alreadyHasMatrix)
@@ -1628,7 +1635,6 @@ protected:
 		EPSGetDimensions(eps_, &nev_, PETSC_NULL, PETSC_NULL);  PetscPrintf(mpi_comm," Number of requested eigenvalues   : %D\n", nev);
 		EPSGetTolerances(eps_, &tol, &maxit);                   PetscPrintf(mpi_comm," Stopping condition                : tol=%.4G, maxit=%D\n", tol, maxit);
 		EPSGetIterationNumber(eps_, &numIter);                  PetscPrintf(mpi_comm," Number of iterations of the method: %d\n", numIter);
-		PetscPrintf(mpi_comm," Number of iterations of the method: %d\n", numIter);
 
 		// Display solution
 		ierr = EPSPrintSolution(eps_, PETSC_NULL); 	CHKERRQ(ierr);
@@ -1654,7 +1660,7 @@ protected:
 			    //                    In this case, ki and xi are not used (set to all zeros).
 
 			ierr = EPSComputeRelativeError(eps_, iEigen, &relError[iEigen]); // error vector = A*x - lambda*x  or  A*x - lambda*B*x
-			                                                                // Relative error = the norm of the error vector relative to the eigenvalue or to the matrix norms
+			                                                                 // Relative error = the norm of the error vector relative to the eigenvalue or to the matrix norms
 			CHKERRQ(ierr);
 
 			// Move the results to the solution variables to be returned
@@ -1666,7 +1672,7 @@ protected:
 			evalsImag[iEigen] = ki;
 #endif
 
-#if defined(PETSC_USE_COMPLEX)
+#if defined (PETSC_USE_COMPLEX)
 			for(int localIndex = 0; localIndex < (cvora[mpi_rank+1]-cvora[mpi_rank])*nVars; ++localIndex) {
 				PetscScalar temp;
 				int globalIndex = cvora[mpi_rank]*nVars + localIndex;
@@ -1698,7 +1704,12 @@ private:
 
 		eps_empty = PETSC_TRUE;
 
-		alreadyHasMatrix = PETSC_FALSE;
+//		KSPGetPC(ksp, &pc);
+		PCSetType(pc, PCNONE);
+
+
+//		alreadyHasMatrix = PETSC_FALSE;
+		alreadyHasMatrix = false;
 	}
 
 	PetscErrorCode finalizeSlepcSolver() {
@@ -1713,6 +1724,8 @@ private:
 //		if(vecSize != 0){
 //			ierr = VecDestroy(&xi);  CHKERRQ(ierr);
 //		}
+
+//		ierr = MatDestroy(&A_);  CHKERRQ(ierr);
 
 		if(!eps_empty) {
 			ierr = EPSDestroy(&eps_); CHKERRQ(ierr);

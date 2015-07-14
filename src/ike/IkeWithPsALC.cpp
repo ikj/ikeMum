@@ -9256,6 +9256,13 @@ void IkeWithPsALC_AD::readPsALCdumpedDataSerial(const string &filename, double* 
 }
 
 void IkeWithPsALC_AD::readPsALCdumpedDataSerial(const char filename[], double* qVec, int& step0, double* lambda0, double* lambda1, const int NcontrolEqns, double& dsTry) {
+	// Check some possible errors
+	for(int i=0; i<3; ++i)
+		if(xcvMax[i] < xcvMin[i]) {
+			cerr<<"ERROR in IkeWithPsALC_AD::readPsALCdumpedDataSerial(): mpi_rank == "<<mpi_rank<<" : xcvMax["<<i<<"] < xcvMin["<<i<<"]"<<endl;
+			throw(PSALC_ERROR_CODE);
+		}
+
 	// number of variables
 	int nScal = scalarTranspEqVector.size();
 	int m = nScal+5; // number of variables (rho, rhou, rhov, rhow, rhoE, and scalars)
@@ -9317,6 +9324,14 @@ void IkeWithPsALC_AD::readPsALCdumpedDataSerial(const char filename[], double* q
 				printf("%.8f, ", lambda1[iEqn]);
 			printf("ds=%.8f, total number of CVs=%d \n", dsTry, cvora_file[mpi_size_file]);
 			cout<<"  Grid tolerance = "<<gridTol<<endl;
+
+			if(debugLevel > 1) {
+				cout<<endl;
+				for(int mpi_file=0; mpi_file<mpi_size_file; ++mpi_file)
+					printf("  RANK in the file = %d:  NCV = %d,  X = %e~%e, Y = %e~%e, Z = %e~%e\n", mpi_file, cvora_file[mpi_file+1]-cvora_file[mpi_file],
+							xcvMinArray_file[mpi_file*3], xcvMaxArray_file[mpi_file*3],  xcvMinArray_file[mpi_file*3+1], xcvMaxArray_file[mpi_file*3+1],  xcvMinArray_file[mpi_file*3+2], xcvMaxArray_file[mpi_file*3+2]);
+				cout<<endl;
+			}
 		}
 		assert(step0 >= 0);
 		assert(cvora_file[mpi_size_file] == cvora[mpi_size]);
@@ -9972,7 +9987,7 @@ void IkeWithPsALC_AD::readMatrixBinaryParallel(int &myNnz_fromFile, vector<unsig
 	if(infile.is_open()) {
 		infile.read(reinterpret_cast<char*>(&nRows_fromFile), sizeof(int)); // Note: if you simply use the ">>" operator, it will cause some problem due to bugs in a g++ library on linux
 		infile.read(reinterpret_cast<char*>(&nCols_fromFile), sizeof(int));
-		infile.read(reinterpret_cast<char*>(&nnz_fromFile), sizeof(int));
+		infile.read(reinterpret_cast<char*>(&nnz_fromFile),   sizeof(int));
 		infile.read(reinterpret_cast<char*>(&NcontrolEqns_fromFile), sizeof(int));
 		if(NcontrolEqns_fromFile != NcontrolEqns) {
 			if(mpi_rank==0)

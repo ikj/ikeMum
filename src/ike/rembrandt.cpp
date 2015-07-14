@@ -207,7 +207,7 @@ public:
 		string jacFilename = getStringParam("JAC_MAT_FILENAME", "jacMatrix0.bin");
 		if(mpi_rank==0) cout<<">> Matrix from = "<<jacFilename<<endl;
 
-		writeMatrixBinaryParallel<MatComprsedSTL>(jacFilename, jacMatrixSTL, nScal, cvora, nbocv_v_global);
+//		writeMatrixBinaryParallel<MatComprsedSTL>(jacFilename, jacMatrixSTL, nScal, cvora, nbocv_v_global);
 		readMatrixBinary<MatComprsedSTL>(jacFilename, jacMatrixSTL, nScal, cvora, nbocv_v_global);
 
 		// ==============================================
