@@ -796,6 +796,7 @@ class UgpWithCv2: public UgpWithTools {
 
 #define BCGSTAB              301
 #define PETSC_GMRES          302
+#define PETSC_LU_MUMPS       303
 
 #define SDWLSClippingScalar   1.0e-8
 

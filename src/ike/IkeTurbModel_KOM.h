@@ -1152,9 +1152,9 @@ public:
 	 *
 	 */
 #ifdef USE_MEM_SAVING_ADVAR
-	virtual adouble calcTurbProd_AD(int icv) {
+	virtual adouble calcTurbProd_AD(const int icv) {
 		if (KOM_RealizableConstraint == 1) {
-			adouble omega_tilde = fmax((*omega)[icv],cLim * strMag[icv] / sqrt(betaStar));
+			adouble omega_tilde = fmax((*omega)[icv], cLim * strMag[icv] / sqrt(betaStar));
 			adouble mu_t = rho_AD[icv]*(*kine)[icv]/omega_tilde;
 			return fmax(mu_t*strMag[icv]*strMag[icv] - 2.0/3.0*rho_AD[icv]*(*kine)[icv]*diverg[icv], 0.0);
 		} else if (KOM_RealizableConstraint == 2) {

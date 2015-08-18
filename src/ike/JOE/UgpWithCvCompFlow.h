@@ -312,6 +312,11 @@ public:   // constructors/destructors
         if (mpi_rank == 0)        cout << "LINEAR_SOLVER_NS: BCGSTAB" << endl;
         linearSolverNS = BCGSTAB;
       }
+      else if (name == "PETSC_LU_MUMPS")
+      {
+        if (mpi_rank == 0)        cout << "LINEAR_SOLVER_NS: PETSC_LU_MUMPS" << endl;
+        linearSolverNS = PETSC_LU_MUMPS;
+      }
       else
       {
         if (mpi_rank == 0)        cerr << "Error: unrecognized LINEAR_SOLVER_NS: " << name << endl;
@@ -344,6 +349,11 @@ public:   // constructors/destructors
         if (mpi_rank == 0)        cout << "LINEAR_SOLVER_SCALARS: BCGSTAB" << endl;
         linearSolverScalars = BCGSTAB;
       }
+      else if (name == "PETSC_LU_MUMPS")
+      {
+        if (mpi_rank == 0)        cout << "LINEAR_SOLVER_SCALARS: PETSC_LU_MUMPS" << endl;
+        linearSolverScalars = PETSC_LU_MUMPS;
+      }
       else
       {
         if (mpi_rank == 0)        cerr << "Error: unrecognized LINEAR_SOLVER_NS: " << name << endl;
@@ -356,6 +366,11 @@ public:   // constructors/destructors
       {
         linearSolverScalars = PETSC_GMRES;
         if (mpi_rank == 0)          cout << "LINEAR_SOLVER_SCALARS: PETSC_GMRES (default)" << endl;
+      }
+      if (linearSolverNS == PETSC_LU_MUMPS)
+      {
+    	  linearSolverScalars = PETSC_LU_MUMPS;
+    	  if (mpi_rank == 0)          cout << "LINEAR_SOLVER_SCALARS: PETSC_LU_MUMPS (default)" << endl;
       }
       else
       {

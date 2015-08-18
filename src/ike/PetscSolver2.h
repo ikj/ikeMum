@@ -34,7 +34,13 @@ static bool ShowPetscRhsMatlab = false; // If this is true, the RHS vector will 
 static bool ShowPetscXMatlab = false; // If this is true, the solution vector will be shown on the screen
 		                              // right after the vector is constructed in setLinSysForPetsc()
 
-#define USE_SLEPC_WITH_PETSC
+#ifndef PETSC_HAVE_MUMPS // MUMPS is a third-party package that provides parallel direct solvers such as LU decomposition.
+                         // This flag, PETSC_HAVE_MUMPS, is defined if MUMPS is installed while configuring PETSc.
+                         // Note: For superLU -- PETSC_HAVE_SUPERLU or PETSC_HAVE_SUPERLU_DIST.
+#define PETSC_HAVE_MUMPS
+#endif
+
+//#define USE_SLEPC_WITH_PETSC
 #ifdef USE_SLEPC_WITH_PETSC
 	//#include "slepcsys.h"
 	#include <slepceps.h>
@@ -52,6 +58,7 @@ struct PetscTol {
 	PetscTol() {
 		convergMonitorInterv = -1;
 		kspMonitorHistory.clear();
+		mpi_rank = -1;
 	}
 	~PetscTol() { }
 
@@ -68,6 +75,8 @@ struct PetscTol {
 	double initResid;
 
 	int psalcStep, newtonIter;
+
+	int mpi_rank;
 };
 
 
@@ -78,7 +87,7 @@ struct PetscTol {
  *
  * Input Parameters:
  *  ksp   - iterative context
- *  n     - iteration number
+ *  nIter - iteration number
  *  rnorm - 2-norm (preconditioned) residual value (may be estimated)
  *  dummy - optional user-defined monitor context
  *
@@ -139,6 +148,10 @@ protected:
 	Vec x_, b_;     // solution, residual vector
 	Mat A_;         // implicit operator matrix
 
+#if defined(PETSC_HAVE_MUMPS)
+	Mat F_;         // Factored matrix for LU: You must have installed MUMPS or superLU with PETSc to use parallel LU
+#endif
+
 	bool hasInitialGuess;
 
 	PetscViewer viewer;
@@ -148,26 +161,38 @@ protected:
 
 public:
 	/*
-	 * Constructor
+	 * Constructor: Without PC information: Use default PC = ASM
 	 */
 	PetscSolver2(int *cvora, int *nbocv2_i, vector<int> &nbocv2_v, int m, bool hasInitialGuess=false, int NcontrolParams=0, int monitorConvergInterval=0) {
 		KspTols.convergMonitorInterv = monitorConvergInterval;
+		KspTols.mpi_rank = mpi_rank;
 
 #if PETSC_DEBUG_LEVEL > 1
 		if(mpi_rank==0) cout<<"PetscSolver2()"<<endl;
 		if(mpi_rank==0 && monitorConvergInterval>0) cout<<"PETSc convergence history will be saved in a vector<pair<int, double>>"<<endl;
 #endif
+
 		initPetscSolver(cvora, nbocv2_i, nbocv2_v, m, "ASM", false, hasInitialGuess, NcontrolParams); // By default, use the Additive Schwarz pre-conditioner and do not use PCreuse
+		// For SLEPc users: Don't worry about the pre-conditioner. It will be neglected in SLEPc
 	}
 
-	PetscSolver2(int *cvora, int *nbocv2_i, vector<int> &nbocv2_v, int m, string pcType, int pcLevels, bool pcReuse, bool hasInitialGuess=false, int NcontrolParams=0, int monitorConvergInterval=0) {
+	/*
+	 * Constructor: With PC information
+	 */
+	PetscSolver2(int *cvora, int *nbocv2_i, vector<int> &nbocv2_v, int m, string pcType, int levels, bool pcReuse, bool hasInitialGuess=false, int NcontrolParams=0, int monitorConvergInterval=0) {
 		KspTols.convergMonitorInterv = monitorConvergInterval;
+		KspTols.mpi_rank = mpi_rank;
 
 #if PETSC_DEBUG_LEVEL > 1
 		if(mpi_rank==0) cout<<"PetscSolver2()"<<endl;
 		if(mpi_rank==0 && monitorConvergInterval>0) cout<<"PETSc convergence history will be saved in a vector<pair<int, double>>"<<endl;
 #endif
-		initPetscSolver(cvora, nbocv2_i, nbocv2_v, m, pcType, pcReuse, hasInitialGuess, NcontrolParams, pcLevels); // Note: pcLevels is required only for the ILU pre-conditioner
+
+		initPetscSolver(cvora, nbocv2_i, nbocv2_v, m, pcType, pcReuse, hasInitialGuess, NcontrolParams, levels);
+		// Note: The "levels" argument is required only for two cases --
+		//       1. ILU pre-conditioner: pcLevels
+		//       2. LU solver with MUMPS: print level (0-4: MUMPS default = 2)
+		// For SLEPc users: Don't worry about the pre-conditioner. It will be neglected in SLEPc
 	}
 
 	/*
@@ -231,12 +256,13 @@ public:
 	template <class MatT>
 	void setLinSysForPetsc(MatT &A, const double *rhs, const double *xInit, const int *cvora, const int *cv_gl, const int m,
 			const int NcontrolParams = 0, const int ncv_gg = 0, double **vecC = NULL, const double *d = NULL) {
-// Note: due to ghost cells, A.get_nCols() is neigher cvora[mpi_size]*m+NcontrolParams nor (cvora[mpi_rank+1]-cvora[mpi_rank])*m+NcontrolParams).
+// Note: due to ghost cells, A.get_nCols() is neither cvora[mpi_size]*m+NcontrolParams nor (cvora[mpi_rank+1]-cvora[mpi_rank])*m+NcontrolParams).
 //		if(A.get_nCols() != (cvora[mpi_rank+1]-cvora[mpi_rank])*m+NcontrolParams) {
 //			if(mpi_rank==0)
 //				cerr<<"PetscSolver2::setLinSysForPetsc(): A.get_nCols()="<<A.get_nCols()<<", cvora[mpi_rank]="<<cvora[mpi_rank]<<", m="<<m<<", NcontrolParams="<<NcontrolParams<<endl;
 //			assert(A.get_nCols() != (cvora[mpi_rank+1]-cvora[mpi_rank])*m+NcontrolParams);
 //		}
+
 		if(NcontrolParams==0)
 			assert(vecC==NULL && d==NULL);
 		else
@@ -444,7 +470,7 @@ public:
 		 	 PetscViewerASCIIOpen(mpi_comm, filename, &viewer);
 		 }
 
-		 MatView(A_,viewer);
+		 MatView(A_, viewer);
 
 		 PetscViewerDestroy(&viewer);
 	 }
@@ -482,6 +508,71 @@ public:
 		 solveGMRES(nIter, absResid, A, phi, rhs, phiInit, cvora, cv_gl, m, NcontrolParams, ncv_gg, vecC, d, step, newtonIter);
 		 kspMonitorHistory = KspTols.kspMonitorHistory;
 	 }
+
+
+
+	 /*
+	  * Method: solveLUMUMPS
+	  * --------------------
+	  * interface to call solveLUMUMPS_solver()
+	  */
+#if defined(PETSC_HAVE_MUMPS)
+	 template <class MatT>
+	 void solveLUMUMPS(MatT &A, double *phi, const double *rhs, const int *cvora, const int *cv_gl, const int m,
+			 const int NcontrolParams = 0, const int ncv_gg = 0, double **vecC = NULL, const double *d = NULL, const int step=-1, const int newtonIter=-1) {
+		 KspTols.psalcStep = step;
+		 KspTols.newtonIter = newtonIter;
+
+		 int nIter;
+		 double absResid;
+		 solveLUMUMPS_solver(nIter, absResid, A, phi, rhs, cvora, cv_gl, m, NcontrolParams, ncv_gg, vecC, d);
+	 }
+#else
+	 template <class MatT>
+	 void solveLUMUMPS(MatT &A, double *phi, const double *rhs, const int *cvora, const int *cv_gl, const int m,
+			 const int NcontrolParams = 0, const int ncv_gg = 0, double **vecC = NULL, const double *d = NULL, const int step=-1, const int newtonIter=-1) {
+		 if(mpi_rank==0)
+			 cerr<<"ERROR! PETSc doesn't have MUMPS! -- Cannot solve the linear system using LU"<<endl;
+		 assert(false);
+	 }
+#endif
+
+	/*
+	 * Method: setPCreuse
+	 * ------------------
+	 *
+	 */
+	void setPCreuse(const bool pcReuse) {
+		/* set KSP options */
+		if(pcReuse) {
+			KSPSetOperators(ksp, A_, A_, SAME_PRECONDITIONER);
+#if PETSC_DEBUG_LEVEL > 0
+#ifndef USE_SLEPC_WITH_PETSC
+			if(mpi_rank==0)
+				cout<<"= PC operation: SAME_PRECONDITIONER"<<endl;
+#endif
+#endif
+		} else {
+			KSPSetOperators(ksp, A_, A_, DIFFERENT_NONZERO_PATTERN);
+										  /* Note: KSPSetOperators(KSP ksp, Mat Amat, Mat Pmat, MatStructure flag)
+										   *  	     ksp -the KSP context
+										   *         Amat - the matrix associated with the linear system
+										   *         Pmat - the matrix to be used in constructing the preconditioner, usually the same as Amat.
+										   *         flag - flag indicating information about the preconditioner matrix structure during successive linear solves.
+										   *                This flag is ignored the first time a linear system is solved, and thus is irrelevant when solving just one linear system.
+										   *                >> POSSIBLE OPTIONS
+										   *                   SAME_PRECONDITIONER - Pmat is identical during successive linear solves.
+										   *                   SAME_NONZERO_PATTERN - Pmat has the same nonzero structure during successive linear solves.
+										   *                   DIFFERENT_NONZERO_PATTERN - Pmat does not have the same nonzero structure.
+										   */
+#if PETSC_DEBUG_LEVEL > 0
+#ifndef USE_SLEPC_WITH_PETSC
+			if(mpi_rank==0)
+				cout<<"= PC operation: DIFFERENT_NONZERO_PATTERN"<<endl;
+#endif
+#endif
+		}
+	}
 
 	 /*
 	  * Method: matMultiplyVec
@@ -545,110 +636,13 @@ public:
 
 protected:
 	/*
-	 * Method: solveGMRES_solver
-	 * -------------------------
-	 *
+	 * Method: initPetscSolver
+	 * -----------------------
+	 * Set up the linear solver in PETSc.
+	 * Called by the constructor of this PetscSolver2 class.
 	 */
-	template <class MatT>
-	void solveGMRES_solver(int &nIter, double &absResid, MatT &A, double *phi, const double *rhs, double *phiInit, const int *cvora, const int *cv_gl, const int m,
-			const int NcontrolParams, const int ncv_gg, double **vecC, const double *d) {
-		setLinSysForPetsc(A, rhs, phiInit, cvora, cv_gl, m, NcontrolParams, ncv_gg, vecC, d);
-//MatView(A_,PETSC_VIEWER_STDOUT_WORLD); // Note: ASCII matrix output not allowed for matrices with more than 1024 rows
-//if(mpi_rank==0)
-//	cout<<endl
-//	    <<"Prinitng b_:"<<endl;
-//VecView(b_,PETSC_VIEWER_STDOUT_WORLD);
-//if(mpi_rank==0)
-//	cout<<endl
-//	    <<"Prinitng x_:"<<endl;
-//VecView(x_, PETSC_VIEWER_STDOUT_WORLD);
-
-//		KSPSetUp(ksp); // KSPSetUP() sets up the internal data structures for the later use of an iterative solver.
-//		               // However, you don't have to call it since it will be called in KSPSolve() anyways.
-
-		//KSPSetOperators(ksp, A_, A_, DIFFERENT_NONZERO_PATTERN);
-		KSPSolve(ksp, b_, x_);
-		// VecView(x_,PETSC_VIEWER_STDOUT_WORLD);
-
-		KSPGetIterationNumber(ksp, &nIter);
-		KSPGetResidualNorm(ksp, &absResid); // Gets the last (approximate preconditioned) residual norm that has been computed.
-
-		int maxiter;
-		double rel, abs, div;
-		KSPGetTolerances(ksp, &rel, &abs, &div, &maxiter);
-		lout(INFO_LO) << "tresholds: rel/abs/div/iter:\t" << rel << " " << abs << " " << div << " " << maxiter;
-		lout(INFO_LO) << "\tPETSC: iter/absResidual:\t" << nIter << "\t" << absResid << endl;
-
-		//VecView(x_,PETSC_VIEWER_STDOUT_WORLD);
-
-		VecAssemblyBegin(x_);
-		VecAssemblyEnd(x_);
-		int nno = cvora[mpi_rank+1] - cvora[mpi_rank];
-		for (int i = 0; i < nno*m; i++) {
-			int row = cvora[mpi_rank]*m + i;
-			VecGetValues(x_, 1, &row, &phi[i]);   // inefficient, check how to change in future
-		}
-		if(NcontrolParams>0 && mpi_rank == mpi_size-1) {
-			for(int iParam=0; iParam<NcontrolParams; ++iParam) {
-				int row = cvora[mpi_size]*m + iParam;
-				VecGetValues(x_, 1, &row, &phi[nno*m+iParam]);
-			}
-		}
-
-		// Get the extreme singular values
-#ifdef CALC_SINGULAR_VALUES
-		if(PETSC_DEBUG_LEVEL <= 1) { // If PETSC_DEBUG_LEVEL>1, KSPMonitorSingularValue() is called instead.
-			                         // KSPMonitorSingularValue() prints the two norm of the true residual and estimation of the extreme singular values of the preconditioned problem at each iteration.
-			double sigmaMax, sigmaMin;
-			KSPComputeExtremeSingularValues(ksp, &sigmaMax, &sigmaMin);
-					// KSPComputeExtremeSingularValues() computes the extreme singular values for the preconditioned operator. Called after or during KSPSolve().
-					// Note: 1. One must call KSPSetComputeSingularValues() before calling KSPSetUp()
-					//       2. Estimates of the smallest singular value may be very inaccurate, especially if the Krylov method has not converged.
-					//          The largest singular value is usually accurate to within a few percent if the method has converged.
-					//       3. You may want to disable restarts if using KSPGMRES, otherwise this estimate will only be using those iterations after the last restart.
-			if(mpi_rank==0)
-				cout<<"           >> PetscSolver2::solveGMRES_solver(): Maximum singular value="<<sigmaMax<<", Minimum singular value="<<sigmaMin<<endl;
-		}
-#endif
-	}
-
-public:
-	/*
-	 * Method: setPCreuse
-	 * ------------------
-	 *
-	 */
-	void setPCreuse(const bool pcReuse) {
-		/* set KSP options */
-		if(pcReuse) {
-			KSPSetOperators(ksp, A_, A_, SAME_PRECONDITIONER);
-#if PETSC_DEBUG_LEVEL > 0
-			if(mpi_rank==0)
-				cout<<"= PC operation: SAME_PRECONDITIONER"<<endl;
-#endif
-		} else {
-			KSPSetOperators(ksp, A_, A_, DIFFERENT_NONZERO_PATTERN);
-		                                  /* Note: KSPSetOperators(KSP ksp, Mat Amat, Mat Pmat, MatStructure flag)
-		                                   *  	     ksp -the KSP context
-		                                   *         Amat - the matrix associated with the linear system
-		                                   *         Pmat - the matrix to be used in constructing the preconditioner, usually the same as Amat.
-		                                   *         flag - flag indicating information about the preconditioner matrix structure during successive linear solves.
-		                                   *                This flag is ignored the first time a linear system is solved, and thus is irrelevant when solving just one linear system.
-		                                   *                >> POSSIBLE OPTIONS
-		                                   *                   SAME_PRECONDITIONER - Pmat is identical during successive linear solves.
-		                                   *                   SAME_NONZERO_PATTERN - Pmat has the same nonzero structure during successive linear solves.
-		                                   *                   DIFFERENT_NONZERO_PATTERN - Pmat does not have the same nonzero structure.
-		                                   */
-#if PETSC_DEBUG_LEVEL > 0
-			if(mpi_rank==0)
-				cout<<"= PC operation: DIFFERENT_NONZERO_PATTERN"<<endl;
-#endif
-		}
-	}
-
-protected:
 	void initPetscSolver(const int *cvora, const int *nbocv2_i, const vector<int> &nbocv2_v, const int m, const string pcType, const bool pcReuse, const bool hasInitialGuess, const int NcontrolParams,
-			const int pcLevels=0) {
+			const int levels=0) {
 		int argc = 0; char **argv;
 		static char help[] = "nothing!";
 		PetscInitialize(&argc, &argv, (char *)0, help);
@@ -658,17 +652,51 @@ protected:
 		/* Create linear solver context (a Krylov sub-space methods) */
 		KSPCreate(mpi_comm, &ksp);
 
-		/* allcoate mem for the vectors and the matrix */
+		/* Allcoate mem for the vectors and the matrix */
 		initMatVec(cvora, nbocv2_i, nbocv2_v, m, NcontrolParams);
 
-		/* set preconditioner */
-		// step 1. extracting the preconditioner context from the KSP context
+		/* Set the linear solver: GMRes or LU decomposition */
 		KSPGetPC(ksp, &pc);
-		// step 1-2. set a flag so that the extreme singular values will be calculated via a Arnoldi process as the linear system is solved by GMRes
+
+		if(pcType.compare("LU") != 0) { // GMRes with many different PC types
+			initGMResWithPC(pcType, pcReuse, levels);
+		}
+#if defined(PETSC_HAVE_MUMPS)
+		else {
+			initLUMUPSwithPC(levels); // Note: You must have installed MUMPS with PETSc when configuring PETSc
+			                         // level = level of printing (0-4): mumps default = 2
+		}
+#endif
+
+		/* Give a chance to the user to set options from command lines */
+		KSPSetFromOptions(ksp); // set runtime options e.g. -ksp_type <type> -pc_type <type> -ksp_monitor -ksp_rtol <rtol> : These options will override those specified above
+
+#if PETSC_DEBUG_LEVEL > 0
+#ifndef USE_SLEPC_WITH_PETSC
+		if(mpi_rank==0)
+			cout<<"============================================="<<endl<<endl;
+#endif
+#endif
+
+#if PETSC_DEBUG_LEVEL > 1
+		PetscViewerPushFormat(PETSC_VIEWER_STDOUT_WORLD, PETSC_VIEWER_ASCII_MATLAB);
+		KSPView(ksp, PETSC_VIEWER_STDOUT_WORLD);
+#endif
+	}
+
+	/*
+	 * Method: initGMResWithPC
+	 * -----------------------
+	 * Set the linear solver to be GMRes and set the options for GMRes including PC.
+	 * Called by initPetscSolver().
+	 */
+	void initGMResWithPC(const string pcType, const bool pcReuse, const int pcLevels) {
+		/* set preconditioner */
+		// step 1. set a flag so that the extreme singular values will be calculated via a Arnoldi process as the linear system is solved by GMRes
 #ifdef CALC_SINGULAR_VALUES
 		KSPSetComputeSingularValues(ksp, PETSC_TRUE); // Note: Only CG (Lanczos process) or GMRes(Arnoldi) supports this option
 #endif
-		// step 2. set the method
+		// step 2. set the PC method
 		PCType pcMethod;
 		if(pcType=="BJACOBI")
 			pcMethod = PCBJACOBI; // Block Jacobi
@@ -689,12 +717,15 @@ protected:
 		}
 
 #if PETSC_DEBUG_LEVEL > 0
+#ifndef USE_SLEPC_WITH_PETSC
 		if(mpi_rank==0) {
 			cout<<"============================================="<<endl;
 			cout<<"= PC Type: "<<pcMethod<<endl;
 		}
 #endif
+#endif
 		PCSetType(pc, pcMethod);
+		// For SLEPc users: Don't worry about the pre-conditioner. It will be neglected in SLEPc
 
 		// step 3. set options for HYPRE-ILU or HYPRE-AMG if HYPRE is required
 		if(pcMethod == PCHYPRE) {
@@ -829,18 +860,28 @@ protected:
 
 		KSPGMRESSetOrthogonalization(ksp, KSPGMRESClassicalGramSchmidtOrthogonalization); // use classical (unmodified) Gram-Schmidt to orthogonalize against the Krylov space (fast) (the default)
 //		KSPGMRESSetOrthogonalization(ksp, KSPGMRESModifiedGramSchmidtOrthogonalization);  // use modified Gram-Schmidt in the orthogonalization (more stable, but slower)
-		KSPSetFromOptions(ksp); // set runtime options e.g. -ksp_type <type> -pc_type <type> -ksp_monitor -ksp_rtol <rtol> : These options will override those specified above
-
-#if PETSC_DEBUG_LEVEL > 0
-		if(mpi_rank==0)
-			cout<<"============================================="<<endl<<endl;
-#endif
-
-#if PETSC_DEBUG_LEVEL > 1
-		PetscViewerPushFormat(PETSC_VIEWER_STDOUT_WORLD, PETSC_VIEWER_ASCII_MATLAB);
-		KSPView(ksp, PETSC_VIEWER_STDOUT_WORLD);
-#endif
 	}
+
+#if defined(PETSC_HAVE_MUMPS)
+	/*
+	 * Method: initLUMUPSwithPC
+	 * ------------------------
+	 * Set the linear solver to be parallel LU powered by MUMPS -- You must install MUMPS with PETSc when configuring PETSc.
+	 * Called by initPetscSolver()
+	 */
+	void initLUMUPSwithPC(const int MUMPSprintLevel) {
+		KSPSetType(ksp, KSPPREONLY); // If you want to use LU, ksp must be KSPPREONLY
+
+		PCSetType(pc, PCLU);
+
+		PCFactorSetMatSolverPackage(pc, MATSOLVERMUMPS);  // Sets the software that is used to perform the factorization
+
+		stringstream ss;
+		ss<<MUMPSprintLevel;
+		string buffer = ss.str();
+		PetscOptionsSetValue("-mat_mumps_icntl_4", buffer.c_str()); // level of printing (0-4): mumps default = 2
+	}
+#endif
 
 	/*
 	 * Method: initMatVec
@@ -947,6 +988,151 @@ protected:
 	}
 
 	/*
+	 * Method: solveGMRES_solver
+	 * -------------------------
+	 *
+	 */
+	template <class MatT>
+	void solveGMRES_solver(int &nIter, double &absResid, MatT &A, double *phi, const double *rhs, double *phiInit, const int *cvora, const int *cv_gl, const int m,
+			const int NcontrolParams, const int ncv_gg, double **vecC, const double *d) {
+		setLinSysForPetsc(A, rhs, phiInit, cvora, cv_gl, m, NcontrolParams, ncv_gg, vecC, d);
+
+		//MatView(A_,PETSC_VIEWER_STDOUT_WORLD); // Note: ASCII matrix output not allowed for matrices with more than 1024 rows
+		//if(mpi_rank==0)
+		//	cout<<endl
+		//	    <<"Prinitng b_:"<<endl;
+		//VecView(b_,PETSC_VIEWER_STDOUT_WORLD);
+		//if(mpi_rank==0)
+		//	cout<<endl
+		//	    <<"Prinitng x_:"<<endl;
+		//VecView(x_, PETSC_VIEWER_STDOUT_WORLD);
+
+		//		KSPSetUp(ksp); // KSPSetUP() sets up the internal data structures for the later use of an iterative solver.
+		//		               // However, you don't have to call it since it will be called in KSPSolve() anyways.
+
+		//KSPSetOperators(ksp, A_, A_, DIFFERENT_NONZERO_PATTERN);
+		KSPSolve(ksp, b_, x_);
+		// VecView(x_,PETSC_VIEWER_STDOUT_WORLD);
+
+		KSPGetIterationNumber(ksp, &nIter);
+		KSPGetResidualNorm(ksp, &absResid); // Gets the last (approximate preconditioned) residual norm that has been computed.
+
+		int maxiter;
+		double rel, abs, div;
+		KSPGetTolerances(ksp, &rel, &abs, &div, &maxiter);
+		lout(INFO_LO) << "tresholds: rel/abs/div/iter:\t" << rel << " " << abs << " " << div << " " << maxiter;
+		lout(INFO_LO) << "\tPETSC: iter/absResidual:\t" << nIter << "\t" << absResid << endl;
+
+		//VecView(x_,PETSC_VIEWER_STDOUT_WORLD);
+
+		VecAssemblyBegin(x_);
+		VecAssemblyEnd(x_);
+		int nno = cvora[mpi_rank+1] - cvora[mpi_rank];
+		for (int i = 0; i < nno*m; i++) {
+			int row = cvora[mpi_rank]*m + i;
+			VecGetValues(x_, 1, &row, &phi[i]);   // inefficient, check how to change in future
+		}
+		if(NcontrolParams>0 && mpi_rank == mpi_size-1) {
+			for(int iParam=0; iParam<NcontrolParams; ++iParam) {
+				int row = cvora[mpi_size]*m + iParam;
+				VecGetValues(x_, 1, &row, &phi[nno*m+iParam]);
+			}
+		}
+
+		// Get the extreme singular values
+#ifdef CALC_SINGULAR_VALUES
+		if(PETSC_DEBUG_LEVEL <= 1) { // If PETSC_DEBUG_LEVEL>1, KSPMonitorSingularValue() is called instead.
+			                         // KSPMonitorSingularValue() prints the two norm of the true residual and estimation of the extreme singular values of the preconditioned problem at each iteration.
+			double sigmaMax, sigmaMin;
+			KSPComputeExtremeSingularValues(ksp, &sigmaMax, &sigmaMin);
+					// KSPComputeExtremeSingularValues() computes the extreme singular values for the preconditioned operator. Called after or during KSPSolve().
+					// Note: 1. One must call KSPSetComputeSingularValues() before calling KSPSetUp()
+					//       2. Estimates of the smallest singular value may be very inaccurate, especially if the Krylov method has not converged.
+					//          The largest singular value is usually accurate to within a few percent if the method has converged.
+					//       3. You may want to disable restarts if using KSPGMRES, otherwise this estimate will only be using those iterations after the last restart.
+			if(mpi_rank==0)
+				cout<<"           >> PetscSolver2::solveGMRES_solver(): Maximum singular value="<<sigmaMax<<", Minimum singular value="<<sigmaMin<<endl;
+		}
+#endif
+	}
+
+#if defined(PETSC_HAVE_MUMPS)
+	/*
+	 * Method: solveLUMUMPS_solver
+	 * ---------------------------
+	 * Solve a linear system using the parallel LU decomposition powered by MUMPS
+	 */
+	template <class MatT>
+	void solveLUMUMPS_solver(int &nIter, double &absResid, MatT &A, double *phi, const double *rhs, const int *cvora, const int *cv_gl, const int m,
+			const int NcontrolParams, const int ncv_gg, double **vecC, const double *d) {
+		// Set the linear system
+		setLinSysForPetsc(A, rhs, NULL, cvora, cv_gl, m, NcontrolParams, ncv_gg, vecC, d);
+		KSPSetOperators(ksp, A_, A_, DIFFERENT_NONZERO_PATTERN);
+
+		setDetailsLUMUMPS();
+
+		// Solve the linear system using MUMPS
+		double myWtimeStart = MPI_Wtime();
+		KSPSolve(ksp, b_, x_);
+		double myWtimeEnd = MPI_Wtime();
+
+		if(mpi_rank == 0)
+			printf("\n   > TOTAL WALL-TIME FOR THE MUMPS LU SOLVE (in sec) = %g \n", myWtimeEnd - myWtimeStart);
+
+		KSPGetResidualNorm(ksp, &absResid); // Gets the last residual norm that has been computed.
+
+		//VecView(x_,PETSC_VIEWER_STDOUT_WORLD);
+
+		VecAssemblyBegin(x_);
+		VecAssemblyEnd(x_);
+		int nno = cvora[mpi_rank+1] - cvora[mpi_rank];
+		for (int i = 0; i < nno*m; i++) {
+			int row = cvora[mpi_rank]*m + i;
+			VecGetValues(x_, 1, &row, &phi[i]);   // inefficient, check how to change in future
+		}
+		if(NcontrolParams>0 && mpi_rank == mpi_size-1) {
+			for(int iParam=0; iParam<NcontrolParams; ++iParam) {
+				int row = cvora[mpi_size]*m + iParam;
+				VecGetValues(x_, 1, &row, &phi[nno*m+iParam]);
+			}
+		}
+
+		// Reset printing level to 0 = no printing on the screen
+		PetscOptionsSetValue("-mat_mumps_icntl_4", 0);  // Note: Don't call KSPSetFromOptions() after this because it will generate an error!
+	}
+#endif
+
+#if defined(PETSC_HAVE_MUMPS)
+	/*
+	 * Method: setDetailsLUMUMPS
+	 * -------------------------
+	 * Set some details of LU-MUMPS.
+	 * Without these settings, LU-MUMPS works fine. But save this chunk of code for future uses.
+	 * This method is following a PETSc example code = ex52.c
+	 * (http://www.mcs.anl.gov/petsc/petsc-current/src/ksp/ksp/examples/tutorials/ex52.c.html)
+	 */
+	void setDetailsLUMUMPS() {
+//		PetscInt icntl, ival;
+//		PetscReal val;
+//		PCFactorSetUpMatSolverPackage(pc); // call MatGetFactor() to create F_: Can be called after KSPSetOperators() or PCSetOperators()
+//		PCFactorGetMatrix(pc, &F_); // Gets the factored matrix from the preconditioner context.
+//		// This routine is valid only for the LU, incomplete LU, Cholesky, and incomplete Cholesky methods.
+//		/* sequential ordering */
+//		icntl = 7;
+//		ival = 2;
+//		MatMumpsSetIcntl(F_, icntl, ival);  // Set MUMPS parameter ICNTL()
+//
+//		/* threshhold for row pivot detection */
+//		MatMumpsSetIcntl(F_, 24, 1);
+//		icntl = 3; val = 1.e-6;
+//		MatMumpsSetCntl(F_, icntl, val);  // Set MUMPS parameter CNTL()
+//
+//		/* compute determinant of A */
+//		MatMumpsSetIcntl(F_, 33, 1);
+	}
+#endif
+
+	/*
 	 * Method: finalizePetscSolver
 	 * ---------------------------
 	 * finalize the PetscSolver object
@@ -954,12 +1140,12 @@ protected:
 	PetscErrorCode finalizePetscSolver() {
 		PetscErrorCode ierr;
 
-#ifndef USE_SLEPC_WITH_PETSC
+//#ifndef USE_SLEPC_WITH_PETSC
 		ierr = VecDestroy(&x_);  CHKERRQ(ierr);
 		ierr = VecDestroy(&b_);  CHKERRQ(ierr);
 		ierr = MatDestroy(&A_);  CHKERRQ(ierr);
 		ierr = KSPDestroy(&ksp); CHKERRQ(ierr); // note: you should NOT destroy PC if you call KSPDestroy
-#endif
+//#endif
 
 		PetscFinalize();
 				/* This routine
@@ -1153,6 +1339,274 @@ protected:
 #endif
 
 #ifdef USE_SLEPC_WITH_PETSC
+
+/*
+ * Struct: SlepcConvgHistory
+ * -------------------------
+ * Copied from PetscTol but modified by a lot
+ */
+struct SlepcConvgHistory {
+	SlepcConvgHistory() {
+		nev = -1;
+		useST = false;
+		convergMonitorInterv = -1;
+		currIter = 0;
+
+		showRunTime  = false;
+		writeRunTime = false;
+		filename = "SLEPC_HISTORY_DEFAULT_NAME.csv";
+	}
+	~SlepcConvgHistory() {
+		clear();
+	}
+
+	void clear() {
+		History_nconv.clear();
+		History_eigr.clear();
+		History_eigi.clear();
+		History_errest.clear();
+		History_nest.clear();
+
+		initResid.clear();
+	}
+
+	// Tolerances set for the eigen-problem solver (EPS) in SLEPC
+	int EPSmaxIters;
+
+	// The number of eigenvalues to be calculated
+	int nev;
+
+	// ST context -- If spectral transformation is used, then the eigenvalues are changed!
+	bool useST;
+	PetscScalar STshift;
+	PetscScalar nu; // Only for Generalized Cayley
+	STType sttype_;
+
+	// Residual history
+	vector<int> History_nconv;
+	vector<vector<double> > History_eigr;
+	vector<vector<double> > History_eigi;
+	vector<vector<double> > History_errest;
+	vector<int> History_nest;
+
+	// Additional information
+	int convergMonitorInterv;
+	vector<double> initResid;
+	int currIter;
+
+	// The following booleans are basically checking if the node is proper to show on the screen or write on the file: Ony mpi_rank==0 should have true
+	bool showRunTime;
+	bool writeRunTime;
+	string filename;
+};
+
+/*
+ * Struct: SlepcSTparams
+ * ---------------------
+ * SLEPc Spectral Transformation (Preconditioner, shift-and-invert, etc.) parameters
+ */
+struct SlepcSTparams {
+	SlepcSTparams() {
+		useST = false;  // This must be false by default
+
+		STshift = 0.0;
+		nu      = 0.0;
+
+		sttype_ = STPRECOND; // Since SLEPc default is STPRECOND, we also use it as a default.
+	}
+
+	void showParamOnScreen() {
+		cout << endl
+		     << "====================================" << endl;
+		cout << "= SlepcSTparams::showParamOnScreen()" << endl;
+		cout << "=  useST = ";
+		if(useST)
+			cout << "TRUE" << endl;
+		else
+			cout << "FALSE" << endl;
+		cout << "=  sttype_  = " << sttype_ << endl;
+		cout << "=  ksptype_ = " << ksptype_ << endl;
+		cout << "=  pcMethod = " << pcMethod << endl;
+		cout << "=  STshift = " << STshift << endl;
+		if(sttype_ == STCAYLEY)
+			cout << "=  nu      = " << nu << endl;
+		else
+			cout << "=  (nu     = " << nu << ")" << endl;
+		cout << "====================================" << endl
+		     << endl;
+	}
+
+	bool useST;
+
+	PetscScalar STshift;
+
+	PetscScalar nu; // Only for Generalized Cayley
+
+	STType sttype_;
+		// Available ST types:
+		//   Spectral Transformation | STType    | Operator
+		//   -----------------------------------------------------------------------
+		//   Shift of Origin         | STSHIFT   | B^(-1)*A + \sigma*I
+		//   Spectrum Folding        | STFOLD    | (B^(-1)*A - \sigma*I)^2
+		//   Shift-and-invert        | STSINVERT | (A - \sigma*B)^(-1) * B
+		//   Generalized Cayley      | STCAYLEY  | (A - \sigma*B)^(-1) * (A + \nu*B)
+		//   Preconditioner          | STPRECOND | K^(-1) ~ (A - \sigma*B)^(-1)
+		//   -----------------------------------------------------------------------
+		//   Shell Transformation    | STSHELL   | user-defined
+		// Default = STPRECOND
+
+	KSPType ksptype_;
+		// Available types:
+		//         KSPGMRES      "gmres"
+		//         KSPPREONLY    "preonly"
+		//         KSPBICG       "bicg"
+		// The followings are also supported by PETSc, but they are not included in Rembrandt now:
+		//         KSPRICHARDSON, KSPCHEBYCHEV, KSPCG, KSPTCQMR, KSPBCGS, KSPCGS, KSPTFQMR, KSPCR, KSPLSQR, KSPQCG,
+		//         KSPBICG, KSPMINRES, KSPSYMMLQ, KSPLCD, KSPPYTHON, KSPBROYDEN, KSPGCR, KSPNGMRES, KSPSPECEST
+
+	PCType pcMethod;
+		// Currently available PC types:
+		//         PCLU (In order to use PCLU, you must select ksptype_ = KSPPREONLY)
+		//         PCBJACOBI
+		//         PCASM
+		//         PCILU / PCHYPRE
+};
+
+/*
+ * Function: MyEPSMonitor
+ * ----------------------
+ * This is a user-defined routine for monitoring the EPS eigen-solvers: return a vector that contains the history of residual
+ *
+ * Input Parameters:
+ *  eps    - eigensolver context obtained from EPSCreate()
+ *  its    - iteration number
+ *  nconv  - number of converged eigenpairs
+ *  eigr   - real part of the eigenvalues
+ *  eigi   - imaginary part of the eigenvalues
+ *  errest - relative error estimates for each eigenpair
+ *  nest   - number of error estimates
+ *  mctx   - optional user-defined monitor context
+ *
+ * Return:
+ *  epsMonitorStat - pair of (iteration number, residual)
+ */
+inline PetscErrorCode MyEPSMonitor(EPS eps, int its, int nconv, PetscScalar *eigr, PetscScalar *eigi, PetscReal* errest, int nest, void *mctx) {
+	SlepcConvgHistory *epsConvgHistory = static_cast<SlepcConvgHistory*>(mctx);
+
+	int monitorInterv = epsConvgHistory->convergMonitorInterv;
+	if(monitorInterv > 0) {
+		int nev = epsConvgHistory->nev;
+		assert(nev > 0);
+
+		int maxIter = epsConvgHistory->EPSmaxIters;
+
+		int vecLeng = std::min<int>(nev, nest);
+
+		vector<double> vec_eigr(vecLeng, 9.05);
+		vector<double> vec_eigi(vecLeng, 9.05);
+		vector<double> vec_errest(vecLeng, 9.05);
+
+		for(int i=0; i<vecLeng; ++i) {
+			vec_eigr[i]   = double(eigr[i]);
+			vec_eigi[i]   = double(eigi[i]);
+			vec_errest[i] = double(errest[i]);
+		}
+
+		// If spectral transformation is used, then the eigenvalues are modified!
+		if(epsConvgHistory->useST) {
+			if(epsConvgHistory->sttype_ == STSHIFT) { // Operator = B^(-1)*A + \sigma*I
+				// Note: The following inverse-transform assumes that STshift is not a complex number
+				//       and B is an identity matrix.
+				for(int i=0; i<vecLeng; ++i) {
+					vec_eigr[i] = double(eigr[i]) - double(epsConvgHistory->STshift);
+					vec_eigi[i] = double(eigi[i]);
+				}
+			} else if(epsConvgHistory->sttype_ == STSINVERT) { // Operator = (A - \sigma*B)^(-1) * B
+				// Note: The following inverse-transform assumes that STshift is not a complex number
+				//       and B is an identity matrix.
+				for(int i=0; i<vecLeng; ++i) {
+					double magSq = pow(double(eigr[i]), 2.0) + pow(double(eigi[i]), 2.0);
+					magSq = max(magSq, MACHINE_EPS); // To avoid dividing-by-zero
+
+					vec_eigr[i] =  double(eigr[i]) / magSq + double(epsConvgHistory->STshift);
+					vec_eigi[i] = -double(eigi[i]) / magSq;
+				}
+			}
+			// Available ST types:
+			//   Spectral Transformation | STType    | Operator
+			//   -----------------------------------------------------------------------
+			//   Shift of Origin         | STSHIFT   | B^(-1)*A + \sigma*I
+			//   Spectrum Folding        | STFOLD    | (B^(-1)*A - \sigma*I)^2
+			//   Shift-and-invert        | STSINVERT | (A - \sigma*B)^(-1) * B
+			//   Generalized Cayley      | STCAYLEY  | (A - \sigma*B)^(-1) * (A + \nu*B)
+			//   Preconditioner          | STPRECOND | K^(-1) ~ (A - \sigma*B)^(-1)
+			//   -----------------------------------------------------------------------
+			//   Shell Transformation    | STSHELL   | user-defined
+		}
+
+		if(epsConvgHistory->showRunTime) {  // Note: if mpi_rank!=0, showRunTime was set as false.
+			if(its==0)
+				cout << "MyEPSMonitor(): # of error estimates = " << nest << endl;
+			else {
+				if(its==1 || its%monitorInterv==0 || its==maxIter) {
+					printf("ITER = %4d: # of converged eigenpairs = %d\n", its, nconv);
+					printf("            Few eigenpairs = \n");
+					for (int i = 0; i < std::min<int>(nev, nest); ++i) {
+//						printf("              [%2d]: EIG = %e + %e i,  RESID = %e\n", i, eigr[i], eigi[i], errest[i]);
+						printf("              [%2d]: EIG = %e + %e i,  RESID = %e\n", i, vec_eigr[i], vec_eigi[i], vec_errest[i]);
+					}
+					printf("\n");
+				}
+			}
+		}
+
+		if(epsConvgHistory->writeRunTime && its > 0) { // Note: when its==0, all the values are just zero.
+			FILE *fp;
+
+			if(its == 1) {
+				fp = fopen(epsConvgHistory->filename.c_str(), "w");
+				fprintf(fp, "ITER, NCONV, LARGEST_EIG_REAL, SMALLEST_EIG_MAG, MAX_RESID");
+				for(int i=0; i<nev; ++i)
+					fprintf(fp, ", RESID_EIG#%d", i);
+				fprintf(fp,"\n");
+			} else {
+				fp = fopen(epsConvgHistory->filename.c_str(), "a");
+
+				double largest_eig_real   = -2.2e22;
+				double smallest_eig_magSq =  2.2e22;
+				double max_resid = 0.0;
+				for(int i = 0; i < std::min<int>(nev, nest); ++i) {
+					largest_eig_real   = max(largest_eig_real,   vec_eigr[i]);
+					smallest_eig_magSq = min(smallest_eig_magSq, pow(vec_eigr[i], 2.0) + pow(vec_eigi[i], 2.0));
+					max_resid          = max(max_resid,          fabs(vec_errest[i]));
+				}
+				fprintf(fp, "%d, %d, %.6e, %.6e, %.6e", its, nconv, largest_eig_real, sqrt(smallest_eig_magSq), max_resid);
+				for(int i = 0; i < nev; ++i)
+					fprintf(fp, ", %.6e", vec_errest[i]);
+				fprintf(fp, "\n");
+			}
+			fclose(fp);
+		}
+
+		if(its==1) { // Note: when its==0, all the values are just zero
+			epsConvgHistory->clear();
+			epsConvgHistory->initResid = vec_errest;
+		}
+
+		if(its==0 || its%monitorInterv==0 || its==maxIter) {
+			epsConvgHistory->History_nconv.push_back(nconv);
+			epsConvgHistory->History_eigr.push_back(vec_eigr);
+			epsConvgHistory->History_eigi.push_back(vec_eigi);
+			epsConvgHistory->History_errest.push_back(vec_errest);
+			epsConvgHistory->History_nest.push_back(nest);
+		}
+
+		epsConvgHistory->currIter = its;
+	}
+
+	return 0;
+}
+
 /*
  * Class: SlepcSolver2
  * -------------------
@@ -1194,12 +1648,16 @@ protected:
 	/* EV */
 	PetscBool eps_empty;
 	EPS eps_; /* eigensolver context */
+	ST st_;   /* Spectral-transform context: used only with EPSGD and EPSJD */
 	PetscScalar kr, ki; /* eigenvalue,  k */
 	Vec         xr, xi; /* eigenvector, x */
 
 	/* Matrix information */
 //	PetscBool alreadyHasMatrix;
 	bool alreadyHasMatrix;
+
+	/* Convergence history */
+	SlepcConvgHistory epsConvgHistory;
 
 public:
 	/* ==================================
@@ -1429,7 +1887,8 @@ public:
 	template <class MatT>
 	int solveEigenProblemSlepc(double *evalsReal, double *evalsImag, double **evecsReal, double **evecsImag, double *relError, int &numIter,
 			MatT &A, const int *cvora, const int *cv_gl, const int nScal, const int ncv_gg,
-			const PetscInt nev, const PetscInt ncv, const PetscInt mpd, const double tol, const int max_iter) {
+			const PetscInt nev, const PetscInt ncv, const PetscInt mpd, EPSWhich WhichEigenOfInterest, EPSType EPSsolverType,
+			const double tol, const int max_iter, SlepcSTparams &slepcSTparams, const int EPSmonitorInterv = 100, const double targetValue = 0.0) {
 		// Set-up the matrix
 		if(!alreadyHasMatrix)
 			setJacobianMatrixForSlepc(A, cvora, cv_gl, 5+nScal, ncv_gg);
@@ -1437,10 +1896,16 @@ public:
 			if(mpi_rank==0) cout<<"WARNING in SlepcSolver2::solveEigenProblemSlepc(): Matrix already exists. Use the pre-existing one"<<endl;
 
 		// Initialize the eigen-problem context
-		setEigenSolver(nev, ncv, mpd, tol, max_iter);
+		setEigenSolver(nev, ncv, mpd, WhichEigenOfInterest, EPSsolverType, tol, max_iter, EPSmonitorInterv, targetValue, slepcSTparams);
 
 		// Solve the eigen-problem and get eigenvalues and eigenvectors
 		return solveAndGetEivenpairs(evalsReal, evalsImag, evecsReal, evecsImag, relError, numIter, cvora, 5+nScal, nev);
+	}
+
+	void setConvHistoryFileName(string &newFilename) {
+		if(mpi_rank == 0)
+			cout<<"> SlepcSolver2::setConvHistoryFileName(): set the filename for EPS convergence history = "<<newFilename<<endl;
+		epsConvgHistory.filename = newFilename;
 	}
 
 protected:
@@ -1497,8 +1962,6 @@ protected:
 //		EPSIsGeneralized(EPS eps,PetscBool *gen);
 //		EPSIsHermitian(EPS eps,PetscBool *her);
 //		EPSIsPositive(EPS eps,PetscBool *pos);
-
-		EPSSetFromOptions(eps_);
 	}
 
 	/*
@@ -1506,25 +1969,19 @@ protected:
 	 * ----------------------
 	 *
 	 */
-	void setEigenSolver(const PetscInt nev, const PetscInt ncv, const PetscInt mpd, const double tol, const int max_iter) {
+	void setEigenSolver(const PetscInt nev, const PetscInt ncv, const PetscInt mpd,
+			EPSWhich WhichEigenOfInterest, EPSType EPSsolverType,
+			const double tol, const int max_iter, const int EPSmonitorInterv, const double targetValue, SlepcSTparams &slepcSTparams) {
 		assert(nev>=0 && ncv>=nev);
 
 		// Initialize the eps context
 		if(eps_empty)
 			initEigenSolver();
 
-		// Set the number of eigenvalues to compute
-		EPSSetDimensions(eps_, nev, ncv, mpd); // nev = the number of eigenvalues to compute
-		                                       //       The default is to compute only one.
-		                                       // ncv = the number of column vectors to be used by the solution algorithm
-		                                       //       It is recommended (depending on the method) to use ncv >= 2*nev or more.
-		                                       // mpd = maximum projected dimension (for a more advanced usage -- Chaprter 2.6.4 in the SLEPc manual)
-		                                       //       In the case of a large number of nev, the computation costs can be reduced by setting mpd << nev.
-
 //		EPSSetLeftVectorsWanted(eps_, PETSC_TRUE); // To compute also left eigenvectors (For ver3.3, support for left eigenvectors is limited and will be extended in future versions of SLEPc)
 
 		// Eigenvalues of interest
-		EPSSetWhichEigenpairs(eps_, EPS_LARGEST_REAL);
+		EPSSetWhichEigenpairs(eps_, WhichEigenOfInterest);
 		      // Available selection: EPS_LARGEST_MAGNITUDE   Largest |lambda|
 		      //                      EPS_SMALLEST_MAGNITUDE  Smallest |lambda|
 		      //                      EPS_LARGEST_REAL        Largest Re(lambda)
@@ -1537,16 +1994,45 @@ protected:
 		      //                      EPS_ALL                 All lambda in [a, b]
 		      //                      EPS_WHICH_USER          user-defined
 
-//		PetscScalar tau;         // Target value (tau) -- Since the target (tau) is defined as a PetscScalar, complex values of tau are allowed only
-//		                         //                       in the case of complex scalar builds of the SLEPc library
-//		EPSSetTarget(eps_, tau); // If "EPS_TARGET_MAGNITUDE", "EPS_TARGET_REAL", or "EPS_TARGET_IMAGINARY" is used, set the target-value tau.
+		if(WhichEigenOfInterest == EPS_TARGET_MAGNITUDE || WhichEigenOfInterest == EPS_TARGET_REAL || WhichEigenOfInterest == EPS_TARGET_IMAGINARY) {
+			EPSSetTarget(eps_, targetValue);
+				// If you want to use complex scalar for the target value,
+				// then defined it as a PetscScalar: complex values of tau are allowed only
+				// in the case of complex scalar builds of the SLEPc library
+
+			// Set harmonic extraction:
+			//   In practice, the standard Rayleigh-Ritz projection procedure is most appropriate for approximating eigenvalues
+			//   located at the PERIPHERY of the spectrum, especially those of largest magnitude; The Ritz values that stabilize
+			//   first are those in the periphery, so convergence of interior ones requires the previous convergence of all
+			//   eigenvalues between them and the periphery. Furthermore, this convergence behaviour usually implies that restarting
+			//   is carried out with bad approximations, so the restart is ineffective and global convergence is severely damaged.
+			//   HARMONIC PROJECTION is a variation that uses a target value, \tau, around which the user wants to compute
+			//   eigenvalues. The theory establishes that harmonic Ritz values converge in such a way that eigenvalues closest to
+			//   the target stabilize first, and also that no unconverged value is ever close to the target, so restarting is safe
+			//   in this case. Whether it works or not in practical cases depends on the particular distribution of the spectrum.
+			//
+			// Note that ncv has been set to a larger value than would be necessary for computing the largest magnitude eigenvalues.
+			// Also note that harmonic extraction is available in the default EPS solvers -- Arnold, Krylov-Schur, GD, and JD.
+			if(EPSsolverType == EPSARNOLDI || EPSsolverType == EPSKRYLOVSCHUR || EPSsolverType == EPSGD || EPSsolverType == EPSJD) {
+				EPSExtraction extr = EPS_HARMONIC;
+				// Supported EPSExtraction = { EPS_RITZ              = Rayleigh-Ritz extraction,
+				//                             EPS_HARMONIC          = harmonic Ritz extraction,
+				//                             EPS_HARMONIC_RELATIVE = harmonic Ritz extraction relative to the eigenvalue,
+				//                             EPS_HARMONIC_RIGHT    = harmonic Ritz extraction for rightmost eigenvalues,
+				//                             EPS_HARMONIC_LARGEST  = harmonic Ritz extraction for largest magnitude (without target),
+	            //                             EPS_REFINED           = refined Ritz extraction,
+				//                             EPS_REFINED_HARMONIC  = refined harmonic Ritz extraction   }
+
+				EPSSetExtraction(eps_, extr);
+			}
+		}
 
 //		PetscScalar a;
 //		PetscScalar b;
 //		EPSSetInterval(eps_, a, b); // If "EPS_ALL" is used, set the interval [a, b]
 
 		// Select the eigensolver
-		EPSSetType(eps_, EPSKRYLOVSCHUR); // Default = EPSKRYLOVSCHUR
+		EPSSetType(eps_, EPSsolverType); // Default = EPSKRYLOVSCHUR
 		      // Available solvers: Power/Inverse/RQI   :  EPSPOWER       (largest |lambda|;    Any problem type; Complex)
 		      //                    Subspace Iteration  :  EPSSUBSPACE    (largest |lambda|;    Any problem type; Complex)
 		      //                    Arnoldi             :  EPSARNOLDI     (Any spectrum;        Any problem type; Complex)
@@ -1563,14 +2049,323 @@ protected:
 		      //                    Wrapper to trlan  :  EPSTRLAN     (largest & smallest Re(lambda); EPS_HEP;          no)
 		      //                    Wrapper to blopex :  EPSBLOPEX    (smallest Re(lambda);           EPS_HEP,EPS_GHEP; Complex)
 
+		// Spectral transformation: The reasons why ST is used --
+		//                          1. Compute internal eigenvalues,           2. Accelerate convergence,
+		//                          3. Handle some special situations (e.g. in generalized problems when matrix B is singular),
+		//                          4. EPS contains preconditioned eigensolvers such as GD or JD (i.e. fake shift-and-invert).
+		if(EPSsolverType == EPSGD || EPSsolverType == EPSJD) {
+			assert(slepcSTparams.useST == true); // Note: GD and JD require spectral transformation
+		}
+
+		if(slepcSTparams.useST == true) {
+			EPSGetST(eps_, &st_);
+
+			// Step 1. Set ST type
+			STSetType(st_, slepcSTparams.sttype_); // Available types are STSHIFT, STFOLD, STSINVERT, STCAYLEY, STPRECOND, or STSHELL.
+			                                       // Default = STPRECOND
+				//   Spectral Transformation | STType    | Operator
+				//   -----------------------------------------------------------------------
+				//   Shift of Origin         | STSHIFT   | B^(-1)*A + \sigma*I
+				//   Spectrum Folding        | STFOLD    | (B^(-1)*A - \sigma*I)^2
+				//   Shift-and-invert        | STSINVERT | (A - \sigma*B)^(-1) * B
+				//   Generalized Cayley      | STCAYLEY  | (A - \sigma*B)^(-1) * (A + \nu*B)
+				//   Preconditioner          | STPRECOND | K^(-1) ~ (A - \sigma*B)^(-1)
+				//   -----------------------------------------------------------------------
+				//   Shell Transformation    | STSHELL   | user-defined
+
+			// Step 2. Set ST shift and nu (if required)
+			STSetShift(st_, slepcSTparams.STshift); // Note1 : The shift is defined as a PetscScalar, and this means that complex shifts
+			                                        //         are not allowed unless the complex version of slepc is used.
+			                                        // Note2 : The normal usage is that the user sets the target and then "STshift" is set to
+			                                        //         "targetValue" automatically.
+			if(slepcSTparams.sttype_ == STCAYLEY)
+				STCayleySetAntishift(st_, slepcSTparams.nu); // Note: Sometimes, the Cayley transform is applied for the particular case
+			                                                 //       in which STshift = nu.
+
+			// Step 3. Set KSP and PC contexts
+			KSP ksp_;
+			STGetKSP(st_, &ksp_);
+
+			PC pc_;
+			KSPGetPC(ksp_, &pc_);
+
+			KSPSetType(ksp_, slepcSTparams.ksptype_);
+				// Note: Available types are
+				//         KSPGMRES      "gmres"
+				//         KSPPREONLY    "preonly"
+				//         KSPBICG       "bicg"
+				//       The followings are also supported by PETSc, but they are not included in Rembrandt now:
+				//         KSPRICHARDSON, KSPCHEBYCHEV, KSPCG, KSPTCQMR, KSPBCGS, KSPCGS, KSPTFQMR, KSPCR, KSPLSQR, KSPQCG,
+				//         KSPBICG, KSPMINRES, KSPSYMMLQ, KSPLCD, KSPPYTHON, KSPBROYDEN, KSPGCR, KSPNGMRES, KSPSPECEST
+			if(slepcSTparams.ksptype_ != KSPPREONLY) {
+				PetscReal zeroAbs = 1.0e-6;
+				PetscReal zeroRel = 1.0e-6;
+				PetscReal divTol = 1.0e10;
+				PetscInt maxIter = 2000;
+
+				KSPSetTolerances(ksp_, zeroRel, zeroAbs, divTol, maxIter);
+				/*
+				 * PetscErrorCode KSPSetTolerances(KSP ksp,PetscReal rtol,PetscReal abstol,PetscReal dtol,PetscInt maxits)
+				 *   ksp    = the Krylov subspace context
+				 *   rtol   = the relative convergence tolerance (relative decrease in the residual norm)
+				 *   abstol = the absolute convergence tolerance (absolute size of the residual norm)
+				 *   dtol   = the divergence tolerance (amount residual can increase before KSPDefaultConverged() concludes that the method is diverging)
+				 *   maxits = maximum number of iterations to use
+				 */
+
+				if(slepcSTparams.ksptype_ == KSPGMRES) {
+					PetscInt gmresRestart = 100;
+					KSPGMRESSetRestart(ksp_, gmresRestart);
+
+					KSPGMRESSetOrthogonalization(ksp_, KSPGMRESClassicalGramSchmidtOrthogonalization); // use classical (unmodified) Gram-Schmidt to orthogonalize against the Krylov space (fast) (the default)
+//					KSPGMRESSetOrthogonalization(ksp, KSPGMRESModifiedGramSchmidtOrthogonalization);  // use modified Gram-Schmidt in the orthogonalization (more stable, but slower)
+				}
+			}
+
+			PCSetType(pc_, slepcSTparams.pcMethod);
+				// Note: Currently available PC types are
+				//         PCBJACOBI
+				//         PCASM
+				//         PCILU / PCHYPRE
+				//         PCLU (?)
+
+			if(slepcSTparams.pcMethod == PCLU) {
+				PetscOptionsSetValue("-st_pc_factor_mat_solver_package", "mumps");
+			} else if(slepcSTparams.pcMethod == PCHYPRE) {
+				int pcLevels = 5;
+
+				// Note: hypre error codes
+				//          HYPRE_ERROR_GENERIC         1    generic error
+				//          HYPRE_ERROR_MEMORY          2    unable to allocate memory
+				//          HYPRE_ERROR_ARG             4    argument error
+				//                                           bits 4-8 are reserved for the index of the argument error
+				//          HYPRE_ERROR_CONV          256    method did not converge as expected
+
+				PCHYPRESetType(pc_, "euclid"); // set hypre : pilut, parasails, boomeramg, euclid
+				//             -- "euclid" is the ILU
+				//             -- "boomeramg" (boomerAMG) is the AMG
+				//             -- "pilut" is Y. Saads's dual-threshold incomplete factorization algorithm (The algorithm produces an approximate factorization LU)
+				//             -- "parasails" is a sparse approximate inverse (SPAI) preconditioner (using a priori sparsity patterns and least-squares (Frobenius norm) minimization)
+
+				stringstream ss;
+				ss<<pcLevels;
+				string buffer = ss.str();
+				PetscOptionsSetValue("-pc_hypre_euclid_levels", buffer.c_str()); // Number of levels of fill ILU(k)
+				PetscOptionsSetValue("-pc_hypre_euclid_bj", PETSC_NULL); // Use block Jacobi ILU(k) instead of parallel ILU
+			}
+
+//			KSPSetFromOptions(ksp_); // set runtime options e.g. -ksp_type <type> -pc_type <type> -ksp_monitor -ksp_rtol <rtol> : These options will override those specified above
+
+			STSetKSP(st_, ksp_);
+
+			// Step 4. Set ksp_converged_reason for iterative linear solvers
+			if(slepcSTparams.pcMethod != PCLU) {
+				// In many cases, especially if a shift-and-invert or Cayley transformation is being used, iterative
+				// methods may not be well suited for solving linear systems (because of the properties
+				// of the coeffcient matrix that can be indefinite and ill-conditioned). When using an iterative
+				// linear solver, it may be helpful to run with the option -st_ksp_converged_reason, which will
+				// display the number of iterations required in each operator application. In extreme cases, the
+				// iterative solver fails, so EPSSolve aborts with an error
+
+				PetscOptionsSetValue("-st_ksp_converged_reason", NULL);
+			}
+
+#if PETSC_DEBUG_LEVEL > 0
+			if(mpi_rank==0) {
+				cout<<endl
+				    <<"============================================="<<endl;
+				cout<<"< ST context by STView() >"<<endl;
+			}
+			MPI_Barrier(mpi_comm);
+
+			STView(st_, PETSC_VIEWER_STDOUT_WORLD);  // PETSC_VIEWER_STDOUT_SELF or PETSC_VIEWER_STDOUT_WORLD
+			MPI_Barrier(mpi_comm);
+
+			if(mpi_rank==0) {
+				cout<<"============================================="<<endl
+				    <<endl;
+			}
+#endif
+
+			// Other object operations are available, which are not usually called by the user. The most
+			// important of such functions are STApply, which applies the operator to a vector, and STSetUp,
+			// which prepares all the necessary data structures before the solution process starts.
+		}
+
+		// Before setting the number of eigenvalues to compute, check if ncv and max_iter are reasonable
+		checkEPSNcvMaxiter(EPSsolverType, nev, ncv, max_iter);
+
+		// Set the number of eigenvalues to compute
+		EPSSetDimensions(eps_, nev, ncv, mpd); // nev = the number of eigenvalues to compute
+		                                       //       The default is to compute only one.
+		                                       // ncv = the number of column vectors to be used by the solution algorithm
+		                                       //       It is recommended (depending on the method) to use ncv >= 2*nev or more.
+		                                       // mpd = maximum projected dimension (for a more advanced usage -- Chaprter 2.6.4 in the SLEPc manual)
+		                                       //       In the case of a large number of nev, the computation costs can be reduced by setting mpd << nev.
+
 		// Control convergence
 		EPSSetConvergenceTest(eps_, EPS_CONV_ABS); // Default is EPS_CONV_EIG. However, for computing eigenvalues close to the origin,
-		                                           // this default criterion will give very poor accuracy.
+		                                           // this default criterion will give very poor accuracy. In this case, use EPS_CONV_ABS.
 		      // Available criterion: Absolute                :  EPS_CONV_ABS    ||r||
 		      //                      Relative to eigenvalue  :  EPS_CONV_EIG    ||r|| / |lambda|
 		      //                      Relative to matrix norms:  EPS_CONV_NORM   ||r|| / (||A|| + |lambda| ||B||)
 
 		EPSSetTolerances(eps_, tol, max_iter); // Default value of tol = 1.0e-7
+
+//		if(mpi_rank == 0)
+//			cout<<"> Enable the Balancing algorithm for non-Hermitian matrix"<<endl;
+//		EPSSetBalance(eps_, EPS_BALANCE_ONESIDE, 5, PETSC_DEFAULT);
+//		// When balancing is enabled, the solver works implicitly with matrix DAD^-1, where D is an appropriate diagonal matrix.
+//		// PetscErrorCode EPSSetBalance(EPS eps, EPSBalance bal, PetscInt its, PetscReal cutoff):
+//		//   Balancing makes sense only for non-Hermitian problems when the required precision is high (i.e. a small tolerance such as 1e-15).
+//		//     bal - The balancing method: EPS_BALANCE_NONE, EPS_BALANCE_ONESIDE, EPS_BALANCE_TWOSIDE, or EPS_BALANCE_USER
+//		//           The two-sided method is much more effective than the one-sided counterpart,
+//		//          but it requires the system matrices to have the MatMultTranspose operation defined.
+//		//     its - Number of iterations performed by the balancing algorithm.
+//		//           In the paper of Chen & Demmel (2000), the default value is 5.
+//		//     cutoff - Cutoff value: It is used only in the two-side variant. Use PETSC_DEFAULT to assign a reasonably good value.
+//		//              In the paper of Chen & Demmel (2000), the default value is 1.0e-8.
+//		// Chen, Demmel (2000), Balancing Sparse Matrices for Computing Eigenvalues. Linear Algebra Appl., 309(1-3):261-287.
+
+		epsConvgHistory.nev = nev;
+		epsConvgHistory.convergMonitorInterv = EPSmonitorInterv;
+		epsConvgHistory.EPSmaxIters = max_iter;
+
+		epsConvgHistory.useST = slepcSTparams.useST;
+		epsConvgHistory.sttype_ = slepcSTparams.sttype_;
+		epsConvgHistory.STshift = slepcSTparams.STshift;
+		epsConvgHistory.nu = slepcSTparams.nu;
+
+		if(mpi_rank == 0) { // Only the master CPU show the convergence history on the screen
+			epsConvgHistory.showRunTime  = true;
+			epsConvgHistory.writeRunTime = true;
+		} else {
+			epsConvgHistory.showRunTime  = false;
+			epsConvgHistory.writeRunTime = false;
+		}
+		EPSMonitorSet(eps_, MyEPSMonitor, &epsConvgHistory, NULL);
+
+		EPSSetFromOptions(eps_);
+	}
+
+	/*
+	 * Method: checkEPSNcvMaxiter
+	 * --------------------------
+	 * Check if the given ncv and max_iter are enough for the given EPS type.
+	 * If not appropriate, show a warning message.
+	 * This method is called by setEigenSolver().
+	 */
+	void checkEPSNcvMaxiter(const EPSType EPSsolverType, const int nev, const int ncv, const int max_iter) {
+		PetscInt m_, n_;
+		MatGetSize(A_, &m_, &n_);
+		int N = std::max<int>(m_, n_);  // Actually this is not clear from the SLEPc user manual -- just assumed based on table 2.5
+
+		if (EPSsolverType == EPSPOWER) {
+			if(ncv < nev && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSPOWER, it is recommended to have ncv > nev"<<endl;
+
+			int max_int_recommend = std::max<int>(2000, 100*N);
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSPOWER, it is recommended to have max_iter = max(2000, 100*N) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSSUBSPACE) {
+			if(ncv < std::max<int>(2*nev, nev+15) && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSSUBSPACE, it is recommended to have ncv > max(2*nev, nev+15)"<<endl;
+
+			int max_int_recommend = std::max<int>(100, int(2*N/ncv));
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSSUBSPACE, it is recommended to have max_iter = max(100, [2*N/ncv]) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSARNOLDI) {
+			if(ncv < std::max<int>(2*nev, nev+15) && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSARNOLDI, it is recommended to have ncv > max(2*nev, nev+15)"<<endl;
+
+			int max_int_recommend = std::max<int>(100, int(2*N/ncv));
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSARNOLDI, it is recommended to have max_iter = max(100, [2*N/ncv]) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSLANCZOS) {
+			if(ncv < std::max<int>(2*nev, nev+15) && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSLANCZOS, it is recommended to have ncv > max(2*nev, nev+15)"<<endl;
+
+			int max_int_recommend = std::max<int>(100, int(2*N/ncv));
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSLANCZOS, it is recommended to have max_iter = max(100, [2*N/ncv]) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSKRYLOVSCHUR) {
+			if(ncv < std::max<int>(2*nev, nev+15) && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSKRYLOVSCHUR, it is recommended to have ncv > max(2*nev, nev+15)"<<endl;
+
+			int max_int_recommend = std::max<int>(100, int(2*N/ncv));
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSKRYLOVSCHUR, it is recommended to have max_iter = max(100, [2*N/ncv]) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSGD) {
+			if(ncv < std::max<int>(2*nev, nev+15)+1 && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSGD, it is recommended to have ncv > max(2*nev, nev+15)+1"<<endl;
+
+			int max_int_recommend = std::max<int>(100, int(2*N/ncv));
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSGD, it is recommended to have max_iter = max(100, [2*N/ncv]) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSJD) {
+			if(ncv < std::max<int>(2*nev, nev+15)+1 && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSJD, it is recommended to have ncv > max(2*nev, nev+15)+1"<<endl;
+
+			int max_int_recommend = std::max<int>(100, int(2*N/ncv));
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSJD, it is recommended to have max_iter = max(100, [2*N/ncv]) = "<<max_int_recommend<<endl;
+		}
+//		if (EPSsolverType == EPSRQCG) {
+//			if(ncv < std::max<int>(2*nev, nev+15)+1 && mpi_rank == 0)
+//				cout<<"WARNING! For EPSsolverType = EPSRQCG, it is recommended to have ncv > max(2*nev, nev+15)+1"<<endl;
+//
+//			int max_int_recommend = std::max<int>(100, int(2*N/ncv));
+//			if(max_iter < max_int_recommend && mpi_rank == 0)
+//				cout<<"WARNING! For EPSsolverType = EPSRQCG, it is recommended to have max_iter = max(100, [2*N/ncv]) = "<<max_int_recommend<<endl;
+//		}
+
+		// external packages
+		if (EPSsolverType == EPSARPACK) {
+			if(ncv < std::max<int>(20, 2*nev+1) && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSARPACK, it is recommended to have ncv > max(20, 2*nev+1)"<<endl;
+
+			int max_int_recommend = std::max<int>(300, int(2*N/ncv));
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSARPACK, it is recommended to have max_iter = max(300, [2*N/ncv]) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSPRIMME) {
+			if(ncv < std::max<int>(20, 2*nev+1) && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSPRIMME, it is recommended to have ncv > max(20, 2*nev+1)"<<endl;
+
+			int max_int_recommend = std::max<int>(1000, N);
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSPRIMME, it is recommended to have max_iter = max(1000, N) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSBLZPACK) {
+			if(ncv < std::max<int>(nev+10, 2*nev) && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSBLZPACK, it is recommended to have ncv > max(nev+10, 2*nev)"<<endl;
+
+			int max_int_recommend = std::max<int>(1000, N);
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSBLZPACK, it is recommended to have max_iter = max(1000, N) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSTRLAN) {
+			if(ncv < nev && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSTRLAN, it is recommended to have ncv > nev"<<endl;
+
+			int max_int_recommend = std::max<int>(1000, N);
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSTRLAN, it is recommended to have max_iter = max(1000, N) = "<<max_int_recommend<<endl;
+		}
+		if (EPSsolverType == EPSBLOPEX) {
+			if(ncv < nev && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSBLOPEX, it is recommended to have ncv > nev"<<endl;
+
+			int max_int_recommend = std::max<int>(100, int(2*N/ncv));
+			if(max_iter < max_int_recommend && mpi_rank == 0)
+				cout<<"WARNING! For EPSsolverType = EPSBLOPEX, it is recommended to have max_iter = max(100, [2*N/ncv]) = "<<max_int_recommend<<endl;
+		}
 	}
 
 	/*
@@ -1704,9 +2499,7 @@ private:
 
 		eps_empty = PETSC_TRUE;
 
-//		KSPGetPC(ksp, &pc);
-		PCSetType(pc, PCNONE);
-
+		// Note: Don't worry about the pre-conditioner assigned in PetscSolver2. It will be neglected in SLEPc.
 
 //		alreadyHasMatrix = PETSC_FALSE;
 		alreadyHasMatrix = false;

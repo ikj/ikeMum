@@ -25,7 +25,6 @@
 #define WITH_PETSC
 #endif
 
-
 /* Internal Buffer sizes */
 // <adolc/usrparms.h>
 //#define OBUFSIZE 524288  // default=65536
@@ -1510,10 +1509,9 @@ protected:
 	MatComprsedSTL jacMatrixSTL; // This will be used if the Jacobian matrix is calculated in the so-called "1D style"
 
 	// PetscSolver
-#ifdef USE_SLEPC_WITH_PETSC
-	SlepcSolver2 *petscSolver2;
-#else
 	PetscSolver2 *petscSolver2;
+#ifdef USE_SLEPC_WITH_PETSC
+	SlepcSolver2 *slepcSolver2;
 #endif
 
 	// Pseudo-arclength continuation method
@@ -1601,13 +1599,18 @@ protected:
 		double stabilizationAlpha;        // "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA"
 		double stabilizationAlphaEps;     // "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA_EPS"
 
+		int stabilizationAlphaRamp_startInc;
+		int stabilizationAlphaRamp_interval;
+		double stabilizationAlphaRamp_incAlpha;
+		double stabilizationAlphaRamp_targetAlpha;
+
 		// Trust-region size
 		double trustRegionSize;
 	};
 	NewtonParam newtonParam;
 
-// IKJ
-double AreaLambda;
+	// IKJ
+	double AreaLambda;
 
 	int    myNonDiagAdd_count;     // Statistics: the number of modified diagonal
 	double myNonDiagAdd_rhsAbsSum; // Statistics: the increase of RHS due to this treatment

@@ -83,6 +83,9 @@ void IkeWithPsALC_AD::init() {
 
 	// PetscSolvers
 	petscSolver2 = NULL;
+#ifdef USE_SLEPC_WITH_PETSC
+	slepcSolver2 = NULL;
+#endif
 
 	// Pseudo-arclength continuation method
 	NcontrolEqns = 0;
@@ -574,16 +577,30 @@ void IkeWithPsALC_AD::runPsALC() {
 		cout<<"    RATIO BETWEEN THE NORM OF THE FLOW VARIABLES AND THE LAMBDAS (BEFORE WEIGHT_FOR_LAMBDA) = "<< sqrt(normSqRatioInArclength) <<")"<<endl;
 	}
 
-//IKJ
 	// Set the R.H.S. weighting for the tangential equation
-	AreaLambda = min(1.0, 100.0/arclength);
-	if(mpi_rank ==0)
+	if (!checkParam("AREA_LAMBDA")) {
+		ParamMap::add("AREA_LAMBDA  METHOD=INVERSE_ARCLENGTH  COEFF=100.0  CUTOFF_VAL=1.0"); // add default values
+		if (mpi_rank == 0)
+			cout<< "WARNING: added keyword \"AREA_LAMBDA  METHOD=INVERSE_ARCLENGTH  COEFF=100.0  CUTOFF_VAL=1.0\""<< " to parameter map!" << endl;
+	}
+	string areaLambda_method = getParam("AREA_LAMBDA")->getString("METHOD");
+	double areaLambda_coeff  = getParam("AREA_LAMBDA")->getDouble("COEFF");
+
+	if(areaLambda_method.compare("FIXED_VALUE") == 0)
+		AreaLambda = areaLambda_coeff;
+	else {
+		double areaLambda_cutoff = getParam("AREA_LAMBDA")->getDouble("CUTOFF_VAL");
+
+		AreaLambda = min(areaLambda_cutoff, areaLambda_coeff/arclength);
+	}
+
+	if(mpi_rank == 0)
 		cout<<endl
-		    <<">> AreaLambda = "<<AreaLambda<<endl;
+		    <<">> AreaLambda: Method = "<<areaLambda_method<<", Value = "<<AreaLambda<<endl;
 
 	//---------------------
 	// Pseudo-arclength continuation
-	if (nsteps-step < 1) {
+	if (nsteps-step < 0) {
 		if(mpi_rank==0)
 			cout<<endl<<"IkeWithPsALC_AD::runPsALC() -- code will not run bifurcation since NSTEPS(="<<nsteps<<") < STEP(="<<step<<")+1"<<endl;
 		done = true;
@@ -1743,6 +1760,9 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	/* Read parameters from input file */
 	// Read basic Newton parameters
 	getNewtonParam();
+	int maxIterLS = newtonParam.maxIterLS;    // Since PETSc GMRes tresholds can be changed, initialize the value here
+	double zeroAbsLS = newtonParam.zeroAbsLS; // Since PETSc GMRes tresholds can be changed, initialize the value here
+	double zeroRelLS = newtonParam.zeroRelLS; // Since PETSc GMRes tresholds can be changed, initialize the value here
 
 	// How to calculate the Jacobian matrix (ROW_1D, ORDINARY_2D): For a better maintenance of the code, call a separated function
 	HOW_TO_CALC_JAC howToCalcJac = getHowToCalcJac();
@@ -2138,18 +2158,17 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		 ******/
 		if(newtonParam.intervalDecLS > 0)
 			if ((iterNewton > startingNewtonIter+1) && (iterNewton >= newtonParam.startDecLS)) {
-				if((iterNewton-newtonParam.startDecLS) % newtonParam.intervalDecLS == 0) {
-					if(newtonParam.maxIterLS < newtonParam.maxFinalIterLS)
-						newtonParam.maxIterLS += newtonParam.incIterLS;
-					if(newtonParam.zeroAbsLS > newtonParam.minZeroAbsLS+MACHINE_EPS || newtonParam.zeroRelLS > newtonParam.minZeroRelLS+MACHINE_EPS) {
-						newtonParam.zeroAbsLS *= newtonParam.decZeroLS;
-						newtonParam.zeroRelLS *= newtonParam.decZeroLS;
-					}
-					petscSolver2->setTresholds(newtonParam.zeroAbsLS, newtonParam.zeroRelLS, newtonParam.maxIterLS);
+//			if (iterNewton >= newtonParam.startDecLS) {
+				int rampCount = int(abs(iterNewton - newtonParam.startDecLS) / newtonParam.intervalDecLS);
 
-					if(debugLevel>1 && mpi_rank==0) {
-						printf("RAMP_LSNT_PARAMETERS: MAX_ITER=%d  MIN_ABS_RESID=%.2e  MIN_REL_RESID=%.2e\n", newtonParam.maxIterLS, newtonParam.zeroAbsLS, newtonParam.zeroRelLS);
-					}
+				maxIterLS = min(newtonParam.maxIterLS + newtonParam.incIterLS * rampCount, newtonParam.maxFinalIterLS);
+				zeroAbsLS = max(newtonParam.zeroAbsLS * pow(newtonParam.decZeroLS, double(rampCount)), newtonParam.minZeroAbsLS);
+				zeroRelLS = max(newtonParam.zeroRelLS * pow(newtonParam.decZeroLS, double(rampCount)), newtonParam.minZeroRelLS);
+
+				petscSolver2->setTresholds(zeroAbsLS, zeroRelLS, maxIterLS);
+
+				if(debugLevel>1 && mpi_rank==0) {
+					printf("RAMP_LSNT_PARAMETERS: MAX_ITER=%d  MIN_ABS_RESID=%.2e  MIN_REL_RESID=%.2e\n", maxIterLS, zeroAbsLS, zeroRelLS);
 				}
 			}
 
@@ -2360,7 +2379,7 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			                                    // Otherwise, apply PC(pre-conditioner) to get the inital guess (the Knoll trick) -- For Bifurcation, this works better.
 
 			solveLinSysNSCoupled2<MatComprsedSTL>(phi, jacMatrixSTL, rhs, nIter, absResid, kspMonitorHistory,
-					useOldSolnAsInitGuess, newtonParam.zeroAbsLS, newtonParam.zeroRelLS, newtonParam.maxIterLS, nScal, monitorConvergInterval,
+					useOldSolnAsInitGuess, zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
 					NcontrolEqns, ncv_gg, q_tangent_inJacMat, lambda_tangent_inJacMat, step, iterNewton);
 			// Note that you should pass nScal to this function instead of m(=5+nScal)
 
@@ -2377,15 +2396,15 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			int saveConvergInterval = int(max(monitorConvergInterval/10, 1.01));
 
 			solveLinSysNSCoupled2<MatComprsed>(phi, jacMatrix, rhs, nIter, absResid, kspMonitorHistory,
-					useOldSolnAsInitGuess, newtonParam.zeroAbsLS, newtonParam.zeroRelLS, newtonParam.maxIterLS, nScal, monitorConvergInterval,
+					useOldSolnAsInitGuess, zeroAbsLS, zeroRelLS, maxIterLS, nScal, monitorConvergInterval,
 					NcontrolEqns, ncv_gg, q_tangent_inJacMat, lambda_tangent_inJacMat, step, iterNewton);
 			// Note that you should pass nScal to this function instead of m(=5+nScal)
 		} else {
 			throw(PSALC_ERROR_CODE);
 		}
 
-		if(nIter == newtonParam.maxIterLS  &&  absResid > newtonParam.zeroAbsLS) {
-			if(debugLevel>0 || (newtonParam.incIterLS==0 && newtonParam.incIterLS==1.0)) { // TO DO
+		if(nIter == maxIterLS  &&  absResid > zeroAbsLS) {
+			if(debugLevel>0 || (newtonParam.incIterLS!=0 && newtonParam.incIterLS!=1.0)) {
 				// Show the warning message on the screen
 				double trueAbsResid = petscSolver2->calcTrueResidualNorm(); // Since "absResid" contains the last approximate & left-preconditioned residual norm,
 				                                                            // we want to calculate the true residual here.
@@ -2859,7 +2878,7 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			if(useExactJac) cout<<"Exact)";
 			else            cout<<modifiedNewtonMethod<<")";
 			if(NcontrolEqns > 0) {
-				printf("     %15.8e\n",lambda[0]);
+				printf("     %15.8e\n", lambda[0]);
 			} else {
 				printf("\n");
 			}
@@ -2939,25 +2958,30 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 		}
 
 		if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON) { // Apply diagonal scaled by CFL and local volume
+			// Note: For now, GENERAL_NEWTON_HU and GENERAL_NEWTON_HUSEO are not affected by this ramping
 			// Check ramping
-			if (!checkParam("RAMP_STAB_NEWTON_ALPHA")) {
-				ParamMap::add("RAMP_STAB_NEWTON_ALPHA AFTER_ITER=10  INTERVAL_ITER=10  FACTOR_INC=1.0  TARGET_ALPHA=1.0");    // add default: no increase of CFL number!
-				if (mpi_rank == 0)
-					cout << "WARNING: added \"RAMP_STAB_NEWTON_ALPHA AFTER_ITER=10  INTERVAL_ITER=10  FACTOR_INC=1.0  TARGET_ALPHA=1.0\" to parameter map" << endl;
-			}
+			int startIncAlpha    = newtonParam.stabilizationAlphaRamp_startInc;
+			int intervalIncAlpha = newtonParam.stabilizationAlphaRamp_interval;
+			double incAlpha    = newtonParam.stabilizationAlphaRamp_incAlpha;
+			double targetAlpha = newtonParam.stabilizationAlphaRamp_targetAlpha;
 
-			int startIncAlpha    = getParam("RAMP_STAB_NEWTON_ALPHA")->getInt("AFTER_ITER");
-			int intervalIncAlpha = getParam("RAMP_STAB_NEWTON_ALPHA")->getInt("INTERVAL_ITER");
-			double incAlpha    = getParam("RAMP_STAB_NEWTON_ALPHA")->getDouble("FACTOR_INC");
-			double targetAlpha = getParam("RAMP_STAB_NEWTON_ALPHA")->getDouble("TARGET_ALPHA");
-
-			if ((iterNewton >= startIncAlpha) && (iterNewton%intervalIncAlpha == 0)) {
-				if(incAlpha>1.0 && alpha_stab_newton<targetAlpha)
-					if(relaxation > 1.0/incAlpha)
-						alpha_stab_newton *= incAlpha;
-				if(incAlpha<1.0 && alpha_stab_newton>targetAlpha)
-					if(relaxation > incAlpha)
-						alpha_stab_newton *= incAlpha;
+			if ((iterNewton > startIncAlpha) && (iterNewton%intervalIncAlpha == 0)) {
+				if(incAlpha>1.0 && alpha_stab_newton<targetAlpha) {
+					if(relaxation > incAlpha-1.0) {
+						int exponent = int(abs(iterNewton - startIncAlpha) / std::max<int>(intervalIncAlpha, 1));
+						alpha_stab_newton = min(newtonParam.stabilizationAlpha * pow(incAlpha, double(exponent)), targetAlpha);
+					} else {
+						if(mpi_rank==0) printf("           >> Note: Doesn't increase alpha_stab_newton because relaxation(=%g) <= FACTOR_INC-1.0(=%g)\n", relaxation, incAlpha-1.0);
+					}
+				}
+				if(incAlpha<1.0 && alpha_stab_newton>targetAlpha) {
+					if(relaxation > incAlpha) {
+						int exponent = int(abs(iterNewton - startIncAlpha) / std::max<int>(intervalIncAlpha, 1));
+						alpha_stab_newton = max(newtonParam.stabilizationAlpha * pow(incAlpha, double(exponent)), targetAlpha);
+					} else {
+						if(mpi_rank==0) printf("           >> Note: Doesn't decrease alpha_stab_newton because relaxation(=%g) <= FACTOR_INC(=%g)\n", relaxation, incAlpha);
+					}
+				}
 			}
 		}
 ////IKJ
@@ -5256,7 +5280,7 @@ template <class MatT>
 void IkeWithPsALC_AD::solveLinSysNSCoupled2(double *phi, MatT &A, double *rhs,
 		bool useOldSolnForInitGuess, const double zeroAbs, const double zeroRel, const int maxIter, int nScal, const int monitorConvergInterval,
 		int NcontrolParams, int ncv_gg, double **vecC, const double *d, const int step, const int newtonIter) {
-	switch (linearSolverNS) {
+	switch (linearSolverNS) { // Note: BCGSTAB, PETSC_GMRES, and PETSC_LU_MUMPS are defined in UgpWithCv2.h, whereas linearSolverNS is set in UgpWithCvCompFlow.h
 	case PETSC_GMRES:
 		// on the first time, initialize the petsc solver...
 		if (petscSolver2 == NULL) {
@@ -5284,6 +5308,27 @@ void IkeWithPsALC_AD::solveLinSysNSCoupled2(double *phi, MatT &A, double *rhs,
 
 		break;
 
+#if defined(PETSC_HAVE_MUMPS) // This flag, PETSC_HAVE_MUMPS, is defined if MUMPS is installed while configuring PETSc.
+                              // Note: For superLU -- PETSC_HAVE_SUPERLU or PETSC_HAVE_SUPERLU_DIST.
+	case PETSC_LU_MUMPS:
+		// on the first time, initialize the petsc solver...
+		if (petscSolver2 == NULL) {
+			if (nbocv_v_global == NULL) {
+				nbocv_v_global = new int[ncv_gg];
+				for (int icv = 0; icv < ncv; icv++)
+					nbocv_v_global[icv] = cvora[mpi_rank] + icv;
+				updateCvDataG1G2(nbocv_v_global, REPLACE_DATA);
+			}
+
+			int printLevel = 1; // MUMPS print level (0-4): MUMPS default = 2
+			bool pcReuseDummy = false;
+			petscSolver2 = new PetscSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, "LU", printLevel, pcReuseDummy, false, NcontrolParams);
+//			petscSolver2->setTresholds(zeroAbs, zeroRel, maxIter);
+		}
+		petscSolver2->solveLUMUMPS<MatT>(A, phi, rhs, cvora, nbocv_v_global, 5 + nScal, NcontrolParams, ncv_gg, vecC, d, step, newtonIter);
+
+		break;
+#endif
 	default:
 		if (mpi_rank == 0)
 			cerr << "Error: unrecognized solver: " << linearSolverNS
@@ -5297,7 +5342,7 @@ template <class MatT>
 void IkeWithPsALC_AD::solveLinSysNSCoupled2(double *phi, MatT &A, double *rhs, int &nIter, double &absResid,
 		bool useOldSolnForInitGuess, const double zeroAbs, const double zeroRel, const int maxIter, int nScal, const int monitorConvergInterval,
 		int NcontrolParams, int ncv_gg, double **vecC, const double *d, const int step, const int newtonIter) {
-	switch (linearSolverNS) {
+	switch (linearSolverNS) { // Note: BCGSTAB, PETSC_GMRES, and PETSC_LU_MUMPS are defined in UgpWithCv2.h, whereas linearSolverNS is set in UgpWithCvCompFlow.h
 	case PETSC_GMRES:
 		// on the first time, instantiate the petsc solver...
 		if (petscSolver2 == NULL) {
@@ -5331,6 +5376,28 @@ void IkeWithPsALC_AD::solveLinSysNSCoupled2(double *phi, MatT &A, double *rhs, i
 
 		break;
 
+#if defined(PETSC_HAVE_MUMPS) // This flag, PETSC_HAVE_MUMPS, is defined if MUMPS is installed while configuring PETSc.
+                              // Note: For superLU -- PETSC_HAVE_SUPERLU or PETSC_HAVE_SUPERLU_DIST.
+	case PETSC_LU_MUMPS:
+		// on the first time, initialize the petsc solver...
+		if (petscSolver2 == NULL) {
+			if (nbocv_v_global == NULL) {
+				nbocv_v_global = new int[ncv_gg];
+				for (int icv = 0; icv < ncv; icv++)
+					nbocv_v_global[icv] = cvora[mpi_rank] + icv;
+				updateCvDataG1G2(nbocv_v_global, REPLACE_DATA);
+			}
+
+			int printLevel = 1; // MUMPS print level (0-4): MUMPS default = 2
+			bool pcReuseDummy = false;
+			petscSolver2 = new PetscSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, "LU", printLevel, pcReuseDummy, false, NcontrolParams);
+//			petscSolver2->setTresholds(zeroAbs, zeroRel, maxIter);
+		}
+		petscSolver2->solveLUMUMPS<MatT>(A, phi, rhs, cvora, nbocv_v_global, 5 + nScal, NcontrolParams, ncv_gg, vecC, d, step, newtonIter);
+
+		break;
+#endif
+
 	default:
 		if (mpi_rank == 0)
 			cerr << "Error: unrecognized solver: " << linearSolverNS
@@ -5344,7 +5411,7 @@ template <class MatT>
 void IkeWithPsALC_AD::solveLinSysNSCoupled2(double *phi, MatT &A, double *rhs, int &nIter, double &absResid, vector<pair<int, double> >& kspMonitorHistory,
 		bool useOldSolnForInitGuess, const double zeroAbs, const double zeroRel, const int maxIter, int nScal, const int monitorConvergInterval,
 		int NcontrolParams, int ncv_gg, double **vecC, const double *d, const int step, const int newtonIter) {
-	switch (linearSolverNS) {
+	switch (linearSolverNS) { // Note: BCGSTAB, PETSC_GMRES, and PETSC_LU_MUMPS are defined in UgpWithCv2.h, whereas linearSolverNS is set in UgpWithCvCompFlow.h
 	case PETSC_GMRES:
 		// on the first time, instantiate the petsc solver...
 		if (petscSolver2 == NULL) {
@@ -5360,11 +5427,11 @@ void IkeWithPsALC_AD::solveLinSysNSCoupled2(double *phi, MatT &A, double *rhs, i
 			int pcLevels;  // Note: this is required only for the ILU pre-conditioner. Otherwise, any number doesn't matter.
 			getPCcontext(pcType, pcReuse, pcLevels);
 
-	#ifdef USE_SLEPC_WITH_PETSC
-			petscSolver2 = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, pcType, pcLevels, pcReuse, useOldSolnForInitGuess, NcontrolParams, monitorConvergInterval);
-	#else
+//	#ifdef USE_SLEPC_WITH_PETSC
+//			petscSolver2 = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, pcType, pcLevels, pcReuse, useOldSolnForInitGuess, NcontrolParams, monitorConvergInterval);
+//	#else
 			petscSolver2 = new PetscSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, pcType, pcLevels, pcReuse, useOldSolnForInitGuess, NcontrolParams, monitorConvergInterval);
-	#endif
+//	#endif
 
 			petscSolver2->setTresholds(zeroAbs, zeroRel, maxIter);
 
@@ -5378,6 +5445,28 @@ void IkeWithPsALC_AD::solveLinSysNSCoupled2(double *phi, MatT &A, double *rhs, i
 			petscSolver2->solveGMRES<MatT>(kspMonitorHistory, nIter, absResid, A, phi, rhs, NULL, cvora, nbocv_v_global, 5 + nScal, NcontrolParams, ncv_gg, vecC, d, step, newtonIter);
 
 		break;
+
+#if defined(PETSC_HAVE_MUMPS) // This flag, PETSC_HAVE_MUMPS, is defined if MUMPS is installed while configuring PETSc.
+                              // Note: For superLU -- PETSC_HAVE_SUPERLU or PETSC_HAVE_SUPERLU_DIST.
+	case PETSC_LU_MUMPS:
+		// on the first time, initialize the petsc solver...
+		if (petscSolver2 == NULL) {
+			if (nbocv_v_global == NULL) {
+				nbocv_v_global = new int[ncv_gg];
+				for (int icv = 0; icv < ncv; icv++)
+					nbocv_v_global[icv] = cvora[mpi_rank] + icv;
+				updateCvDataG1G2(nbocv_v_global, REPLACE_DATA);
+			}
+
+			int printLevel = 1; // MUMPS print level (0-4): MUMPS default = 2
+			bool pcReuseDummy = false;
+			petscSolver2 = new PetscSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, "LU", printLevel, pcReuseDummy, false, NcontrolParams);
+//			petscSolver2->setTresholds(zeroAbs, zeroRel, maxIter);
+		}
+		petscSolver2->solveLUMUMPS<MatT>(A, phi, rhs, cvora, nbocv_v_global, 5 + nScal, NcontrolParams, ncv_gg, vecC, d, step, newtonIter);
+
+		break;
+#endif
 
 	default:
 		if (mpi_rank == 0)
@@ -5419,11 +5508,11 @@ void IkeWithPsALC_AD::solveBasicMatOperationsPetsc(double *xVec, MatT &A, double
 			int pcLevels;  // Note: this is required only for the ILU pre-conditioner. Otherwise, any number doesn't matter.
 			getPCcontext(pcType, pcReuse, pcLevels);
 
-	#ifdef USE_SLEPC_WITH_PETSC
-			petscSolver2 = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, pcType, pcLevels, pcReuse, false, NcontrolParams, monitorConvergInterval);
-	#else
+//	#ifdef USE_SLEPC_WITH_PETSC
+//			petscSolver2 = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, pcType, pcLevels, pcReuse, false, NcontrolParams, monitorConvergInterval);
+//	#else
 			petscSolver2 = new PetscSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, pcType, pcLevels, pcReuse, false, NcontrolParams, monitorConvergInterval);
-	#endif
+//	#endif
 		}
 
 		// Solve for the linear operation
@@ -5514,17 +5603,17 @@ int IkeWithPsALC_AD::solveEigenProblem(double *evalsReal, double *evalsImag, dou
 		}
 
 		// Initiate the SLEPc solver...
-		if(petscSolver2 == NULL)
-			petscSolver2 = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal);
-		else
-			slepcSolver  = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal);
+//		if(petscSolver2 == NULL)
+//			petscSolver2 = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal);
+//		else
+		slepcSolver = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal);
 
 		// Solve the linear system
-		if(slepcSolver == NULL) // Note that petscSolver2 is seldom NULL since it should be allocated during the Newton-Raphson iterations
-			nconv = petscSolver2->solveEigenProblemSlepc<MatT>(evalsReal, evalsImag, evecsReal, evecsImag, relError, numIter,
-					                                      A, cvora, nbocv_v_global, nScal, ncv_gg, nev, ncv, mpd, tol, max_iter);
-		else
-			nconv = slepcSolver ->solveEigenProblemSlepc<MatT>(evalsReal, evalsImag, evecsReal, evecsImag, relError, numIter,
+//		if(slepcSolver == NULL) // Note that petscSolver2 is seldom NULL since it should be allocated during the Newton-Raphson iterations
+//			nconv = petscSolver2->solveEigenProblemSlepc<MatT>(evalsReal, evalsImag, evecsReal, evecsImag, relError, numIter,
+//					                                      A, cvora, nbocv_v_global, nScal, ncv_gg, nev, ncv, mpd, tol, max_iter);
+//		else
+		nconv = slepcSolver ->solveEigenProblemSlepc<MatT>(evalsReal, evalsImag, evecsReal, evecsImag, relError, numIter,
 					                                      A, cvora, nbocv_v_global, nScal, ncv_gg, nev, ncv, mpd, tol, max_iter);
 			// Note: If ncv>nev, nconv can be larger than nev
 
@@ -5533,11 +5622,11 @@ int IkeWithPsALC_AD::solveEigenProblem(double *evalsReal, double *evalsImag, dou
 				cout<<"WARNING in IkeWithPsALC_AD::solveEigenProblem(): No converged eigen-pair was found"<<endl;
 
 		// Free the SLEPc solver
-		if(petscSolver2 != NULL) {
-			delete petscSolver2; 	petscSolver2 = NULL;
-		} else {
-			delete slepcSolver; 	slepcSolver = NULL;
-		}
+//		if(petscSolver2 != NULL) {
+//			delete petscSolver2; 	petscSolver2 = NULL;
+//		} else {
+		delete slepcSolver; 	slepcSolver = NULL;
+//		}
 #else
 		if (mpi_rank == 0)
 			cerr << "ERROR in IkeWithPsALC_AD::solveEigenProblem(): USE_SLEPC_WITH_PETSC was not defined"<< endl;
@@ -5676,14 +5765,6 @@ void IkeWithPsALC_AD::updateLambda(const double* Q, const double* delQ, const do
 			else if(fabs(relaxation*delQ[Nflow+iEqn]) < 1.0e-10)
 				cout<<"           WARNING in updateLambda(): delta_lambda["<<iEqn<<"] (="<<relaxation*delQ[Nflow+iEqn]<<") is too small"<<endl;
 			lambda[iEqn] = Q[Nflow+iEqn] + relaxation*delQ[Nflow+iEqn];
-//// IKJ
-//if(iterNewton <= 1) {
-//	lambda[iEqn] = Q[Nflow+iEqn] + relaxation*delQ[Nflow+iEqn];
-//} else {
-//	lambda[iEqn] = Q[Nflow+iEqn] + 0.01*relaxation*delQ[Nflow+iEqn];
-//	cout<<"CAUTION! dLambda is relaxed by 0.01"<<endl;
-//}
-
 		}
 	}
 	MPI_Bcast(lambda, NcontrolParams, MPI_DOUBLE, mpi_size-1, mpi_comm);
@@ -7871,14 +7952,13 @@ void IkeWithPsALC_AD::getNewtonParam() {
 		printf("> BACKTRACKING_SKIP  FIRST_ITER=%d  FREQUENCY=%d\n", newtonParam.skipBT_firstITer, newtonParam.skipBT_freq);
 
 	//  Stabilized Newton's method for the problem with a singular Jacobian
-	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"MATRIX_TYPE"
+	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"METHOD_TYPE"
 	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA"
 	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"ALPHA_EPS"
-	//		 *   "STABILIZATION_FOR_SINGULAR_JAC"-->"STARTING_ITER"
 	if (!checkParam("STABILIZATION_FOR_SINGULAR_JAC")) {
-		ParamMap::add("STABILIZATION_FOR_SINGULAR_JAC  MATRIX_TYPE=0  ALPHA=0.0  ALPHA_EPS=0.0  STARTING_ITER==1"); // add default values
+		ParamMap::add("STABILIZATION_FOR_SINGULAR_JAC  METHOD_TYPE=NO_STAB_NEWTON  ALPHA=0.0  ALPHA_EPS=0.0"); // add default values
 		if (mpi_rank == 0)
-			cout << "WARNING: added keyword \"STABILIZATION_FOR_SINGULAR_JAC  MATRIX_TYPE=0  ALPHA=0.0  ALPHA_EPS=0.0  STARTING_ITER==1\" to parameter map!"<<endl;
+			cout << "WARNING: added keyword \"STABILIZATION_FOR_SINGULAR_JAC  METHOD_TYPE=NO_STAB_NEWTON  ALPHA=0.0  ALPHA_EPS=0.0\" to parameter map!"<<endl;
 	}
 
 	string methodTypeString = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getString("METHOD_TYPE");
@@ -7901,7 +7981,7 @@ void IkeWithPsALC_AD::getNewtonParam() {
 		newtonParam.stabilizationAlphaEps = getParam("STABILIZATION_FOR_SINGULAR_JAC")->getDouble("ALPHA_EPS"); // Minimum coefficient
 
 	if(firstCall && mpi_rank==0) {
-		cout<<"> Stabilization for singular Jacobians: METHOD_TYPE=";
+		cout<<"> STABILIZATION_FOR_SINGULAR_JAC : METHOD_TYPE=";
 		switch(newtonParam.stabilizationMethodType) {
 			case NO_STAB_NEWTON:       cout<<"NO_STAB_NEWTON";       break;
 			case CONST_DIAG:           cout<<"CONST_DIAG";           break;
@@ -7916,6 +7996,27 @@ void IkeWithPsALC_AD::getNewtonParam() {
 		if(newtonParam.stabilizationMethodType == GENERAL_NEWTON_HU || newtonParam.stabilizationMethodType == GENERAL_NEWTON_HUSEO)
 			cout<<" (ALPHA_EPS = "<<newtonParam.stabilizationAlphaEps<<")";
 		cout<<endl;
+	}
+
+	// Ramping alpha for STABILIZATION_FOR_SINGULAR_JAC
+	if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON) {
+		// Check ramping
+		if (!checkParam("RAMP_STAB_NEWTON_ALPHA")) {
+			ParamMap::add("RAMP_STAB_NEWTON_ALPHA AFTER_ITER=10  INTERVAL_ITER=10  FACTOR_INC=1.0  TARGET_ALPHA=1.0");    // add default: no increase of CFL number!
+			if (mpi_rank == 0)
+				cout << "WARNING: added \"RAMP_STAB_NEWTON_ALPHA AFTER_ITER=10  INTERVAL_ITER=10  FACTOR_INC=1.0  TARGET_ALPHA=1.0\" to parameter map" << endl;
+		}
+
+		newtonParam.stabilizationAlphaRamp_startInc = getParam("RAMP_STAB_NEWTON_ALPHA")->getInt("AFTER_ITER");
+		newtonParam.stabilizationAlphaRamp_interval = getParam("RAMP_STAB_NEWTON_ALPHA")->getInt("INTERVAL_ITER");
+		newtonParam.stabilizationAlphaRamp_incAlpha    = getParam("RAMP_STAB_NEWTON_ALPHA")->getDouble("FACTOR_INC");
+		newtonParam.stabilizationAlphaRamp_targetAlpha = getParam("RAMP_STAB_NEWTON_ALPHA")->getDouble("TARGET_ALPHA");
+
+		if(firstCall && mpi_rank==0) {
+			printf("  Ramping of stabilization ALPHA: AFTER_ITER=%d  INTERVAL_ITER=%d  FACTOR_INC=%g  TARGET_ALPHA=%g\n",
+					newtonParam.stabilizationAlphaRamp_startInc, newtonParam.stabilizationAlphaRamp_interval,
+					newtonParam.stabilizationAlphaRamp_incAlpha, newtonParam.stabilizationAlphaRamp_targetAlpha);
+		}
 	}
 
 	// Trust-region size
