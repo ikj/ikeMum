@@ -1,0 +1,140 @@
+################################
+#LOGGING_LEVEL = DEBUG_HI            # show all linear solver residuals
+#LOGGING_LEVEL = INFO_LO             # show part of the linear solver residuals
+LOGGING_LEVEL = INFO                 # show standard output 
+
+################################
+#     FLOW PARAMETERS
+################################
+P_REF = 7.142857142857143e-01
+T_REF = 1.0
+RHO_REF = 1.0
+GAMMA = 1.4
+
+MU_REF =  0.001
+#MU_REF =  1.716e-5
+#MU_MODE = SUTHERLAND
+#SL_TREF = 273.15                      # Tref for Sutherland law	
+#SL_SREF = 110.4                       # Sref for Sutherland law
+MU_MODE = POWERLAW
+MU_POWER_LAW = 1.0
+
+################################
+#     HEAT(FLAME) CONDITIONS
+################################
+#PHI = 0.3
+#COMB_DIA = 0.002
+HEAT_RELEASE = 0.44 #0.85
+HEAT_MAX_X = 0.65
+
+################################
+#     INITIAL CONDITIONS
+################################
+#######
+# Mesh and restart file
+RESTART = ./restart.in
+
+#######
+# Eigenmodes and ajoint modes
+PT_ON_S_CURVE = 22
+
+#######
+# Perturbation
+REINIT_FIELD = NO #default = YES
+RANDOM_DISTRIB_FUNC = UNIFORM #NORMAL or UNIFORM, default = NORMAL
+DISTURB_MAGNITUDE = 1.0
+DISTURB_CLIP = 0.001 # default=0.001 
+USE_SMOOTHING = NO # default=NO
+DISTURB_SMOOTH_XMIN = 0.0
+DISTURB_SMOOTH_XMAX = 10.0
+DISTURB_SMOOTH_EDGE_SIZE = 1.0e-3
+
+################################
+#      SOLVER SETTINGS
+################################
+#######
+NTESTS = 3;
+
+#######
+#CFL = 0.3                             # constant CFL number in the whole flow field 
+DT = 3.0e-3 #1.5e-3
+CFL_RAMP AFTER_ITER=100  INTERVAL_ITER=100  FACTOR_CFL=1.0  MAX_CFL=1.0  # only for TIME_INTEGRATION = BACKWARD_EULER
+
+RESET_STEP
+NSTEPS = 10                        # number of time iterations 
+CHECK_INTERVAL = 1                    # interval print residuals
+WRITE_RESTART = 10000                  # write restart interval
+
+TIME_INTEGRATION = BDF2
+N_NEWTON_ITER = 6 # Max Number of Newton iterations: default=4 (note: Newton iterations end when the relative energy residual is less than 1.0e-6)
+
+LINEAR_SOLVER_NS = PETSC_GMRES 
+LINEAR_SOLVER_NS_TRESHOLDS  MAX_ITER=3  ABS_RESID=1.0e-8  REL_RESID=1.0e-2
+UNDER_RELAXATION = 1.0
+#LINEAR_SOLVER_SCALARS = BCGSTAB
+
+#LINEAR_SOLVER_SCALARS = BCGSTAB
+
+# limiter for spatial gradients
+#SPATIAL_SECOND_ORDER    # if line is commented then first order in space for inviscid fluxes
+GRAD_RECONSTRUCTION  SCHEME=GREENGAUSS  LIMITER=YES  EPS=0.01
+SCALAR_RECONSTRUCTION = STANDARD
+#SCALAR_RECONSTRUCTION = CONSERVATIVE
+
+## Schmidt number for the scalars ZMean, ZVar and CMean and Prandtl number
+#SCTURB_ZMean = 0.5
+#SCTURB_ZVar  = 0.5
+#SCTURB_CMean = 0.5
+PRTURB = 0.9   #0.5
+#Cchi = 2.0
+
+
+#################################
+#     BOUNDARY 
+#################################
+
+# ---- for Navier-Stokes  --------------------------------------------------------------------------
+# boundary_name = HOOK                                  # provide velocity, temperature and pressure
+# boundary_name = CBC ux uy uz temperature pressure
+# boundary_name = CBC_SUBSONIC_INLET ux/vel uy/vel uz/vel Ttot ptot
+# boundary_name = CBC_SUBSONIC_OUTLET pstat
+# boundary_name = SYMMETRY                              # slip BC
+# boundary_name = NEUMANN                               # van Neumann BC
+# boundary_name = WALL                                  # no slip BC with adiabatic wall
+# boundary_name = WALL TEMP=temperature                 # no slip BC with isothermal wall
+
+# ---- for scalars ---------------------------------------------------------------------------------
+# boundary_name.scalar_name = value       # Dirichlet 
+# boundary_name.scalar_name = HOOK        # HOOK 
+# if no boundary condition is set for scalars: von Neumann BC is applied 
+
+inlet   = CBC 2.0 0.0 0.0 1.0 7.142857142857143e-01
+#outlet = NEUMANN_INTERPOL_P
+outlet = NEUMANN
+upper   = WALL #SYMMETRY
+lower   = SYMMETRY
+symm    = SYMMETRY
+
+# -------------------------------
+# KOM models
+# -------------------------------
+INITIAL_CONDITION_TURB = 0.001 1.0
+
+inlet.kine  = 0.001 #HOOK
+#outlet.kine = 0.001
+upper.kine   = 0.0
+
+inlet.omega = 1.0 #HOOK
+#outlet.omega = 1.0
+upper.omega   = HOOK
+
+#################################
+#      OUTPUT SETTINGS 
+# -------------------------------
+INITIAL_FLOWFIELD_OUTPUT = YES         # output initial flowfield (YES / NO)
+
+STEP_CHECK_CONVERG = 2
+
+#WRITE_DATA FORMAT=TECPLOT NAME=2DEIGEN INTERVAL=1 GEOM=ALL VARS= RHO RHOU RHOE vel press temp enthalpy kine omega gamma sos residField divg FirstMODE_RHO FirstMODE_RHOU FirstMODE_VEL FirstMODE_RHOE FirstMODE_kine FirstMODE_omega OnBASE_RHO OnBASE_RHOU OnBASE_VEL OnBASE_RHOE OnBASE_kine OnBASE_omega ADJOINT_RHO ADJOINT_RHOU ADJOINT_VEL ADJOINT_RHOE ADJOINT_kine ADJOINT_omega  SENSITIVITY_RHO SENSITIVITY_RHOU SENSITIVITY_VEL SENSITIVITY_RHOE SENSITIVITY_kine SENSITIVITY_omega  
+WRITE_DATA FORMAT=TECPLOT NAME=2DEIGEN INTERVAL=10 GEOM=ALL VARS= RHO RHOU RHOE vel press temp enthalpy kine omega gamma sos residField 
+

@@ -231,6 +231,25 @@ public:
 	void calcSteadySolnByNewtonRembrandt(double* q, double* rhs,
 			const int maxIterNewton, const double absTolNewton, const double relTolNewton, const int nScal);
 
+	/*
+	 * Method: writeEigenPairsParallel
+	 * -------------------------------
+	 * Write eigen-pairs for an van Gogh analysis
+	 * Format:
+	 *   Header:
+	 *       step (int), NcontrolEqns (int), lambda (double[NcontrolEqns]), nVars (int), nev (int), eigenvalues (double[nev*2])
+	 *       mpi_size (int), cvora (int[mpi_size+1]), xcvMinArray(double[mpi_size*3]), xcvMaxArray(double[mpi_size*3])
+	 *   Body: For each mpi_rank,
+	 *       x_cv
+	 *       eigen-vectors   (variable names = directEvecsReal, directEvalsImag)
+	 *       adjoint vectors (variable names = adjointEvalsReal, adjointEvalsImag)
+	 *   Foot:
+	 *       EOF_ERROR_CHECK_CODE
+	 */
+	void writeEigenPairsParallel(const string &filename, const int step, const int nev);
+
+	void writeEigenPairsParallel(char filename[], const int step, const int nev);
+
 protected:
 	/*
 	 * Method: calcGlobalModes

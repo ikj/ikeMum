@@ -406,6 +406,16 @@ int RembrandtWithModels::runEigenAnalysis() {
 		showDataRangeEigenAnalysis();
 	}
 
+	// =================
+	// WRITE BINARY FILE
+	// =================
+	if(nconv > 0) {
+		stringstream ss;
+		ss<<"EigenPairs.pt"<<step<<".bin";
+		int nevWrite = getIntParam("NEV_WRITE_BINDARY", "1"); 	assert(nevWrite > 0);
+		writeEigenPairsParallel(ss.str(), step, nevWrite);
+	}
+
 	return nconv;
 }
 
@@ -2549,6 +2559,212 @@ void RembrandtWithModels::calcSteadySolnByNewtonRembrandt(double* q, double* rhs
 
 	MPI_Barrier(mpi_comm);
 }
+
+/*
+ * Method: writeEigenPairsParallel
+ * -------------------------------
+ * Write eigen-pairs for an van Gogh analysis
+ * Format:
+ *   Header:
+ *       step (int), NcontrolEqns (int), lambda (double[NcontrolEqns]), nVars (int), nev (int), eigenvalues (double[nev*2])
+ *       mpi_size (int), cvora (int[mpi_size+1]), xcvMinArray(double[mpi_size*3]), xcvMaxArray(double[mpi_size*3])
+ *   Body: For each mpi_rank,
+ *       x_cv
+ *       eigen-vectors   (variable names = directEvecsReal, directEvecsImag)
+ *       adjoint vectors (variable names = adjointEvecsReal, adjointEvecsImag)
+ *   Foot:
+ *       EOF_ERROR_CHECK_CODE
+ */
+void RembrandtWithModels::writeEigenPairsParallel(const string &filename, const int step, const int nev) {
+	char *filenameArray = new char[filename.size() + 1]; // Since MPI_File_open() doesn't accept "const char *", you cannot use std::string.c_str()
+	std::copy(filename.begin(), filename.end(), filenameArray);
+	filenameArray[filename.size()] = '\0';
+
+	writeEigenPairsParallel(filenameArray, step, nev);
+
+	delete [] filenameArray;
+}
+
+void RembrandtWithModels::writeEigenPairsParallel(char filename[], const int step, const int nev) {
+	// Number of variables
+	int nScal = scalarTranspEqVector.size();
+	int nVars = 5 + nScal; // number of variables (rho, rhou, rhov, rhow, rhoE, and scalars)
+
+	// xcvMin and xcvMax
+	double *xcvMinArray = new double [mpi_size*3];
+	double *xcvMaxArray = new double [mpi_size*3];
+	MPI_Gather(xcvMin, 3, MPI_DOUBLE, xcvMinArray, 3, MPI_DOUBLE, 0, mpi_comm);
+	MPI_Gather(xcvMax, 3, MPI_DOUBLE, xcvMaxArray, 3, MPI_DOUBLE, 0, mpi_comm);
+
+	// Error message: remains empty if no error occurs
+	string errorMessage;
+
+	/***********
+	 ** Write the data
+	 ***********/
+	double wtime0, wtimeF;
+	if(mpi_rank==0)
+		wtime0 = MPI_Wtime();
+
+	// 1. Header
+	//      Structure of the header part:
+	//              1. step (int)                      2. NcontrolEqns (int)
+	//              3. lambda (double*NcontrolEqns)    4. nVars (int)
+	//              5. nev (int)                       6. eigenvalues (double*2*nev)
+	//              7. mpi_size (int)                  9. cvora (int*(mpi_size+1))
+	//              9. xMinArray (double*3*mpi_size)   10. xMaxArray (double*3*mpi_size)
+	if(mpi_rank==0) {
+		// Open the file
+		ofstream ofile;
+		ofile.open(filename, ios_base::out | ios_base::trunc | ios_base::binary);
+
+		// Write on the file
+		int dummyInt;
+		double dummyDouble;
+
+		dummyInt=step;				ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int)); // Note: if you simply use the "<<" operator, it will cause some problem due to bugs in a g++ library on linux
+		dummyInt=NcontrolEqns;		ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn) {
+			dummyDouble=lambda[iEqn];		ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+		}
+		dummyInt=nVars;		    	ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		dummyInt=nev;		    	ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		for(int ieig=0; ieig<nev; ++ieig) {
+			dummyDouble=directEvalsReal[ieig]; 	ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+			dummyDouble=directEvalsImag[ieig]; 	ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+		}
+		dummyInt=mpi_size; 			ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		for(int irank=0; irank<mpi_size+1; ++irank) {
+			dummyInt=cvora[irank]; 		ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		}
+		for(int irank=0; irank<mpi_size; ++irank) {
+			for(int i=0; i<3; ++i) {
+				dummyDouble=xcvMinArray[irank*3+i]; 	ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+			}
+		}
+		for(int irank=0; irank<mpi_size; ++irank) {
+			for(int i=0; i<3; ++i) {
+				dummyDouble=xcvMaxArray[irank*3+i]; 	ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+			}
+		}
+
+		// Close the file
+		ofile.close();
+	}
+	MPI_Barrier(mpi_comm);
+	int initDisp = sizeof(int)*(5 + mpi_size+1) + sizeof(double)*(NcontrolEqns + nev*2 + 2*mpi_size*3);
+
+	// 2. Body
+	//       Structure of the body part:
+	//            For each mpi,
+	//              1. x_cv (double*3*ncv)
+	//              2. direct global modes (double*nev*ncv*nVars*2)
+	//              3. adjoint global modes (double*nev*ncv*nVars*2)
+	MPI_Status status;
+	MPI_File fh;
+	MPI_Offset displacement;
+
+	// Open the file
+	if (MPI_File_open(mpi_comm, filename, MPI_MODE_WRONLY|MPI_MODE_CREATE, MPI_INFO_NULL, &fh)!=0) {
+			// Note: MPI_MODE_WRONLY = write only
+			//       MPI_MODE_CREATE = create the file if it does not exist.
+		stringstream ss;
+		ss<<"ERROR! RembrandtWithModels::writeEigenPairsParallel(): Cannot open "<<filename<<endl;
+		errorMessage = ss.str();
+		showMessageParallel(errorMessage);
+
+		delete [] xcvMinArray; 	delete [] xcvMaxArray;
+		throw(REMBRANDT_ERROR_CODE);
+	}
+
+	// Write the CV coordinates first
+	int myOffsetNcv;
+	MPI_Scan(&ncv, &myOffsetNcv, 1, MPI_INT, MPI_SUM, mpi_comm);
+	myOffsetNcv -= ncv;
+	displacement = MPI_Offset(initDisp + sizeof(double)*myOffsetNcv*(3+nVars*nev*4));
+	if(MPI_File_set_view(fh, displacement, MPI_INT, MPI_INT, "native", MPI_INFO_NULL)!=0) {
+		// Note: native     = Data in this representation are stored in a file exactly as it is in memory
+		//       Internal   = Data in this representation can be used for I/O operations in a homogeneous or heterogeneous environment
+		//       External32 = This data representation states that read and write operations convert all data from and to the "external32" representation
+		stringstream ss;
+		ss<<"ERROR! RembrandtWithModels::writeEigenPairsParallel(): Cannot set the first MPI_File_set_view -- offset="<<displacement<<endl;
+		errorMessage = ss.str();
+		showMessageParallel(errorMessage);
+
+		delete [] xcvMinArray; 	delete [] xcvMaxArray;
+		throw(REMBRANDT_ERROR_CODE);
+	}
+	double* bufferDouble = new double [ncv*3];
+	for(int icv=0; icv<ncv; ++icv) {
+		int indexStart = icv*3;
+		for(int i=0; i<3; ++i)
+			bufferDouble[indexStart+i] = x_cv[icv][i];
+	}
+	MPI_File_write(fh, bufferDouble, ncv*3, MPI_DOUBLE, &status);
+	delete [] bufferDouble; 	bufferDouble = NULL;
+
+	// Write the direct eigen vectors
+	displacement += MPI_Offset(3*ncv*sizeof(double));
+
+	bufferDouble = new double [ncv*nVars*2];
+	for(int ieig=0; ieig<nev; ++ieig) {
+		for(int i=0; i<ncv*nVars; ++i) {
+			int index = i*2;
+			bufferDouble[index]   = directEvecsReal[ieig][i];
+			bufferDouble[index+1] = directEvecsImag[ieig][i];
+		}
+
+		MPI_File_write(fh, bufferDouble, ncv*nVars*2, MPI_DOUBLE, &status);
+	}
+
+	// Write the adjoint vectors
+	displacement += MPI_Offset(nev*ncv*nVars*2*sizeof(double));
+	for(int ieig=0; ieig<nev; ++ieig) {
+		for(int i=0; i<ncv*nVars; ++i) {
+			int index = i*2;
+			bufferDouble[index]   = adjointEvecsReal[ieig][i];
+			bufferDouble[index+1] = adjointEvecsImag[ieig][i];
+		}
+
+		MPI_File_write(fh, bufferDouble, ncv*nVars*2, MPI_DOUBLE, &status);
+	}
+
+	delete [] bufferDouble; 	bufferDouble = NULL;
+
+	// 2-4. Close the file
+	MPI_File_close(&fh);
+	MPI_Barrier(mpi_comm);
+
+	// 3. Foot
+	if(mpi_rank==mpi_size-1) {
+		ofstream ofile;
+		ofile.open(filename, ios_base::out | ios_base::app | ios_base::binary);
+		int dummyInt = EOF_ERROR_CHECK_CODE; 	ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		ofile.close();
+	}
+	MPI_Barrier(mpi_comm);
+
+	if(mpi_rank==0)
+		wtimeF = MPI_Wtime();
+
+	/***********
+	 ** Show the summary on the screen if the debugging level is high
+	 ***********/
+	if(debugLevel>0 && mpi_rank==0)
+		cout<<endl
+		    <<">> "<<nev<<" eigen-pairs are written on "<<filename<<" (RUN TIME FOR WRITING = "<<wtimeF-wtime0<<" [sec]) \n"<<endl;
+
+	/***********
+	 ** Free the memory
+	 ***********/
+	delete [] xcvMinArray;
+	delete [] xcvMaxArray;
+}
+
+
+//
+// PRIVATE METHODS!!
+//
 
 /*
  * Method: calcGlobalModes
