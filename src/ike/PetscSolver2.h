@@ -2443,6 +2443,14 @@ protected:
 		PetscPrintf(mpi_comm," Number of converged eigenpairs: %D\n\n", nconv);
 #endif
 
+#if PETSC_DEBUG_LEVEL > 0
+		if(nconv > 0) {
+			if(mpi_rank==0)
+				cout<<endl
+				    <<">> SlepcSolver2::solveAndGetEivenpairs(): Range of eigenvectors :"<<endl;
+		}
+#endif
+
 		// Get the computed solution
 		for (int iEigen=0; iEigen < std::min<int>(nev, nconv); ++iEigen) { // Note: If nev<ncv, nconv can be larger than nev
 			EPSGetEigenpair(eps_, iEigen, &kr, &ki, xr, xi); // The eigenvectors are normalized so that they have a unit 2-norm,
@@ -2486,7 +2494,24 @@ protected:
 				VecGetValues(xi, 1, &globalIndex, &evecsImag[iEigen][localIndex]); // inefficient, need to be improved
 			}
 #endif
+
+#if PETSC_DEBUG_LEVEL > 0
+#if !defined (PETSC_USE_COMPLEX)
+			PetscReal  RealMinVal, RealMaxVal, ImagMinVal, ImagMaxVal;
+			VecMin(xr, NULL, &RealMinVal);
+			VecMax(xr, NULL, &RealMaxVal);
+			VecMin(xi, NULL, &ImagMinVal);
+			VecMax(xi, NULL, &ImagMaxVal);
+			if(mpi_rank == 0)
+				printf("     [%2d]  Real = %g ~ %g,  Imag = %g ~ %g\n", iEigen, RealMinVal, RealMinVal, ImagMinVal, ImagMaxVal);
+#endif
+#endif
 		}
+
+
+#if PETSC_DEBUG_LEVEL > 0
+		if(mpi_rank==0) cout<<endl;
+#endif
 
 		return nconv;
 	}

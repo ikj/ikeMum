@@ -2656,9 +2656,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 					}
 					MPI_Barrier(mpi_comm);
 
-//MPI_Barrier(mpi_comm);
-//if(mpi_rank==1) cout<<"*iter="<<iterNewton<<"- 1"<<endl;
-
 					// Launch the backtracking algorithm -------
 					// First, calculate the relaxation size by calling backtrackWithJOE_calcRelaxAndRHS()
 					relaxation = backtrackWithJOE_calcRelaxAndRHS(rhs, q, phi, btNotConverged,
@@ -2666,9 +2663,6 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 							residNormVecFlowOld, residNormVecFlow, whichNorm, newtonParam.backtrackBarrierCoeff,
 							NcontrolEqns, q_tangent, lambda_tangent, weightLambda, q1, Nres, lambda1, arcLength);
 							// Since the reduction algorithm based on delta_lambda is heuristics, use "relaxBeforeDlambda" instead of "relaxation"
-
-//MPI_Barrier(mpi_comm);
-//if(mpi_rank==1) cout<<"*iter="<<iterNewton<<"- 2"<<endl;
 
 					calcResidualsFrom1Drhs(residNormVecFlow, rhs, whichNorm);
 					residNormTotFlowOnly = calcSumResidual(residNormVecFlow, whichNorm);

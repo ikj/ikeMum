@@ -7,13 +7,13 @@
  */
 void VanGoghWithModels::init() {
 	// initial field (from a restart file)
-	rho_init = NULL; 	registerScalar(rho_init, "INIT_RHO", CV_DATA);
+	rho_init = NULL; 	registerScalar(rho_init,  "INIT_RHO", CV_DATA);
 	rhou_init = NULL; 	registerVector(rhou_init, "INIT_RHOU", CV_DATA);
 	rhoE_init = NULL; 	registerScalar(rhoE_init, "INIT_RHOE", CV_DATA);
 	// NOTE: scalars should be registered in the child class
 
 	// data on the unstable branch (from Q0_PT000**.bin)
-	rho_unstable = NULL; 	registerScalar(rho_unstable, "UNSTABLE_RHO", CV_DATA);
+	rho_unstable = NULL; 	registerScalar(rho_unstable,  "UNSTABLE_RHO", CV_DATA);
 	rhou_unstable = NULL;	registerVector(rhou_unstable, "UNSTABLE_RHOU", CV_DATA);
 	rhoE_unstable = NULL; 	registerScalar(rhoE_unstable, "UNSTABLE_RHOE", CV_DATA);
 	// NOTE: scalars should be registered in the child class
@@ -22,22 +22,27 @@ void VanGoghWithModels::init() {
 	// Perturbations
 	// -------------------------
 	// perturbation
-	array_perturb = NULL;
+	array_perturb = NULL; 	registerScalar(array_perturb, "ARRAY_PERTURB", CV_DATA);
+
+	rho_perturb  = NULL; 	registerScalar(rho_perturb,  "PERTURB_RHO", CV_DATA);
+	rhou_perturb = NULL;	registerVector(rhou_perturb, "PERTURB_RHOU", CV_DATA);
+	rhoE_perturb = NULL; 	registerScalar(rhoE_perturb, "PERTURB_RHOE", CV_DATA);
+
 	wdFace = NULL;
 
 	// -------------------------
 	// Eigenvecs: Tecplot output
 	// -------------------------
 	// least-stable global modes
-	rho_Dct_1stReal  = NULL; 	registerScalar(rho_Dct_1stReal,  "DCT1ST_RHO", CV_DATA);
-	rhou_Dct_1stReal = NULL;	registerVector(rhou_Dct_1stReal, "DCT1ST_RHOU", CV_DATA);
-	rhoE_Dct_1stReal = NULL;	registerScalar(rhoE_Dct_1stReal, "DCT1ST_RHOE", CV_DATA);
+	rho_Dct_1stReal  = NULL; 	registerScalar(rho_Dct_1stReal,  "DCT1ST_REAL_RHO", CV_DATA);
+	rhou_Dct_1stReal = NULL;	registerVector(rhou_Dct_1stReal, "DCT1ST_REAL_RHOU", CV_DATA);
+	rhoE_Dct_1stReal = NULL;	registerScalar(rhoE_Dct_1stReal, "DCT1ST_REAL_RHOE", CV_DATA);
 	// NOTE: scalars should be registered in the child class
 
 	// first adjoint global modes
-	rho_Adj_1stReal  = NULL;	registerScalar(rho_Adj_1stReal,  "ADJ1ST_RHO", CV_DATA);
-	rhou_Adj_1stReal = NULL;	registerVector(rhou_Adj_1stReal, "ADJ1ST_RHOU", CV_DATA);
-	rhoE_Adj_1stReal = NULL;	registerScalar(rhoE_Adj_1stReal, "ADJ1ST_RHOE", CV_DATA);
+	rho_Adj_1stReal  = NULL;	registerScalar(rho_Adj_1stReal,  "ADJ1ST_REAL_RHO", CV_DATA);
+	rhou_Adj_1stReal = NULL;	registerVector(rhou_Adj_1stReal, "ADJ1ST_REAL_RHOU", CV_DATA);
+	rhoE_Adj_1stReal = NULL;	registerScalar(rhoE_Adj_1stReal, "ADJ1ST_REAL_RHOE", CV_DATA);
 	// NOTE: scalars should be registered in the child class
 }
 
@@ -51,13 +56,11 @@ void VanGoghWithModels::clear() {
 		delete [] lambda;	lambda = NULL;
 	}
 
-	if(array_perturb != NULL) {
-		delete [] array_perturb;  array_perturb = NULL;
-	}
-
 	if(wdFace != NULL) {
 		delete [] wdFace;         wdFace = NULL;
 	}
+
+	Evals.clear();
 }
 
 /*=******************=*
@@ -83,13 +86,17 @@ void VanGoghWithModels::run() {
 	for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
 		updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
 
-	initProbes(this);
+	// initialize Navier-Stokes equations
+	initialHook();
 
 	updateCvDataG1G2(rho, REPLACE_DATA);
 	updateCvDataG1G2(rhou, REPLACE_ROTATE_DATA);
 	updateCvDataG1G2(rhoE, REPLACE_DATA);
 
 	calcStateVariables();
+
+	// Initialize probe
+	initProbes(this);
 
 	// Update xcvMin and xcvMax
 	for(int icv=0; icv<ncv; ++icv) {
@@ -131,15 +138,16 @@ void VanGoghWithModels::run() {
 
 		if(mpi_rank==0)
 			cout<<"> Reading EIGENPAIRS_FILENAME = "<<filename<<endl;
-		readEigenPairsRembrandtSerial(filename, ptOnSCurve, lambda_file, NcontrolEqns);
+		readEigenPairsRembrandtSerial(filename, ptOnSCurve, lambda_file, NcontrolEqns); // Read Rembrandt-dump file and update Evals, DirectEvecs, AdjointEvecs, etc.
+
 		assert(!DirectEvecs[0].empty());
 		assert(!AdjointEvecs[0].empty());
-
 		if(fabs((lambda_file[0]-lambda[0]) / max(lambda[0], MACHINE_EPS)) > 1.0e-6) {
 			if(mpi_rank==0)
 				cerr<<"ERROR in "<<classID<<"::run(): lambda[0]="<<lambda[0]<<" is different from lambda_file[0]="<<lambda_file[0]<<endl;
 			throw(VANGOGH_ERROR_CODE);
 		}
+
 		for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
 			lambda[iEqn] = lambda_file[iEqn]; // Update lambda from EIGENPAIRS_SOURCE
 
@@ -166,8 +174,6 @@ void VanGoghWithModels::run() {
 	if(mpi_rank==0) cout<<"> UNSTABLE_Q1_FILENAME = "<<filenameQ1<<endl;
 	readPsALCdumpedDataSerial(filenameQ1.c_str(), qVecTemp, NcontrolEqns);
 
-	if(mpi_rank==0)
-		cout<<"  UPDATE UNSTABLE VECTORS..."<<endl;
 	updateUnstableVecNS(qVecTemp, 5+nScal);
 	updateUnstableVecScalars(qVecTemp, 5+nScal);
 
@@ -189,14 +195,15 @@ void VanGoghWithModels::run() {
 		ntests = getIntParam("NTESTS", "1");
 	}
 
+	if(mpi_rank==0)
+		cout<<"> Store the initial field from restart"<<endl;
 	storeInitRestartNS();
 	storeInitRestartScalars();
 
 	// Get the parameters for the perturbations
 	getPerturbParams(perturbParams);
 
-	// Allocate memory: array_perturb & wdFace
-	assert(array_perturb == NULL);  	array_perturb = new double [ncv_ggff];
+	// Allocate memory: wdFace
 	if(perturbParams.useFiltering) {
 		if(mpi_rank==0)
 			cout<<"> Allocate memory for wdFace"<<endl;
@@ -205,24 +212,42 @@ void VanGoghWithModels::run() {
 		calcWallDistanceFace(wdFace);
 	}
 
+	if(mpi_rank==0)
+		cout<<endl
+		    <<"-------------------"<<endl
+		    <<" Perturbation test "<<endl
+		    <<"-------------------"<<endl;
+
+	// set the stopping criteria for time-advancement : Note that "resid_energ_th" is a member variable in UgpWithCvCompFlow.h
+	resid_energ_th = getDoubleParam("RESID_ENERG_TH", 1.0e-20);
+
 	bool firstItest = true;
 	// run simulations
 	while(itest < ntests) {
 		if(mpi_rank==0)
 			cout<<endl
-				<<">> RUNNING "<<itest<<"TH SIMULATION"<<endl
+				<<"> RUNNING THE "<<itest<<"TH PERTURBATION TEST"<<endl
 				<<endl;
 
 		step = 0;
 
-		// initialize models
-		initialHookScalarRansTurbModel();
-		initialHookScalarRansCombModel();
-		for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
-			updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
+		if(!firstItest) { // Note: We don't need to reinitialize the flow field for the first itest.
+			if(mpi_rank==0)
+				cout<<"> Note: Reinitialize the flow field with the stored initial field"<<endl;
 
-		// initialize Navier-Stokes equations
-		initialHook();
+			// reinitialize models
+			reinitialHookScalarRansTurbModel();
+			reinitialHookScalarRansCombModel();
+			for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
+				updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
+
+			// reinitialize Navier-Stokes equations
+			reinitialHook();
+
+			updateCvDataG1G2(rho, REPLACE_DATA);
+			updateCvDataG1G2(rhou, REPLACE_ROTATE_DATA);
+			updateCvDataG1G2(rhoE, REPLACE_DATA);
+		}
 
 		// -------------------------------------------------
 		// random perturbation
@@ -243,13 +268,9 @@ void VanGoghWithModels::run() {
 		// calculate state variables: press, etc.
 		calcStateVariables();
 
-		char filenameQoI[30];
-		sprintf(filenameQoI, "QoI.txt");
-		writeQoIOnFile(itest, filenameQoI, firstItest);
-
 		char filenameResidual[30];
-		sprintf(filenameResidual, "residual.case%04d.csv", itest);
-		writeResidualOnFile(itest, filenameResidual, firstItest);
+		sprintf(filenameResidual, "residHist.case%04d.csv", itest);
+		writeResidualOnFile(itest, filenameResidual, true);
 
 		writeData(itest, 0); // Save each case on a different file
 
@@ -270,6 +291,12 @@ void VanGoghWithModels::run() {
 			cerr << "ERROR: wrong time integration scheme specified !" << endl;
 			cerr << "available integration schemes are: FORWARD_EULER, RK, BACKWARD_EULER, BDF2" << endl;
 		}
+
+		char filenameQoI[30];
+		sprintf(filenameQoI, "QoI.txt");
+		writeQoIOnFile(itest, filenameQoI, firstItest);
+
+		writeData(itest, step); // Save each case on a different file
 
 		char restartFilename[32];
 		sprintf(restartFilename, "Restart.case%04d.%06d.out", itest, step);
@@ -574,7 +601,7 @@ void VanGoghWithModels::readEigenPairsRembrandtSerial(string &filename, int &ptO
 void VanGoghWithModels::readEigenPairsRembrandtSerial(const char filename[], int &ptOnSCurve_file, double* lambda_file, const int NcontrolEqns) {
 	int nScal = scalarTranspEqVector.size();
 
-	vector<complex<double> > Evals;  // Note: 'std::complex' class
+	assert(Evals.empty());
 
 	assert(DirectEvecs.size() == 1); // Note: We will get only the first vector
 	DirectEvecs[0].resize(5+nScal);
@@ -640,12 +667,12 @@ void VanGoghWithModels::readEigenPairsRembrandtSerial(const char filename[], int
 			throw(VANGOGH_ERROR_CODE);
 		}
 		infile.read(reinterpret_cast<char*>(&nev), sizeof(int));
-		Evals.resize(nev);
+		Evals.allocate(nev);  // Note: A data container that has the 'std::complex' class as its element
 		double dummyReal, dummyImag;
 		for(int iev=0; iev<nev; ++iev) {
 			infile.read(reinterpret_cast<char*>(&dummyReal), sizeof(double));
 			infile.read(reinterpret_cast<char*>(&dummyImag), sizeof(double));
-			Evals[nev] = complex<double>(dummyReal, dummyImag);
+			Evals[iev] = complex<double>(dummyReal, dummyImag);
 		}
 		infile.read(reinterpret_cast<char*>(&mpi_size_file), sizeof(int));
 		cvora_file = new int [mpi_size_file+1];
@@ -657,9 +684,9 @@ void VanGoghWithModels::readEigenPairsRembrandtSerial(const char filename[], int
 
 		if(mpi_rank==0) {
 			printf("\nReading \'%s\': PT=%d, lambda0=", filename, ptOnSCurve_file);
-			for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
+			for(int iEqn=0; iEqn<NcontrolEqns_file; ++iEqn)
 				printf("%.8f, ", lambda_file[iEqn]);
-			printf(", total number of CVs=%d \n", cvora_file[mpi_size_file]);
+			printf("total number of CVs=%d \n", cvora_file[mpi_size_file]);
 			cout<<"  Grid tolerance = "<<gridTol<<endl;
 
 			if(VANGOGH_DEBUG_LEVEL > 1) {
@@ -672,7 +699,7 @@ void VanGoghWithModels::readEigenPairsRembrandtSerial(const char filename[], int
 
 			cout<<"  EIGEN-VALUES in the file : Total "<<nev<<" eigenvalues"<<endl;
 			for(size_t iev=0; iev<nev; ++iev)
-				printf("    [%2d] %g + %gi\n", iev, Evals[iev].real(), Evals[iev].imag());
+				printf("    [%2d] %g + %gi\n", int(iev), Evals[iev].real(), Evals[iev].imag());
 			cout<<endl;
 		}
 
@@ -785,42 +812,104 @@ void VanGoghWithModels::readEigenPairsRembrandtSerial(const char filename[], int
 
 	MPI_Barrier(mpi_comm);
 
+	// Check the range of the direct vectors and the adjoint vectors
+	double myMinMagDirectEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMinMagDirectEvec[i] =  ABSURDLY_BIG_NUMBER;
+	double myMaxMagDirectEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMaxMagDirectEvec[i] = -ABSURDLY_BIG_NUMBER;
+	double myMinMagAdjointEvec[5+nScal]; 	for(int i=0; i<5+nScal; ++i) myMinMagAdjointEvec[i] =  ABSURDLY_BIG_NUMBER;
+	double myMaxMagAdjointEvec[5+nScal]; 	for(int i=0; i<5+nScal; ++i) myMaxMagAdjointEvec[i] = -ABSURDLY_BIG_NUMBER;
 
-	double myMinDirectEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMinDirectEvec[i] =  ABSURDLY_BIG_NUMBER;
-	double myMaxDirectEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMaxDirectEvec[i] = -ABSURDLY_BIG_NUMBER;
-	double myMinAdjointEvec[5+nScal]; 	for(int i=0; i<5+nScal; ++i) myMinAdjointEvec[i] =  ABSURDLY_BIG_NUMBER;
-	double myMaxAdjointEvec[5+nScal]; 	for(int i=0; i<5+nScal; ++i) myMaxAdjointEvec[i] = -ABSURDLY_BIG_NUMBER;
+	double myMinRealDirectEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMinRealDirectEvec[i] =  ABSURDLY_BIG_NUMBER;
+	double myMaxRealDirectEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMaxRealDirectEvec[i] = -ABSURDLY_BIG_NUMBER;
+	double myMinRealAdjointEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMinRealAdjointEvec[i] =  ABSURDLY_BIG_NUMBER;
+	double myMaxRealAdjointEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMaxRealAdjointEvec[i] = -ABSURDLY_BIG_NUMBER;
+
+	double myMinImagDirectEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMinImagDirectEvec[i] =  ABSURDLY_BIG_NUMBER;
+	double myMaxImagDirectEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMaxImagDirectEvec[i] = -ABSURDLY_BIG_NUMBER;
+	double myMinImagAdjointEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMinImagAdjointEvec[i] =  ABSURDLY_BIG_NUMBER;
+	double myMaxImagAdjointEvec[5+nScal];  	for(int i=0; i<5+nScal; ++i) myMaxImagAdjointEvec[i] = -ABSURDLY_BIG_NUMBER;
+
 	for(int icv=0; icv<ncv; ++icv) {
 		for(size_t ivar=0; ivar<5+nScal; ++ivar) {
+			// Range of magnitude
 			double mag = sqrt( pow(DirectEvecs[0][ivar][icv].real(), 2.0) + pow(DirectEvecs[0][ivar][icv].imag(), 2.0) );
-			myMinDirectEvec[ivar] = min(myMinDirectEvec[ivar], mag);
-			myMaxDirectEvec[ivar] = max(myMaxDirectEvec[ivar], mag);
+			myMinMagDirectEvec[ivar] = min(myMinMagDirectEvec[ivar], mag);
+			myMaxMagDirectEvec[ivar] = max(myMaxMagDirectEvec[ivar], mag);
 
 			mag = sqrt( pow(AdjointEvecs[0][ivar][icv].real(), 2.0) + pow(AdjointEvecs[0][ivar][icv].imag(), 2.0) );
-			myMinAdjointEvec[ivar] = min(myMinAdjointEvec[ivar], mag);
-			myMaxAdjointEvec[ivar] = max(myMaxAdjointEvec[ivar], mag);
+			myMinMagAdjointEvec[ivar] = min(myMinMagAdjointEvec[ivar], mag);
+			myMaxMagAdjointEvec[ivar] = max(myMaxMagAdjointEvec[ivar], mag);
+
+			// Range of real part
+			myMinRealDirectEvec[ivar] = min(myMinRealDirectEvec[ivar], DirectEvecs[0][ivar][icv].real());
+			myMaxRealDirectEvec[ivar] = max(myMaxRealDirectEvec[ivar], DirectEvecs[0][ivar][icv].real());
+
+			myMinRealAdjointEvec[ivar] = min(myMinRealAdjointEvec[ivar], AdjointEvecs[0][ivar][icv].real());
+			myMaxRealAdjointEvec[ivar] = max(myMaxRealAdjointEvec[ivar], AdjointEvecs[0][ivar][icv].real());
+
+			// Range of imag part
+			myMinImagDirectEvec[ivar] = min(myMinImagDirectEvec[ivar], DirectEvecs[0][ivar][icv].imag());
+			myMaxImagDirectEvec[ivar] = max(myMaxImagDirectEvec[ivar], DirectEvecs[0][ivar][icv].imag());
+
+			myMinImagAdjointEvec[ivar] = min(myMinImagAdjointEvec[ivar], AdjointEvecs[0][ivar][icv].imag());
+			myMaxImagAdjointEvec[ivar] = max(myMaxImagAdjointEvec[ivar], AdjointEvecs[0][ivar][icv].imag());
 		}
 	}
 
-	double minDirectEvec[5+nScal];
-	double maxDirectEvec[5+nScal];
-	double minAdjointEvec[5+nScal];
-	double maxAdjointEvec[5+nScal];
-	MPI_Allreduce(myMinDirectEvec,  minDirectEvec,  5+nScal, MPI_DOUBLE, MPI_MIN, mpi_comm);
-	MPI_Allreduce(myMaxDirectEvec,  maxDirectEvec,  5+nScal, MPI_DOUBLE, MPI_MAX, mpi_comm);
-	MPI_Allreduce(myMinAdjointEvec, minAdjointEvec, 5+nScal, MPI_DOUBLE, MPI_MIN, mpi_comm);
-	MPI_Allreduce(myMaxAdjointEvec, maxAdjointEvec, 5+nScal, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	double minMagDirectEvec[5+nScal];
+	double maxMagDirectEvec[5+nScal];
+	double minMagAdjointEvec[5+nScal];
+	double maxMagAdjointEvec[5+nScal];
+	MPI_Allreduce(myMinMagDirectEvec,  minMagDirectEvec,  5+nScal, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxMagDirectEvec,  maxMagDirectEvec,  5+nScal, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	MPI_Allreduce(myMinMagAdjointEvec, minMagAdjointEvec, 5+nScal, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxMagAdjointEvec, maxMagAdjointEvec, 5+nScal, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+	double minRealDirectEvec[5+nScal];
+	double maxRealDirectEvec[5+nScal];
+	double minRealAdjointEvec[5+nScal];
+	double maxRealAdjointEvec[5+nScal];
+	MPI_Allreduce(myMinRealDirectEvec,  minRealDirectEvec,  5+nScal, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxRealDirectEvec,  maxRealDirectEvec,  5+nScal, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	MPI_Allreduce(myMinRealAdjointEvec, minRealAdjointEvec, 5+nScal, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxRealAdjointEvec, maxRealAdjointEvec, 5+nScal, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+	double minImagDirectEvec[5+nScal];
+	double maxImagDirectEvec[5+nScal];
+	double minImagAdjointEvec[5+nScal];
+	double maxImagAdjointEvec[5+nScal];
+	MPI_Allreduce(myMinImagDirectEvec,  minImagDirectEvec,  5+nScal, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxImagDirectEvec,  maxImagDirectEvec,  5+nScal, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	MPI_Allreduce(myMinImagAdjointEvec, minImagAdjointEvec, 5+nScal, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxImagAdjointEvec, maxImagAdjointEvec, 5+nScal, MPI_DOUBLE, MPI_MAX, mpi_comm);
 
 	if(mpi_rank == 0) {
-		cout<<"  RANGE (MAGNITUDE) OF 1ST DIRECT-VECTORS  = ";
+		cout<<"  RANGE OF 1ST DIRECT-VECTORS :"<<endl;
+		cout<<"    MAGNITUDE = ";
 		for(int ivar=0; ivar<5+nScal-1; ++ivar)
-			printf("%.3e~%.3e | ", minDirectEvec[ivar], maxDirectEvec[ivar]);
-		printf("%.3e~%.3e\n", minDirectEvec[5+nScal-1], maxDirectEvec[5+nScal-1]);
+			printf("%.3e~%.3e | ", minMagDirectEvec[ivar], maxMagDirectEvec[ivar]);
+		printf("%.3e~%.3e\n", minMagDirectEvec[5+nScal-1], maxMagDirectEvec[5+nScal-1]);
+		cout<<"    REAL = ";
+		for(int ivar=0; ivar<5+nScal-1; ++ivar)
+			printf("%.3e~%.3e | ", minRealDirectEvec[ivar], maxRealDirectEvec[ivar]);
+		printf("%.3e~%.3e\n", minRealDirectEvec[5+nScal-1], maxRealDirectEvec[5+nScal-1]);
+		cout<<"    IMAG = ";
+		for(int ivar=0; ivar<5+nScal-1; ++ivar)
+			printf("%.3e~%.3e | ", minImagDirectEvec[ivar], maxImagDirectEvec[ivar]);
+		printf("%.3e~%.3e\n", minImagDirectEvec[5+nScal-1], maxImagDirectEvec[5+nScal-1]);
 
-		cout<<"  RANGE (MAGNITUDE) OF 1ST ADJOINT-VECTORS = ";
+		cout<<"  RANGE OF 1ST ADJOINT-VECTORS :"<<endl;
+		cout<<"    MAGNITUDE = ";
 		for(int ivar=0; ivar<5+nScal-1; ++ivar)
-			printf("%.3e~%.3e | ", minAdjointEvec[ivar], maxAdjointEvec[ivar]);
-		printf("%.3e~%.3e\n", minAdjointEvec[5+nScal-1], maxAdjointEvec[5+nScal-1]);
+			printf("%.3e~%.3e | ", minMagAdjointEvec[ivar], maxMagAdjointEvec[ivar]);
+		printf("%.3e~%.3e\n", minMagAdjointEvec[5+nScal-1], maxMagAdjointEvec[5+nScal-1]);
+		cout<<"    REAL = ";
+		for(int ivar=0; ivar<5+nScal-1; ++ivar)
+			printf("%.3e~%.3e | ", minRealAdjointEvec[ivar], maxRealAdjointEvec[ivar]);
+		printf("%.3e~%.3e\n", minRealAdjointEvec[5+nScal-1], maxRealAdjointEvec[5+nScal-1]);
+		cout<<"    IMAG = ";
+		for(int ivar=0; ivar<5+nScal-1; ++ivar)
+			printf("%.3e~%.3e | ", minImagAdjointEvec[ivar], maxImagAdjointEvec[ivar]);
+		printf("%.3e~%.3e\n", minImagAdjointEvec[5+nScal-1], maxImagAdjointEvec[5+nScal-1]);
 
 		cout<<endl;
 	}
@@ -829,126 +918,12 @@ void VanGoghWithModels::readEigenPairsRembrandtSerial(const char filename[], int
 }
 
 /*
- * Method: readFieldFromQ0bin
- * --------------------------
- * Read field data from Q0_PT000**.bin
- * Original code: readQ0() in joeWithPsALcont.h
- */
-//void VanGogh::readFieldFromQ0bin(const int ptOnSCurve, double* rho_unstable, double (*rhou_unstable)[3], double* rhoE_unstable, double* kine_unstable, double* omega_unstable) {
-//	// filename
-//	stringstream ss;
-//	ss<<"Q0_PT"<<setfill('0')<<setw(5)<<ptOnSCurve<<".bin";
-//	string filename(ss.str());
-//
-//	// number of variables
-//	int nScal = scalarTranspEqVector.size();
-//	int m = nScal+5; // number of variables (rho, rhou, rhov, rhow, rhoE, and scalars)
-//
-//	// variables related to the Mesh
-//	const double gridTol = 1.0e-9;
-//	int *countFound = new int [ncv]; 	for(int icv=0; icv<ncv; ++icv) countFound[icv] = 0;
-//
-//	// read the file
-//	ifstream infile(filename.c_str(), ios::in | ios::binary);
-//	if(infile.is_open()) {
-//		int step0;
-//		double lambda0, lambda1, dsTry;
-//
-//		int mpi_size_file, totalNcv_file;
-//		// read some parameters from the file
-//		infile.read(reinterpret_cast<char*>(&step0), sizeof(int)); // Note: if you simply use the ">>" operator, it will cause some problems due to bugs in a g++ library on linux
-//		infile.read(reinterpret_cast<char*>(&lambda0), sizeof(double));
-//		infile.read(reinterpret_cast<char*>(&lambda1), sizeof(double));
-//		infile.read(reinterpret_cast<char*>(&dsTry), sizeof(double));
-//		infile.read(reinterpret_cast<char*>(&mpi_size_file), sizeof(int));
-//		infile.read(reinterpret_cast<char*>(&totalNcv_file), sizeof(int));
-//
-//		if(mpi_rank==0)
-//			printf("VanGoghKOm::readFieldFromQ0bin(): Reading \'%s\' -- pt=%d, lambda=%.8f, arclength=%.8f, total number of CVs=%d \n\n",
-//					filename.c_str(), step0, lambda0, dsTry, totalNcv_file);
-//		assert(step0 >= 0);
-//		assert(totalNcv_file == cvora[mpi_size]);
-//
-//		// variables
-//		int ncv_file;
-//		double (*x_cv_file)[3] = NULL;
-//		double *q0_file = NULL;
-//
-//		// read each data
-//		for(int mpi_file=0; mpi_file<mpi_size_file; ++mpi_file) {
-//			// read data dumped by a CPU
-//			infile.read(reinterpret_cast<char*>(&ncv_file), sizeof(int));
-//
-//			assert(x_cv_file==NULL);	x_cv_file = new double [ncv_file][3];
-//			assert(q0_file==NULL);		q0_file = new double [ncv_file*m];
-//
-//			for(int icv_file=0; icv_file<ncv_file; ++icv_file) {
-//				for(int i=0; i<3; ++i)
-//					infile.read(reinterpret_cast<char*>(&x_cv_file[icv_file][i]), sizeof(double));
-//				for(int i=0; i<m; ++i)
-//					infile.read(reinterpret_cast<char*>(&q0_file[m*icv_file+i]), sizeof(double));
-//			}
-//
-//			// find the matached data
-//			for(int icv=0; icv<ncv; ++icv) {
-//				int icv_file;
-//				int count = findMatchedIndex(icv_file, icv, ncv_file, x_cv_file, gridTol);
-//				if(count>0) {
-//					rho_unstable[icv] = q0_file[m*icv_file];
-//					rhou_unstable[icv][0] = q0_file[m*icv_file+1];
-//					rhou_unstable[icv][1] = q0_file[m*icv_file+2];
-//					rhou_unstable[icv][2] = q0_file[m*icv_file+3];
-//					rhoE_unstable[icv] = q0_file[m*icv_file+4];
-////					kine_unstable[icv] = q0_file[m*icv_file+5];
-////					omega_unstable[icv] = q0_file[m*icv_file+6];
-//
-//					countFound[icv] += count;
-//				}
-//			}
-//
-//			delete [] x_cv_file;	x_cv_file = NULL;
-//			delete [] q0_file;		q0_file = NULL;
-//		}
-//
-//		// check if each CV found a matched CV
-//		for (int icv=0; icv<ncv; ++icv) {
-//			if(countFound[icv]==0) {
-//				printf("  Cannot find a matched point for icv=%d (%.6f,%.6f,%.6f) at mpi_rank=%d \n", icv,x_cv[icv][0],x_cv[icv][1],x_cv[icv][2],mpi_rank);
-//				throw(-1);
-//			} else if(countFound[icv]>1) {
-//				printf("  Too many matched points(%d) for icv=%d (%.6f,%.6f,%.6f) at mpi_rank=%d \n", countFound[icv],icv,x_cv[icv][0],x_cv[icv][1],x_cv[icv][2],mpi_rank);
-//				throw(-1);
-//			}
-//		}
-//
-//		updateCvDataG1G2(rho_unstable,  REPLACE_DATA);
-//		updateCvDataG1G2(rhou_unstable, REPLACE_ROTATE_DATA);
-//		updateCvDataG1G2(rhoE_unstable, REPLACE_DATA);
-////		updateCvDataG1G2(kine_unstable, REPLACE_DATA);
-////		updateCvDataG1G2(omega_unstable, REPLACE_DATA);
-//	}  else {
-//		if(mpi_rank==0)
-//			printf("VanGoghKOm::readFieldFromQ0bin(): Cannot read \'%s\' \n", filename.c_str());
-//		throw(-1);
-//	}
-//
-//	delete [] countFound; 	countFound = NULL;
-//
-//	infile.close();
-//}
-
-/*
  * Method: readPsALCdumpedDataSerial
  * ---------------------------------
  * Read field data from file
  * Original code: IkeWithModels::readPsALCdumpedDataSerial()
  */
 void VanGoghWithModels::readPsALCdumpedDataSerial(const char filename[], double* qVec, const int NcontrolEqns) {
-MPI_Barrier(mpi_comm); for(int i=0; i<777777; ++i) {}; MPI_Barrier(mpi_comm);
-if(mpi_rank==0) cout<<"VanGoghWithModels::readPsALCdumpedDataSerial(): start to read the file"<<endl;
-MPI_Barrier(mpi_comm); for(int i=0; i<777777; ++i) {}; MPI_Barrier(mpi_comm);
-
-
 	// Check some possible errors
 	for(int i=0; i<3; ++i)
 		if(xcvMax[i] < xcvMin[i]) {
@@ -1019,30 +994,20 @@ MPI_Barrier(mpi_comm); for(int i=0; i<777777; ++i) {}; MPI_Barrier(mpi_comm);
 		xcvMaxArray_file = new double [mpi_size_file*3];
 		infile.read(reinterpret_cast<char*>(xcvMaxArray_file), sizeof(double)*(mpi_size_file*3));
 
-MPI_Barrier(mpi_comm); for(int i=0; i<777777; ++i) {}; MPI_Barrier(mpi_comm);
-if(mpi_rank==0) cout<<"reading the header is done!"<<endl;
-MPI_Barrier(mpi_comm); for(int i=0; i<777777; ++i) {}; MPI_Barrier(mpi_comm);
-
 		if(mpi_rank==0) {
 			printf("\nReading \'%s\': step=%d, lambda1=", filename, step0);
 			for(int iEqn=0; iEqn<NcontrolEqns; ++iEqn)
 				printf("%.8f, ", lambda1[iEqn]);
 			printf("ds=%.8f, total number of CVs=%d, mpi_size of the file=%d\n", dsTry, cvora_file[mpi_size_file], mpi_size_file);
 			cout<<"  Grid tolerance = "<<gridTol<<endl;
-			cout<<"  XCV_BOX = "<<endl;
-			for(int impi=0; impi<mpi_size_file; ++impi)
-				printf("    %3d: min=(%.3f, %.3f, %.3f)   max=(%.3f, %.3f, %.3f)\n", impi,
-						xcvMinArray_file[impi*3],xcvMinArray_file[impi*3+1],xcvMinArray_file[impi*3+2],
-						xcvMaxArray_file[impi*3],xcvMaxArray_file[impi*3+1],xcvMaxArray_file[impi*3+2]);
+			if(VANGOGH_DEBUG_LEVEL > 1) {
+				cout<<"  XCV_BOX = "<<endl;
+				for(int impi=0; impi<mpi_size_file; ++impi)
+					printf("    %3d: min=(%.3f, %.3f, %.3f)   max=(%.3f, %.3f, %.3f)\n", impi,
+							xcvMinArray_file[impi*3],xcvMinArray_file[impi*3+1],xcvMinArray_file[impi*3+2],
+							xcvMaxArray_file[impi*3],xcvMaxArray_file[impi*3+1],xcvMaxArray_file[impi*3+2]);
+			}
 		}
-
-MPI_Barrier(mpi_comm); for(int i=0; i<77777; ++i) {}; MPI_Barrier(mpi_comm);
-if(mpi_rank==0) cout<<"cvora_file[mpi_size_file]="<<cvora_file[mpi_size_file]<<endl;
-if(mpi_rank==0) cout<<"cvora[mpi_size]="<<cvora[mpi_size]<<endl;
-if(mpi_rank==0)
-	for(int mpi_file=0; mpi_file<mpi_size_file; ++mpi_file)
-		cout<<"cvora_file["<<mpi_file+1<<"]="<<cvora_file[mpi_file+1]<<endl;
-MPI_Barrier(mpi_comm); for(int i=0; i<77777; ++i) {}; MPI_Barrier(mpi_comm);
 
 		assert(step0 >= 0);
 		assert(cvora_file[mpi_size_file] == cvora[mpi_size]);
@@ -1062,8 +1027,6 @@ MPI_Barrier(mpi_comm); for(int i=0; i<77777; ++i) {}; MPI_Barrier(mpi_comm);
 			// read data dumped by a CPU
 			ncv_file = cvora_file[mpi_file+1]-cvora_file[mpi_file];
 
-if(mpi_rank==1) cout<<"reading mpi_file = "<<mpi_file<<endl;
-
 			assert(x_cv_file==NULL);	x_cv_file = new double [ncv_file][3];
 			assert(qVec_file==NULL);	qVec_file = new double [ncv_file*m];
 
@@ -1072,8 +1035,6 @@ if(mpi_rank==1) cout<<"reading mpi_file = "<<mpi_file<<endl;
 					infile.read(reinterpret_cast<char*>(&x_cv_file[icv][i]), sizeof(double));
 			}
 			infile.read(reinterpret_cast<char*>(qVec_file), sizeof(double)*(ncv_file*m));
-
-if(mpi_rank==1) cout<<"  reading x_cv and qvec are done"<<endl;
 
 			// find the matched data
 			bool matchedBox = true;
@@ -1087,7 +1048,6 @@ if(mpi_rank==1) cout<<"  reading x_cv and qvec are done"<<endl;
 				matchedBox = false;
 
 			if(matchedBox){
-if(mpi_rank==1) cout<<"  start to find matched box"<<endl;
 				for(int icv=0; icv<ncv; ++icv) {
 					int icv_file;
 					int count = findMatchedIndex(icv_file, icv, ncv_file, x_cv_file, gridTol);
@@ -1098,15 +1058,9 @@ if(mpi_rank==1) cout<<"  start to find matched box"<<endl;
 					}
 				}
 			}
-if(mpi_rank==1) cout<<"  finding matched box is done"<<endl;
 			delete [] x_cv_file;	x_cv_file = NULL;
 			delete [] qVec_file;	qVec_file = NULL;
-if(mpi_rank==1) cout<<"  done with mpi_file="<<mpi_file<<endl;
 		}
-
-MPI_Barrier(mpi_comm); for(int i=0; i<77777; ++i) {}; MPI_Barrier(mpi_comm);
-if(mpi_rank==0) cout<<"Reading the body is done!"<<endl;
-MPI_Barrier(mpi_comm); for(int i=0; i<77777; ++i) {}; MPI_Barrier(mpi_comm);
 
 		// 3. Read the foot
 		int dummyInt;
@@ -1194,9 +1148,6 @@ void VanGoghWithModels::updateUnstableVecNS(double* qVecTemp, const int nVars) {
  * Store initial NS data in arrays (e.g. rho_init, et.c)
  */
 void VanGoghWithModels::storeInitRestartNS() {
-	if(mpi_rank==0)
-		cout<<"VanGoghWithModels::storeInitRestartNS()"<<endl;
-
 	assert(rho_init!=NULL && rhou_init!=NULL && rhoE_init!=NULL);
 
 	for (int icv=0; icv<ncv; ++icv) {
@@ -1269,9 +1220,25 @@ void VanGoghWithModels::getPerturbParams(PerturbParams &perturbParams) {
 		// Some parameters for the hat-shaped smoothing function: f(x) = 1.0 - 0.5*(exp(-a*(x-xMin)) + exp(a*(x-xMax))), where a = ln(100)/edgeSize
 		// Note: At xMin & xMax, f(x) = 0.0. At the "edges", f(x) = 0.99. At the center of the domain, f(x) ~= 1.0
 		//       The smoothing occurs only if useSmoothing is TRUE.
-		perturbParams.disturbSmoothXmin = getDoubleParam("DISTURB_SMOOTH_XMIN");
-		perturbParams.disturbSmoothXmax = getDoubleParam("DISTURB_SMOOTH_XMAX");
-		perturbParams.disturbSmoothEdgeSize = getDoubleParam("DISTURB_SMOOTH_EDGE_SIZE");
+		perturbParams.disturbSmoothXmin = getParam("SMOOTHING")->getDouble("SMOOTH_XMIN");
+		perturbParams.disturbSmoothXmax = getParam("SMOOTHING")->getDouble("SMOOTH_XMAX");
+		perturbParams.disturbSmoothEdgeSize = getParam("SMOOTHING")->getDouble("SMOOTH_EDGE_SIZE");
+	}
+}
+
+/*
+ * Method: reinitialHook
+ * ---------------------
+ * Similar role to initialHook(): Reinitialize the flow field from the previous simulation.
+ */
+void VanGoghWithModels::reinitialHook() {
+	assert(rho_init!=NULL && rhou_init!=NULL && rhoE_init!=NULL);
+
+	for (int icv=0; icv<ncv; ++icv) {
+		rho[icv] = rho_init[icv];
+		for(int i=0; i<3; ++i)
+			rhou[icv][i] = rhou_init[icv][i];
+		rhoE[icv] = rhoE_init[icv];
 	}
 }
 
@@ -1284,31 +1251,105 @@ void VanGoghWithModels::perturbFieldNS() {
 	if(mpi_rank==0)
 		cout<<classID<<"::perturbFieldNS()"<<endl;
 
+	double myMinPress = ABSURDLY_BIG_NUMBER;
+	double myMinTemp  = ABSURDLY_BIG_NUMBER;
+	for(int icv=0; icv<ncv; ++icv) {
+		myMinPress = max(min(myMinPress, UgpWithCvCompFlow::press[icv]), 1.0e-6);
+		myMinPress = max(min(myMinTemp,  UgpWithCvCompFlow::temp[icv]),  1.0e-6);
+	}
+	double minPress;
+	double minTemp;
+	MPI_Allreduce(&myMinPress, &minPress, 1, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(&myMinTemp,  &minTemp,  1, MPI_DOUBLE, MPI_MIN, mpi_comm);
+
 	// ---------------
 	// Perturb rho
 	// ---------------
 	bool applyClipping = true;
-	perturbScalar(rho, array_perturb, "rho", applyClipping);
+	perturbScalar(rho, array_perturb, "rho", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+
+	// write the perturbation for Tecplot output
+	for(int icv=0; icv<ncv; ++icv)
+		rho_perturb[icv] = array_perturb[icv];
+	updateCvDataG1G2(rho_perturb, REPLACE_DATA);
 
 	// ---------------
 	// Perturb rhou-X
 	// ---------------
 	int coord = 0;
 	applyClipping = false;
-	perturbVector(rhou, coord, array_perturb, "rhou-X", applyClipping);
+	perturbVector(rhou, coord, array_perturb, "rhou-X", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+
+	// write the perturbation for Tecplot output
+	for(int icv=0; icv<ncv; ++icv)
+		rhou_perturb[icv][coord] = array_perturb[icv];
 
 	// ---------------
 	// Perturb rhou-Y
 	// ---------------
 	coord = 1;
 	applyClipping = false;
-	perturbVector(rhou, coord, array_perturb, "rhou-Y", applyClipping);
+	perturbVector(rhou, coord, array_perturb, "rhou-Y", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+
+	// write the perturbation for Tecplot output
+	for(int icv=0; icv<ncv; ++icv)
+		rhou_perturb[icv][coord] = array_perturb[icv];
+	updateCvDataG1G2(rhou_perturb, REPLACE_ROTATE_DATA); // Update all the three coordinates!!
 
 	// ---------------
 	// Perturb rhoE
 	// ---------------
 	applyClipping = true;
-	perturbScalar(rhoE, array_perturb, "rhoE", applyClipping);
+	perturbScalar(rhoE, array_perturb, "rhoE", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+
+	// write the perturbation for Tecplot output
+	for(int icv=0; icv<ncv; ++icv)
+		rhoE_perturb[icv] = array_perturb[icv];
+	updateCvDataG1G2(rhoE_perturb, REPLACE_DATA);
+
+	// Check if pressure or temperature becomes negative even though rhoE has been already clipped.
+	double *kineArray = NULL;
+	int kine_Index = getScalarTransportIndex("kine");
+	if(kine_Index>=0)
+		kineArray = scalarTranspEqVector[kine_Index].phi;
+
+	double MIN_PRESS = max(0.01 * minPress, 1.0e-6);
+	double MIN_TEMP  = max(0.01 * minTemp,  1.0e-6);
+
+	int myCountClip = 0;
+	double myMaxAddEnergy = 0.0;
+	for(int icv=0; icv<ncv; ++icv) {
+		double addEnergy = 0.0;
+
+		// Check pressure
+		double kinecv = 0.0;
+		if(kine_Index>=0)
+			kinecv = kineArray[icv];
+		double pressCheck = calcPress(UgpWithCvCompFlow::gamma[icv], rhoE[icv], rhou[icv], rho[icv], kinecv);
+		if(pressCheck < 0.0)
+			addEnergy = fabs(pressCheck + MIN_PRESS) / (UgpWithCvCompFlow::gamma[icv] - 1.0);
+
+		// Check energy
+		double tempCheck = calcTemp(pressCheck, rho[icv], UgpWithCvCompFlow::RoM[icv]);
+		if(tempCheck < 0.0)
+			addEnergy = max(addEnergy,  rho[icv] * fabs(tempCheck + MIN_TEMP) * UgpWithCvCompFlow::RoM[icv] / (UgpWithCvCompFlow::gamma[icv] - 1.0));
+
+		// Add energy
+		if(addEnergy != 0.0) {
+			rhoE[icv] += addEnergy;
+
+			++myCountClip;
+			myMaxAddEnergy = max(myMaxAddEnergy, addEnergy);
+		}
+	}
+	updateCvDataG1G2(rhoE, REPLACE_DATA);
+
+	int countClip = 0;
+	double maxAddEnergy = 0.0;
+	MPI_Allreduce(&myCountClip,    &countClip,     1, MPI_INT,    MPI_SUM, mpi_comm);
+	MPI_Allreduce(&myMaxAddEnergy, &maxAddEnergy,  1, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	if(countClip > 0 && mpi_rank==0)
+		cout<<"    rhoE is clipped again due to negative pressure or temperature: count CV = "<<countClip<<", max added energy = "<<maxAddEnergy<<endl;
 
 
 	if(mpi_rank==0)
@@ -1325,7 +1366,7 @@ void VanGoghWithModels::perturbFieldNS() {
  *
  * Return: The coefficient used to construct the perturbation --
  *           coeff = rmsVal * perturbParams.disturbMag ,  where rmsVal is the RMS value of the given scalar array.
- *           perturb[icv] = coeff *array_perturb[icv]
+ *           array_perturb[icv] = coeff * RANDOM_VARIABLE
  */
 double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_perturb, const char varName[], const bool applyClipping) {
 	assert(array_perturb != NULL);
@@ -1334,9 +1375,12 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
 	//   f(x) = 1.0 - 0.5*(exp(-a*(x-xMin)) + exp(a*(x-xMax))), where a = ln(100)/edgeSize
 	// Note: At xMin & xMax, f(x) = 0.0. At the "edges", f(x) = 0.99. At the center of the domain, f(x) ~= 1.0
 	//       The smoothing occurs only if useSmoothing is TRUE.
-	double a = log(100.0)/perturbParams.disturbSmoothEdgeSize;
-	assert(perturbParams.disturbSmoothXmin < perturbParams.disturbSmoothXmax);
-	assert(a>0);
+	double a = 0.0;
+	if(perturbParams.useSmoothing) {
+		a = log(100.0)/perturbParams.disturbSmoothEdgeSize;
+		assert(perturbParams.disturbSmoothXmin < perturbParams.disturbSmoothXmax);
+		assert(a>0);
+	}
 
 	// -----------------------
 	// Generate a random array
@@ -1347,7 +1391,7 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
 			array_perturb[icv] -= 0.5;        // shifting
 	} else
 		randArrayNormal(array_perturb, ncv);  // Note: default = normal distribution
-//	updateCvDataG1G2(array_perturb, REPLACE_DATA);
+	updateCvDataG1G2(array_perturb, REPLACE_DATA);
 
 	// -----------------------
 	// Filter the random array
@@ -1369,27 +1413,27 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
 		delete [] tempFiltered;
 	}
 
-	// -----------------------------
-	// Update the desinated variable
-	// -----------------------------
+	// ------------------------------
+	// Update the designated variable
+	// ------------------------------
 	double rmsVal = calcRMS(scalarArray, false); // get RMS
 	double coeff = rmsVal * perturbParams.disturbMag; // calculate the coefficient based on the RMS
 
 	int myCountClip = 0;
 	for(int icv=0; icv<ncv; ++icv) {
-		double disturb = coeff*array_perturb[icv];
+		array_perturb[icv] *= coeff;
 		if(perturbParams.useSmoothing) {
 			double x = x_cv[icv][0];
 			if(x<perturbParams.disturbSmoothXmin || x>perturbParams.disturbSmoothXmax)
-				disturb = 0.0;
+				array_perturb[icv] = 0.0;
 			else
-				disturb *= 1.0 - 0.5*(exp(-a*(x-perturbParams.disturbSmoothXmin)) + exp(a*(x-perturbParams.disturbSmoothXmax)));
+				array_perturb[icv] *= 1.0 - 0.5*(exp(-a*(x-perturbParams.disturbSmoothXmin)) + exp(a*(x-perturbParams.disturbSmoothXmax)));
 		}
-		if(applyClipping && scalarArray[icv]+disturb < perturbParams.disturbClip*scalarArray[icv]) {
+		if(applyClipping && scalarArray[icv]+array_perturb[icv] < perturbParams.disturbClip*scalarArray[icv]) {
 			scalarArray[icv] = perturbParams.disturbClip*scalarArray[icv]; // clipping
 			myCountClip++;
 		} else {
-			scalarArray[icv] += disturb;
+			scalarArray[icv] += array_perturb[icv];
 		}
 	}
 	updateCvDataG1G2(scalarArray,  REPLACE_DATA);
@@ -1398,15 +1442,36 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
 	if(mpi_rank == 0) {
 		if(applyClipping) {
 			if(perturbParams.randDistribFunc == UNIFORM_DISTRIB)
-				printf("    Perturb the %s field with Uniform:  min disturb = %.3e, max disturb = %.3e, # clip = %d \n", varName, -0.5*coeff, 0.5*coeff, countClip);
+				printf("    Perturb the %s field with UNIFORM:  min disturb = %.3e, max disturb = %.3e, # clip = %d \n", varName, -0.5*coeff, 0.5*coeff, countClip);
 			else
-				printf("    Perturb the %s field with Gaussian:  std = %.3e, # clip = %d \n", varName, coeff, countClip);
+				printf("    Perturb the %s field with GAUSSIAN:  std = %.3e, # clip = %d \n", varName, coeff, countClip);
 		} else {
 			if(perturbParams.randDistribFunc == UNIFORM_DISTRIB)
-				printf("    Perturb the %s field with Uniform:  min disturb = %.3e, max disturb = %.3e\n", varName, -0.5*coeff, 0.5*coeff);
+				printf("    Perturb the %s field with UNIFORM:  min disturb = %.3e, max disturb = %.3e\n", varName, -0.5*coeff, 0.5*coeff);
 			else
-				printf("    Perturb the %s field with Gaussian:  std = %.3e\n", varName, coeff);
+				printf("    Perturb the %s field with GAUSSIAN:  std = %.3e\n", varName, coeff);
 		}
+	}
+
+	// Error check: negative value
+	if(applyClipping) {
+		int myCountNegative = 0;
+		double myMostNegative = ABSURDLY_BIG_NUMBER;
+
+		for(int icv=0; icv<ncv; ++icv) {
+			if(scalarArray[icv] < 0.0) {
+				++myCountNegative;
+				myMostNegative = min(myMostNegative, scalarArray[icv]);
+			}
+		}
+
+		int countNegative;
+		double mostNegative;
+		MPI_Allreduce(&myCountNegative, &countNegative, 1, MPI_INT,    MPI_SUM, mpi_comm);
+		MPI_Allreduce(&myMostNegative,  &mostNegative,  1, MPI_DOUBLE, MPI_MIN, mpi_comm);
+
+		if(countNegative > 0 && mpi_rank==0)
+			printf("    WARNING! %s still has negative value(s) even after clipping: count=%d, most negative value=%g\n", varName, countNegative, mostNegative);
 	}
 
 	return coeff;
@@ -1421,7 +1486,7 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
  *
  * Return: The coefficient used to construct the perturbation --
  *           coeff = rmsVal * perturbParams.disturbMag ,  where rmsVal is the RMS value of the given scalar array.
- *           perturb[icv] = coeff *array_perturb[icv]
+ *           array_perturb[icv] = coeff * RANDOM_VARIABLE
  */
 double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coord, double* array_perturb, const char varName[], const bool applyClipping) {
 	assert(array_perturb != NULL);
@@ -1431,9 +1496,12 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 	//   f(x) = 1.0 - 0.5*(exp(-a*(x-xMin)) + exp(a*(x-xMax))), where a = ln(100)/edgeSize
 	// Note: At xMin & xMax, f(x) = 0.0. At the "edges", f(x) = 0.99. At the center of the domain, f(x) ~= 1.0
 	//       The smoothing occurs only if useSmoothing is TRUE.
-	double a = log(100.0)/perturbParams.disturbSmoothEdgeSize;
-	assert(perturbParams.disturbSmoothXmin < perturbParams.disturbSmoothXmax);
-	assert(a>0);
+	double a = 0.0;
+	if(perturbParams.useSmoothing) {
+		a = log(100.0)/perturbParams.disturbSmoothEdgeSize;
+		assert(perturbParams.disturbSmoothXmin < perturbParams.disturbSmoothXmax);
+		assert(a>0);
+	}
 
 	// -----------------------
 	// Generate a random array
@@ -1444,7 +1512,7 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 			array_perturb[icv] -= 0.5;        // shifting
 	} else
 		randArrayNormal(array_perturb, ncv);  // Note: default = normal distribution
-//	updateCvDataG1G2(array_perturb, REPLACE_DATA);
+	updateCvDataG1G2(array_perturb, REPLACE_DATA);
 
 	// -----------------------
 	// Filter the random array
@@ -1467,30 +1535,30 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 	}
 
 	// -----------------------------
-	// Update the desinated variable
+	// Update the designated variable
 	// -----------------------------
 	double rmsVal = calcRMS3D(vectorArray, coord, false); // get RMS
 	double coeff = rmsVal * perturbParams.disturbMag; // calculate the coefficient based on the RMS
 
 	int myCountClip = 0;
 	for(int icv=0; icv<ncv; ++icv) {
-		double disturb = coeff*array_perturb[icv];
+		array_perturb[icv] *= coeff;
 		if(perturbParams.useSmoothing) {
 			double x = x_cv[icv][0];
 			if(x<perturbParams.disturbSmoothXmin || x>perturbParams.disturbSmoothXmax)
-				disturb = 0.0;
+				array_perturb[icv] = 0.0;
 			else
-				disturb *= 1.0 - 0.5*(exp(-a*(x-perturbParams.disturbSmoothXmin)) + exp(a*(x-perturbParams.disturbSmoothXmax)));
+				array_perturb[icv] *= 1.0 - 0.5*(exp(-a*(x-perturbParams.disturbSmoothXmin)) + exp(a*(x-perturbParams.disturbSmoothXmax)));
 		}
 
-		if(applyClipping && vectorArray[icv][coord]+disturb < perturbParams.disturbClip*vectorArray[icv][coord]) {
+		if(applyClipping && vectorArray[icv][coord]+array_perturb[icv] < perturbParams.disturbClip*vectorArray[icv][coord]) {
 			vectorArray[icv][coord] = perturbParams.disturbClip * vectorArray[icv][coord]; // clipping
 			myCountClip++;
 		} else {
-			vectorArray[icv][coord] += disturb;
+			vectorArray[icv][coord] += array_perturb[icv];
 		}
 	}
-	updateCvDataG1G2(vectorArray,  REPLACE_ROTATE_DATA); // Update all the three coordinates!!
+	updateCvDataG1G2(vectorArray, REPLACE_ROTATE_DATA); // Update all the three coordinates!!
 
 	int countClip; 	MPI_Allreduce(&myCountClip, &countClip, 1, MPI_INT, MPI_SUM, mpi_comm);
 	if(mpi_rank == 0) {
@@ -1560,3 +1628,42 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 //	}
 //	MPI_Allreduce(myTemp, metricDenom, m, MPI_DOUBLE, MPI_SUM, mpi_comm);
 //}
+
+/****************************
+ * VANGOGH OVERLOADED METHODS
+ ****************************/
+/*
+ * Method: writeResidualOnFile
+ * ---------------------------
+ *
+ */
+void VanGoghWithModels::writeResidualOnFile(const int itest, char filename[], bool rewrite) {
+	int nScal = scalarTranspEqVector.size();
+
+	if(mpi_rank==0) {
+		FILE *fp;
+		if(rewrite) {
+			fp = fopen(filename, "w");
+			fprintf(fp, "STEP,  rho,         rhou-X,      rhou-Y,      rhou-Z,      rhoE,      ");
+			for (int iScal = 0; iScal < nScal; iScal++)
+				fprintf(fp, "%12s", scalarTranspEqVector[iScal].getName());
+			fprintf(fp, "\n");
+		} else
+			fp = fopen(filename, "a");
+
+		if(Residual == NULL) {
+			if(mpi_rank==0)
+				cout<<"WARNING "<<classID<<"::writeResidualOnFile(): Residual is NULL"<<endl;
+		} else {
+			fprintf(fp, "%6d, %12.4e %12.4e %12.4e %12.4e %12.4e", step, Residual[0], Residual[1], Residual[2], Residual[3], Residual[4]);
+			for (int iScal = 0; iScal < nScal; iScal++)
+				fprintf(fp, "%12.4e", Residual[5+iScal]);
+			fprintf(fp, "\n");
+		}
+
+		fclose(fp);
+	}
+
+	MPI_Barrier(mpi_comm);
+}
+

@@ -348,6 +348,11 @@ int RembrandtWithModels::runEigenAnalysis() {
 			cout<<">> Start post-processing: least stable directmode : index = "<<directLeastStableIndex <<", eigenvalue (Real part) = "<<directLeastStableEigenReal<<endl
 				<<"                          least stable adjointmode: index = "<<adjointLeastStableIndex<<", eigenvalue (Real part) = "<<adjointLeastStableEigenReal<<endl;
 
+		if(mpi_rank == 0)
+			cout<<endl
+			    <<"WARNING! You may want to check the current formulation for sensitivity in Rembrandt!"<<endl
+			    <<endl;
+
 		// Post-processing for rho, rhou, and rhoE
 		for(int icv=0; icv<ncv; ++icv) {
 			int indexTemp = icv*nVars;
@@ -2924,13 +2929,36 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 										nevSlepc, ncvSlepc, mpdSlepc, WhichEigenOfInterest, EPSsolverType,
 										tolSlepc, max_iterSlepc, slepcSTparams, EPSmonitorInterv, targetValue);
 
+	// Check the ranges of the eigenvectors
+	double myMinVal_Real[nev], myMaxVal_Real[nev], myMinVal_Imag[nev], myMaxVal_Imag[nev];
+	for(int iev=0; iev<nev; ++nev) {
+		myMinVal_Real[iev] =  ABSURDLY_BIG_NUMBER;
+		myMaxVal_Real[iev] = -ABSURDLY_BIG_NUMBER;
+		myMinVal_Imag[iev] =  ABSURDLY_BIG_NUMBER;
+		myMaxVal_Imag[iev] = -ABSURDLY_BIG_NUMBER;
+	}
+	for(int iev=0; iev<nev; ++nev) {
+		for(int localIndex=0; localIndex<(cvora[mpi_rank+1]-cvora[mpi_rank])*(5+nScal); ++localIndex) {
+			myMinVal_Real[iev] = min(myMinVal_Real[iev], directEvecsReal[iev][localIndex]);
+			myMaxVal_Real[iev] = max(myMaxVal_Real[iev], directEvecsReal[iev][localIndex]);
+			myMinVal_Imag[iev] = min(myMinVal_Imag[iev], directEvecsImag[iev][localIndex]);
+			myMaxVal_Imag[iev] = max(myMaxVal_Imag[iev], directEvecsImag[iev][localIndex]);
+		}
+	}
+	double minVal_Real[nev], maxVal_Real[nev], minVal_Imag[nev], maxVal_Imag[nev];
+	MPI_Allreduce(myMinVal_Real, minVal_Real, nev, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxVal_Real, maxVal_Real, nev, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	MPI_Allreduce(myMinVal_Imag, minVal_Imag, nev, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxVal_Imag, maxVal_Imag, nev, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
 	// Report the results (both on the screen and on a file)
 	if(mpi_rank==0) {
 		cout<<endl
 			<<">> "<<nconvDirect<<" converged DIRECT eigen-pairs after "<<numIter<<" iterations"<<endl;
 		cout<<"   Result for each eigen-pair:"<<endl;
 		for(int i=0; i< std::min<int>(nevSlepc, nconvDirect); ++i)
-			printf("    %.2d   REL_ERROR = %.5e   EVAL = %.5e + %.5ei\n", i, relError[i], directEvalsReal[i], directEvalsImag[i]);
+			printf("    %2d   REL_ERROR = %.5e   EVAL = %.5e + %.5ei  EVEC-RANGE = (real=%.3e~%.3e, imag=%.3e~%.3e)\n",
+					i, relError[i], directEvalsReal[i], directEvalsImag[i], minVal_Real[i], maxVal_Real[i], minVal_Imag[i], maxVal_Imag[i]);
 		if(nconvDirect == 0)
 			cout<<"    NOT AVAILABLE because # of converged eigenpairs = "<<nconvDirect<<endl;
 		cout<<endl;
@@ -2965,7 +2993,7 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 		    <<">> "<<nconvAdjoint<<" converged ADJOINT eigen-pairs after "<<numIter<<" iterations"<<endl;
 		cout<<"   Result for each eigen-pair:"<<endl;
 		for(int i=0; i<std::min<int>(nevSlepc, nconvAdjoint); ++i)
-			printf("    %.2d   REL_ERROR = %.5e   EVAL = %.5e + %.5ei\n", i, relError[i], adjointEvalsReal[i], adjointEvalsImag[i]);
+			printf("    %2d   REL_ERROR = %.5e   EVAL = %.5e + %.5ei\n", i, relError[i], adjointEvalsReal[i], adjointEvalsImag[i]);
 		if(nconvAdjoint == 0)
 			cout<<"    NOT AVAILABLE because # of converged eigenpairs = "<<nconvAdjoint<<endl;
 		cout<<endl;

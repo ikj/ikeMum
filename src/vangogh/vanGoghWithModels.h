@@ -54,6 +54,7 @@ enum RAND_DISTRIB_FUNC {NORMAL_DISTRIB, UNIFORM_DISTRIB};
  * You must make JoeWithModels::run() virtual
  * You must make the "Residual" array as a member variable of the JoeWithModels class
   and comment out the "Residual" array in runForwardEuler(), runRK(), runBackwardEuler(), runBackwardEulerCoupled(), and runBDF2();
+ * Check if the time-advancement scheme that you want to use has the option to be stopped with "resid_energ_th"
  */
 
 struct PerturbParams {
@@ -78,6 +79,227 @@ struct PerturbParams {
 
 	RAND_DISTRIB_FUNC RandDistribFunc;
 };
+
+class Complex1Darray
+{
+private:
+	std::complex<double>* array1D;
+	int arraySize;
+
+public:
+	Complex1Darray() {
+		array1D = NULL;
+		arraySize = 0;
+	}
+	~Complex1Darray() {
+		clear();
+	}
+
+	/*
+	 * Copy Constructors and Assignment Operators
+	 */
+	Complex1Darray(const Complex1Darray& other) {
+		copyOther(other);
+	}
+	Complex1Darray& operator = (const Complex1Darray& other) {
+		if(this != &other) {
+			clear();
+			// Note: When we cover inheritance, there's one more step here.
+			copyOther(other);
+		}
+		return *this;
+	}
+
+	/*
+	 * Method: copyOther
+	 * -----------------
+	 *
+	 */
+	void copyOther(const Complex1Darray& other) {
+		array1D = new std::complex<double> [other.size()];
+		copy(other.begin(), other.end(), begin());
+	}
+
+	/*
+	 * Method: allocate
+	 * ----------------
+	 *
+	 */
+	void allocate(const int n) {
+		assert(array1D == NULL && arraySize == 0);
+		arraySize = n;
+		array1D = new std::complex<double> [arraySize];
+	}
+
+	/*
+	 * Method: clear
+	 * -------------
+	 *
+	 */
+	void clear() {
+		if(array1D != NULL) {
+			assert(arraySize != 0);
+			delete [] array1D; 	array1D = NULL;
+		} else {
+			assert(arraySize == 0);
+		}
+		arraySize = 0;
+	}
+
+	/*
+	 * Method: empty
+	 * -------------
+	 *
+	 */
+	bool empty() const {
+		if(array1D==NULL) {
+			assert(arraySize == 0);
+			return true;
+		}
+		return false;
+	}
+
+	/*
+	 * Method: getAt
+	 * -------------
+	 *
+	 */
+	complex<double>& getAt(const int index) {
+		if(index<0)
+			cerr<<"Complex1Darray::getAt(): ERROR -- index="<<index<<" is smaller than 0"<<endl;
+		if(index>=arraySize)
+			cerr<<"Complex1Darray::getAt(): ERROR -- index="<<index<<" is greater than size()="<<arraySize<<endl;
+		assert(index>=0 && index<arraySize);
+
+		return array1D[index];
+	}
+	const complex<double>& getAt(const int index) const {
+		if(index<0)
+			cerr<<"Complex1Darray::getAt(): ERROR -- index="<<index<<" is smaller than 0"<<endl;
+		if(index>=arraySize)
+			cerr<<"Complex1Darray::getAt(): ERROR -- index="<<index<<" is greater than size()="<<arraySize<<endl;
+		assert(index>=0 && index<arraySize);
+
+		return array1D[index];
+	}
+
+	/*
+	 * Method: size
+	 * ------------
+	 *
+	 */
+	int size() const {
+		return arraySize;
+	}
+
+	/***********************************************************
+	 * Element Selection Operator: []
+	 * ------------------------------
+	 * Two overloaded operators for the mutable and immutable cases
+	 ***********************************************************/
+	complex<double>& operator[] (const int i) {
+		return getAt(i);
+	}
+
+	const complex<double>& operator[] (const int i) const {
+		return getAt(i);
+	}
+
+	/***********
+	 * Iterators
+	 * ---------
+	 * Sample code from http://www.dreamincode.net/forums/topic/58468-making-your-own-iterators/
+	 * For example, if you want to iterate over the elements of "ADscalar<elemType> arr" and print them out:
+	 *   for(ADscalar<elemType>::iterator iter=arr.begin(); iter!=arr.end(); ++iter) {
+	 *   	printf("  %.2e", *iter); // Note: for the "adouble" elemType: printf("  %.2e", iter->value());
+	 *   }
+	 ***********/
+	class iterator
+	{
+	public:
+		iterator(complex<double>* ptr) : ptr_(ptr) { }
+		iterator operator ++() { iterator i = *this; ptr_++; return i; }
+		iterator operator ++(int junk) { ptr_++; return *this; }
+		complex<double>& operator *() { return *ptr_; }
+		complex<double>* operator ->() { return ptr_; }
+		bool operator ==(const iterator& rhs) { return ptr_ == rhs.ptr_; }
+		bool operator !=(const iterator& rhs) { return ptr_ != rhs.ptr_; }
+	private:
+		complex<double>* ptr_;
+	};
+
+	class const_iterator
+	{
+	public:
+		const_iterator(complex<double>* ptr) : ptr_(ptr) { }
+		const_iterator operator ++() { const_iterator i = *this; ptr_++; return i; }
+		const_iterator operator ++(int junk) { ptr_++; return *this; }
+		const complex<double>& operator *() { return *ptr_; }
+		const complex<double>* operator ->() { return ptr_; }
+		bool operator ==(const const_iterator& rhs) { return ptr_ == rhs.ptr_; }
+		bool operator !=(const const_iterator& rhs) { return ptr_ != rhs.ptr_; }
+	private:
+		complex<double>* ptr_;
+	};
+
+	friend class iterator;
+	friend class const_iterator;
+
+	iterator begin() {
+		return iterator(array1D);
+	}
+
+	iterator end() {
+		return iterator(array1D + this->size());
+	}
+
+	const_iterator begin() const {
+		return const_iterator(array1D);
+	}
+
+	const_iterator end() const {
+		return const_iterator(array1D + this->size());
+	}
+
+	/*
+	 * Method: copy
+	 * ------------
+	 *
+	 */
+	iterator copy(const_iterator first, const_iterator last, iterator result) {
+		while(first!=last) {
+			*result = *first;
+			++result;
+			++first;
+		}
+		return result;
+	}
+};
+
+//class ComplexTensors {
+//
+//};
+
+/*
+ * Method: calcPress
+ * -----------------
+ *
+ */
+inline double calcPress(double gamma, double rhoE, double *rhou, double rho, double kinecv) {
+	double rhouSq = 0.0;
+	for(int i=0; i<3; ++i)
+		rhouSq += rhou[i]*rhou[i];
+	return (gamma - 1.0) * (rhoE - 0.5 * rhouSq/rho - rho * kinecv);
+}
+
+/*
+ * Method: calcTemp
+ * ----------------
+ *
+ */
+inline double calcTemp(double press, double rho, double RoM) {
+	return press / (rho * RoM);
+}
 
 // ###########################################################################################
 // ------                                                                               ------
@@ -106,11 +328,13 @@ protected:
 	double *rho_init;
 	double (*rhou_init)[3];
 	double *rhoE_init;
+	// NOTE: scalars should be registered in the child class
 	
 	// data on the unstable(hyperbolic) branch (from Q0_PT000**.bin)
 	double *rho_unstable;
 	double (*rhou_unstable)[3];
 	double *rhoE_unstable;
+	// NOTE: scalars should be registered in the child class
 
 	// -------------------------
 	// Perturbations
@@ -118,9 +342,19 @@ protected:
 	// perturbations
 	double *array_perturb;
 
+	double *rho_perturb;
+	double (*rhou_perturb)[3];
+	double *rhoE_perturb;
+	// NOTE: scalars should be registered in the child class
+
 	// filter
 	PerturbParams perturbParams;
 	double *wdFace;
+
+	// -------------------------
+	// Eigenvals: Data container
+	// -------------------------
+	Complex1Darray Evals;   // Note: A data container that has the 'std::complex' class as its element
 
 	// -------------------------
 	// Eigenvecs: Data container
@@ -135,11 +369,13 @@ protected:
 	double *rho_Dct_1stReal;
 	double (*rhou_Dct_1stReal)[3];
 	double *rhoE_Dct_1stReal;
+	// NOTE: scalars should be registered in the child class
 
 	// first adjoint global modes
 	double *rho_Adj_1stReal;
 	double (*rhou_Adj_1stReal)[3];
 	double *rhoE_Adj_1stReal;
+	// NOTE: scalars should be registered in the child class
 	
 public:
 	/*
@@ -306,7 +542,7 @@ public:
 	 * Update scalar variabls (e.g. kine_Dct_1stReal, kine_Adj_1stReal, etc.) from DirectEvecs and AdjointEvecs.
 	 * This is just for Tecplot output
 	 */
-	virtual void updateEigenVecTecplotScalars() {}
+	virtual void updateEigenVecTecplotScalars() { /* empty */ }
 	
 	/*
 	 * Method: updateUnstableVecNS
@@ -322,7 +558,7 @@ public:
 	 * Update scalar variabls (kine_unstable, etc.) from a qVec that has been generated by reading a IKE binary file.
 	 * This is NOT ONLY for Tecplot output BUT ALSO linear analysis
 	 */
-	virtual void updateUnstableVecScalars(double* qVecTemp, const int nVars) {}
+	virtual void updateUnstableVecScalars(double* qVecTemp, const int nVars) { /* empty */ }
 
 	/*
 	 * Method: storeInitRestartNS
@@ -336,7 +572,7 @@ public:
 	 * -------------------------------
 	 * Store initial scalar data in arrays (e.g. kine_init, etc.)
 	 */
-	virtual void storeInitRestartScalars() {}
+	virtual void storeInitRestartScalars() { /* empty */ }
 	
 	/****************************
 	 * FUNCTIONS FOR PERTURBATION
@@ -349,18 +585,39 @@ public:
 	void getPerturbParams(PerturbParams &perturbParams);
 
 	/*
+	 * Method: reinitialHook
+	 * ---------------------
+	 * Similar role to initialHook(): Reinitialize the flow field from the previous simulation.
+	 */
+	virtual void reinitialHook();
+
+	/*
+	 * Method: reinitialHookScalarRansTurbModel
+	 * ----------------------------------------
+	 * Similar role to initialHook(): Reinitialize the flow field from the previous simulation.
+	 */
+	virtual void reinitialHookScalarRansTurbModel() { /* empty */ }
+
+	/*
+	 * Method: reinitialHookScalarRansCombModel
+	 * ----------------------------------------
+	 * Similar role to initialHook(): Reinitialize the flow field from the previous simulation.
+	 */
+	virtual void reinitialHookScalarRansCombModel() { /* empty */ }
+
+	/*
 	 * Method: perturbFieldNS
 	 * ----------------------
 	 * Perturb the initial field with random variables and apply filter to the perturbations
 	 */
-	void perturbFieldNS();
+	virtual void perturbFieldNS();
 
 	/*
 	 * Method: perturbFieldScalars
 	 * ---------------------------
 	 * Perturb the initial field with random variables and apply filter to the perturbations
 	 */
-	virtual void perturbFieldScalars() {};
+	virtual void perturbFieldScalars() { /* empty */ }
 
 	/*
 	 * Method: perturbScalar
@@ -371,7 +628,7 @@ public:
 	 *
 	 * Return: The coefficient used to construct the perturbation --
 	 *           coeff = rmsVal * perturbParams.disturbMag ,  where rmsVal is the RMS value of the given scalar array.
-	 *           perturb[icv] = coeff *array_perturb[icv]
+	 *           array_perturb[icv] = coeff * RANDOM_VARIABLE
 	 */
 	double perturbScalar(double* scalarArray, double* array_perturb, const char varName[], const bool applyClipping);
 
@@ -384,7 +641,7 @@ public:
 	 *
 	 * Return: The coefficient used to construct the perturbation --
 	 *           coeff = rmsVal * perturbParams.disturbMag ,  where rmsVal is the RMS value of the given scalar array.
-	 *           perturb[icv] = coeff *array_perturb[icv]
+	 *           array_perturb[icv] = coeff * RANDOM_VARIABLE
 	 */
 	double perturbVector(double (*vectorArray)[3], const int coord, double* array_perturb, const char varName[], const bool applyClipping);
 
@@ -407,21 +664,21 @@ public:
 			const double *rho_adj, const double (*rhou_adj)[3], const double *rhoE_adj, const double *kine_adj, const double *omega_adj);
 
 	/****************************
-	 * HOOK FUNCTIONS
+	 * VANGOGH OVERLOADED METHODS
 	 ****************************/
 	/*
 	 * Method: writeQoIOnFile
 	 * ----------------------
 	 * Averaged density and Averaged Mach number
 	 */
-	virtual void writeQoIOnFile(const int itest, char filename[], bool rewrite) {}
+	virtual void writeQoIOnFile(const int itest, char filename[], bool rewrite) { /* empty */ }
 
 	/*
 	 * Method: writeResidualOnFile
 	 * ---------------------------
-	 * Averaged density and Averaged Mach number
+	 *
 	 */
-	virtual void writeResidualOnFile(const int itest, char filename[], bool rewrite) {}
+	virtual void writeResidualOnFile(const int itest, char filename[], bool rewrite);
 };
 
 #endif
