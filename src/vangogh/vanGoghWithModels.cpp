@@ -77,6 +77,9 @@ void VanGoghWithModels::run() {
 		cout<<endl
 			<<classID<<"::run() "<<endl;
 
+	// Get the parameters for the perturbations
+	getPerturbParams(perturbParams);
+
 	// read mesh or restart file
 	initializeFromRestartFile(getStringParam("RESTART"));
 
@@ -240,9 +243,6 @@ void VanGoghWithModels::run() {
 		itest = 1; // In general, "itest=0" means the initial unperturbed field, whereas "itest=1" is the first perturbed field. 
 		ntests = getIntParam("NTESTS", "1");
 	}
-	
-	// Get the parameters for the perturbations
-	getPerturbParams(perturbParams);
 
 	// Allocate memory: wdFace
 	if(perturbParams.useFiltering) {
@@ -1910,7 +1910,7 @@ void VanGoghWithModels::writeOptimalMeticOnFile(const int itest, char filename[]
 		FILE *fp;
 		if(rewrite) {
 			fp = fopen(filename, "w");
-			fprintf(fp, "ITEST,    METRIC_RHO, METRIC_RHOU-X, METRIC_RHOU-Y, METRIC_RHOU-Z,   METRIC_RHOE\n");
+			fprintf(fp, "ITEST,    METRIC_RHO, METRIC_RHOU-X, METRIC_RHOU-Y, METRIC_RHOU-Z,   METRIC_RHOE");
 			for(int i=0; i<nScal; ++i)
 				fprintf(fp, ", METRIC_SCAL-%d", i);
 			fprintf(fp, "\n");
