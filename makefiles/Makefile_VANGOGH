@@ -61,7 +61,7 @@ vanGogh: COMMON_OBJS_FOR_VANGOGH $(addprefix $(MUM_HOME)/src/ike/JOE/, $(JOE_OBJ
 	$(CC) -o $@ $(CLD) $(addprefix $(MUM_HOME)/src/common/, $(COMMON_JOE)) $(addprefix $(MUM_HOME)/src/ike/JOE/, $(JOE_OBJS_FOR_VANGOGH)) $(addprefix $(MUM_HOME)/src/vangogh/, $(VANGOGH_OBJS)) vanGogh.o $(JOE_LIBS)  
 
 $(MUM_HOME)/src/vangogh/DiffFilter.o: $(MUM_HOME)/src/vangogh/DiffFilter.cpp $(MUM_HOME)/src/vangogh/DiffFilter.h $(UgpWithCV2_H) $(Param_H) $(myMem_H) 
-	$(CC) $(CFLAGS) -I$(MUM_HOME)/src/common -I$(MUM_HOME)/src/ike/JOE -c $<
+	$(CC) $(CFLAGS) -I$(MUM_HOME)/src/common -I$(MUM_HOME)/src/ike/JOE -c $(MUM_HOME)/src/vangogh/DiffFilter.cpp -o $(MUM_HOME)/src/vangogh/DiffFilter.o
 
 $(MUM_HOME)/src/vangogh/vanGoghWithModels.o: $(MUM_HOME)/src/vangogh/vanGoghWithModels.cpp $(MUM_HOME)/src/vangogh/vanGoghWithModels.h $(MUM_HOME)/src/vangogh/vanGoghUtils.h $(MUM_HOME)/src/vangogh/DiffFilter.h $(joe_H) 
 	$(CC) $(CFLAGS) -I$(MUM_HOME)/src/common -I$(MUM_HOME)/src/common/mixing_combustion -I$(MUM_HOME)/src/ike/JOE -c $(MUM_HOME)/src/vangogh/vanGoghWithModels.cpp -o $(MUM_HOME)/src/vangogh/vanGoghWithModels.o

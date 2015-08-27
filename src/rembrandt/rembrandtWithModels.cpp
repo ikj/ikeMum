@@ -2930,14 +2930,14 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 										tolSlepc, max_iterSlepc, slepcSTparams, EPSmonitorInterv, targetValue);
 
 	// Check the ranges of the eigenvectors
-	double myMinVal_Real[nev], myMaxVal_Real[nev], myMinVal_Imag[nev], myMaxVal_Imag[nev];
-	for(int iev=0; iev<nev; ++nev) {
+	double myMinVal_Real[nevSlepc], myMaxVal_Real[nevSlepc], myMinVal_Imag[nevSlepc], myMaxVal_Imag[nevSlepc];
+	for(int iev=0; iev<nevSlepc; ++iev) {
 		myMinVal_Real[iev] =  ABSURDLY_BIG_NUMBER;
 		myMaxVal_Real[iev] = -ABSURDLY_BIG_NUMBER;
 		myMinVal_Imag[iev] =  ABSURDLY_BIG_NUMBER;
 		myMaxVal_Imag[iev] = -ABSURDLY_BIG_NUMBER;
 	}
-	for(int iev=0; iev<nev; ++nev) {
+	for(int iev=0; iev<nevSlepc; ++iev) {
 		for(int localIndex=0; localIndex<(cvora[mpi_rank+1]-cvora[mpi_rank])*(5+nScal); ++localIndex) {
 			myMinVal_Real[iev] = min(myMinVal_Real[iev], directEvecsReal[iev][localIndex]);
 			myMaxVal_Real[iev] = max(myMaxVal_Real[iev], directEvecsReal[iev][localIndex]);
@@ -2945,11 +2945,11 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 			myMaxVal_Imag[iev] = max(myMaxVal_Imag[iev], directEvecsImag[iev][localIndex]);
 		}
 	}
-	double minVal_Real[nev], maxVal_Real[nev], minVal_Imag[nev], maxVal_Imag[nev];
-	MPI_Allreduce(myMinVal_Real, minVal_Real, nev, MPI_DOUBLE, MPI_MIN, mpi_comm);
-	MPI_Allreduce(myMaxVal_Real, maxVal_Real, nev, MPI_DOUBLE, MPI_MAX, mpi_comm);
-	MPI_Allreduce(myMinVal_Imag, minVal_Imag, nev, MPI_DOUBLE, MPI_MIN, mpi_comm);
-	MPI_Allreduce(myMaxVal_Imag, maxVal_Imag, nev, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	double minVal_Real[nevSlepc], maxVal_Real[nevSlepc], minVal_Imag[nevSlepc], maxVal_Imag[nevSlepc];
+	MPI_Allreduce(myMinVal_Real, minVal_Real, nevSlepc, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxVal_Real, maxVal_Real, nevSlepc, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	MPI_Allreduce(myMinVal_Imag, minVal_Imag, nevSlepc, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxVal_Imag, maxVal_Imag, nevSlepc, MPI_DOUBLE, MPI_MAX, mpi_comm);
 
 	// Report the results (both on the screen and on a file)
 	if(mpi_rank==0) {

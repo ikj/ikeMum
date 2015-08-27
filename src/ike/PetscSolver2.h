@@ -2443,7 +2443,7 @@ protected:
 		PetscPrintf(mpi_comm," Number of converged eigenpairs: %D\n\n", nconv);
 #endif
 
-#if PETSC_DEBUG_LEVEL > 0
+#if PETSC_DEBUG_LEVEL > 1
 		if(nconv > 0) {
 			if(mpi_rank==0)
 				cout<<endl
@@ -2495,7 +2495,7 @@ protected:
 			}
 #endif
 
-#if PETSC_DEBUG_LEVEL > 0
+#if PETSC_DEBUG_LEVEL > 1
 #if !defined (PETSC_USE_COMPLEX)
 			PetscReal  RealMinVal, RealMaxVal, ImagMinVal, ImagMaxVal;
 			VecMin(xr, NULL, &RealMinVal);
@@ -2503,13 +2503,13 @@ protected:
 			VecMin(xi, NULL, &ImagMinVal);
 			VecMax(xi, NULL, &ImagMaxVal);
 			if(mpi_rank == 0)
-				printf("     [%2d]  Real = %g ~ %g,  Imag = %g ~ %g\n", iEigen, RealMinVal, RealMinVal, ImagMinVal, ImagMaxVal);
+				printf("     [%2d]  Real = %g ~ %g,  Imag = %g ~ %g\n", iEigen, RealMinVal, RealMaxVal, ImagMinVal, ImagMaxVal);
 #endif
 #endif
 		}
 
 
-#if PETSC_DEBUG_LEVEL > 0
+#if PETSC_DEBUG_LEVEL > 1
 		if(mpi_rank==0) cout<<endl;
 #endif
 

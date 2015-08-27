@@ -107,6 +107,9 @@ void VanGoghWithModels::run() {
 	}
 
 	int nScal = scalarTranspEqVector.size();
+	
+	double* metricNumer = new double [5+nScal];
+	double* metricDenom = new double [5+nScal];
 
 	if(mpi_rank==0)
 		cout<<endl
@@ -164,7 +167,8 @@ void VanGoghWithModels::run() {
 	assert(!AdjointEvecs[0].empty());
 
 	updateEigenVecTecplotNS();
-	updateEigenVecTecplotScalars();
+	updateEigenVecTecplotScalarRansTurbModel();
+	updateEigenVecTecplotScalarRansCombModel();
 
 	// =====================================
 	// Read the point on the unstable branch
@@ -175,31 +179,68 @@ void VanGoghWithModels::run() {
 	readPsALCdumpedDataSerial(filenameQ1.c_str(), qVecTemp, NcontrolEqns);
 
 	updateUnstableVecNS(qVecTemp, 5+nScal);
-	updateUnstableVecScalars(qVecTemp, 5+nScal);
+	updateUnstableVecRansTurbModel(qVecTemp, 5+nScal);
+	updateUnstableVecRansCombModel(qVecTemp, 5+nScal);
 
 	MPI_Barrier(mpi_comm);
 	delete [] qVecTemp; 	qVecTemp = NULL;
 
-	// =====================
-	// Perturbation analysis
-	// =====================
+	// ===================================
+	// Check the initial unperturbed field
+	// ===================================
+	// It becomes a bit tricky if ALREADY_PERTURBED_RESTART == YES!
+	string boolStringInit = getStringParam("ALREADY_PERTURBED_RESTART", "NO");
+	if(mpi_rank==0) cout<<"> ALREADY_PERTURBED_RESTART = "<<boolStringInit<<endl;
+	std::transform(boolStringInit.begin(), boolStringInit.end(), boolStringInit.begin(), ::toupper);
+	bool isAlreadyPerturbeRestart = false;
+	if(boolStringInit.compare("YES")==0 || boolStringInit.compare("Y")==0 || boolStringInit.compare("TRUE")==0 || boolStringInit.compare("T")==0) 
+		isAlreadyPerturbeRestart = true;
+	
+	// Calculate QoI and optimal metric
+	if(!isAlreadyPerturbeRestart) {
+		itest = 0; // In general, "itest=0" means the initial unperturbed field, whereas "itest=1" is the first perturbed field.
+		
+		char filenameQoI[10];
+		sprintf(filenameQoI, "QoI.txt");
+		writeQoIOnFile(itest, filenameQoI, true);
+		
+		if(perturbParams.calcOptimalMetric) {
+			calcOptMetrics(metricNumer, metricDenom);
+			
+			if(mpi_rank == 0) {
+				cout<<"> Optimal metric of the init unperturbed field = ";
+				for(int i=0; i<5+nScal-1; ++i) {
+					if(i==3) // rhow can be zero
+						cout<<metricNumer[i]/(metricDenom[i] + MACHINE_EPS)<<" | ";
+					else 
+						cout<<metricNumer[i]/metricDenom[i]<<" | ";
+				}
+				cout<<metricNumer[5+nScal-1]/metricDenom[5+nScal-1]<<endl;
+			}
+			
+			writeOptimalMeticOnFile(itest, "OptimalMetrics.txt", true, metricNumer, metricDenom, nScal);
+		}
+	} 
+	
 	// Save the initial data from the restart file if the user wants to reinitialize the flow field by random perturbation
-	string boolString = getStringParam("ALREADY_PERTURBED_RESTART", "NO");
-	if(mpi_rank==0) cout<<"> ALREADY_PERTURBED_RESTART = "<<boolString<<endl;
-	std::transform(boolString.begin(), boolString.end(), boolString.begin(), ::toupper);
-	if(boolString.compare("YES")==0 || boolString.compare("Y")==0 || boolString.compare("TRUE")==0 || boolString.compare("T")==0) {
-		itest = getIntParam("CASE_NUM", "0");
-		ntests = itest+1;
-	} else {
-		itest = 0;
-		ntests = getIntParam("NTESTS", "1");
-	}
-
 	if(mpi_rank==0)
 		cout<<"> Store the initial field from restart"<<endl;
 	storeInitRestartNS();
-	storeInitRestartScalars();
-
+	storeInitRestartScalarRansTurbModel();
+	storeInitRestartScalarRansCombModel();
+	
+	// =====================
+	// Perturbation analysis
+	// =====================
+	if(isAlreadyPerturbeRestart) {
+		itest = getIntParam("TEST_NUM"); 	assert(itest>0);
+		ntests = itest;  // You can launch not multiple perturbations but a single perturbation 
+		                 // because the initial unperturbed field is not provided.  
+	} else {
+		itest = 1; // In general, "itest=0" means the initial unperturbed field, whereas "itest=1" is the first perturbed field. 
+		ntests = getIntParam("NTESTS", "1");
+	}
+	
 	// Get the parameters for the perturbations
 	getPerturbParams(perturbParams);
 
@@ -223,7 +264,7 @@ void VanGoghWithModels::run() {
 
 	bool firstItest = true;
 	// run simulations
-	while(itest < ntests) {
+	while(itest <= ntests) {
 		if(mpi_rank==0)
 			cout<<endl
 				<<"> RUNNING THE "<<itest<<"TH PERTURBATION TEST"<<endl
@@ -253,7 +294,8 @@ void VanGoghWithModels::run() {
 		// random perturbation
 		// -------------------------------------------------
 		// Perturb the field with filtering
-		perturbFieldScalars();
+		perturbFieldScalarRansTurbModel();
+		perturbFieldScalarRansCombModel();
 		perturbFieldNS();
 
 		updateCvDataG1G2(rho,  REPLACE_DATA);
@@ -262,6 +304,28 @@ void VanGoghWithModels::run() {
 		for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
 			updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
 
+		// -------------------------------------------------
+		// calculate the optimal metric
+		// -------------------------------------------------
+		if(perturbParams.calcOptimalMetric) {
+			calcOptMetrics(metricNumer, metricDenom);
+			if(mpi_rank == 0) {
+				cout<<"> Optimal metric of the perturbed field = ";
+				for(int i=0; i<5+nScal-1; ++i) {
+					if(i==3) // rhow can be zero
+						cout<<metricNumer[i]/(metricDenom[i] + MACHINE_EPS)<<" | ";
+					else 
+						cout<<metricNumer[i]/metricDenom[i]<<" | ";
+				}
+				cout<<metricNumer[5+nScal-1]/metricDenom[5+nScal-1]<<endl;
+			}
+			
+			if(isAlreadyPerturbeRestart)
+				writeOptimalMeticOnFile(itest, "OptimalMetrics.txt", firstItest, metricNumer, metricDenom, nScal);
+			else
+				writeOptimalMeticOnFile(itest, "OptimalMetrics.txt", false, metricNumer, metricDenom, nScal);
+		}
+		
 		// -------------------------------------------------
 		// run the solver
 		// -------------------------------------------------
@@ -292,19 +356,25 @@ void VanGoghWithModels::run() {
 			cerr << "available integration schemes are: FORWARD_EULER, RK, BACKWARD_EULER, BDF2" << endl;
 		}
 
-		char filenameQoI[30];
+		char filenameQoI[10];
 		sprintf(filenameQoI, "QoI.txt");
-		writeQoIOnFile(itest, filenameQoI, firstItest);
+		if(isAlreadyPerturbeRestart)
+			writeQoIOnFile(itest, filenameQoI, firstItest);
+		else
+			writeQoIOnFile(itest, filenameQoI, false);
 
 		writeData(itest, step); // Save each case on a different file
 
 		char restartFilename[32];
-		sprintf(restartFilename, "Restart.case%04d.%06d.out", itest, step);
+		sprintf(restartFilename, "Restart.test%04d.%06d.out", itest, step);
 		writeRestart(restartFilename);
 
 		++itest;
 		firstItest = false;
 	}
+	
+	if(metricNumer != NULL) { delete [] metricNumer; 	metricNumer = NULL; }
+	if(metricDenom != NULL) { delete [] metricDenom; 	metricDenom = NULL; }
 }
 
 /****************************
@@ -1101,6 +1171,168 @@ void VanGoghWithModels::readPsALCdumpedDataSerial(const char filename[], double*
 }
 
 /*
+ * Method: writeJOEDataParallel
+ * ----------------------------
+ * Write JOE data on a binary file.
+ * Original function = writeJOEDataParallel() in JoeUgpWithCvCompFlow.h
+ */
+void VanGoghWithModels::writeJOEDataParallel(char filename[]) {
+	string funcID = "VanGoghWithModels::writeJOEDataParallel";
+
+	// Number of variables
+	int nScal = scalarTranspEqVector.size();
+	int m = nScal+5; // number of variables (rho, rhou, rhov, rhow, rhoE, and scalars)
+
+	if(mpi_rank==0)
+		cout<<funcID<<"(): write data on "<<filename<<endl;
+
+	// xcvMin and xcvMax
+	double xcvMin[3] = {2.2e22, 2.2e22, 2.2e22}, 	xcvMax[3] = {-2.2e22, -2.2e22, -2.2e22};
+	double *xcvMinArray = new double [mpi_size*3];
+	double *xcvMaxArray = new double [mpi_size*3];
+	for(int icv=0; icv<ncv; ++icv) {
+		for(int i=0; i<3; ++i) {
+			xcvMin[i] = min(xcvMin[i], x_cv[icv][i]);
+			xcvMax[i] = max(xcvMax[i], x_cv[icv][i]);
+		}
+	}
+	MPI_Gather(xcvMin, 3, MPI_DOUBLE, xcvMinArray, 3, MPI_DOUBLE, 0, mpi_comm);
+	MPI_Gather(xcvMax, 3, MPI_DOUBLE, xcvMaxArray, 3, MPI_DOUBLE, 0, mpi_comm);
+	MPI_Barrier(mpi_comm);
+
+	/***********
+	 ** Write the data
+	 ***********/
+	double wtime0, wtimeF;
+	if(mpi_rank==0)
+		wtime0 = MPI_Wtime();
+
+	// 1. Header
+	//      Structure of the header part:
+	//              1. mpi_size (int)                  2. cvora (int*(mpi_size+1))
+	//              3. xMinArray (double*3*mpi_size)   4. xMaxArray (double*3*mpi_size)
+	//              5. nScal (int)
+	if(mpi_rank==0) {
+		// Open the file
+		ofstream ofile;
+		ofile.open(filename, ios_base::out | ios_base::trunc | ios_base::binary);
+
+		// Write on the file
+		int dummyInt;
+		double dummyDouble;
+
+		dummyInt=mpi_size; 			ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+
+		for(int irank=0; irank<mpi_size+1; ++irank) {
+			dummyInt=cvora[irank]; 		ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		}
+
+		for(int irank=0; irank<mpi_size; ++irank) {
+			for(int i=0; i<3; ++i) {
+				dummyDouble=xcvMinArray[irank*3+i]; 	ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+			}
+		}
+		for(int irank=0; irank<mpi_size; ++irank) {
+			for(int i=0; i<3; ++i) {
+				dummyDouble=xcvMaxArray[irank*3+i]; 	ofile.write(reinterpret_cast<char*>(&dummyDouble), sizeof(double));
+			}
+		}
+
+		dummyInt=nScal; 			ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+
+		// Close the file
+		ofile.close();
+	}
+	MPI_Barrier(mpi_comm);
+	int initDisp = sizeof(int) * (3 + mpi_size) + sizeof(double) * (2*mpi_size*3);
+
+	// 2. Body
+	//       Structure of the body part:
+	//            For each mpi,
+	//              1. x_cv (double*3*ncv)
+	//              2. data (double*(5+nScal)*ncv)
+	MPI_Status status;
+	MPI_File fh;
+	MPI_Offset displacement;
+
+	// Open the file
+	if (MPI_File_open(mpi_comm, filename, MPI_MODE_WRONLY|MPI_MODE_CREATE, MPI_INFO_NULL, &fh)!=0) {
+			// Note: MPI_MODE_WRONLY = write only
+			//       MPI_MODE_CREATE = create the file if it does not exist.
+		cerr<<"ERROR "<<funcID<<"(): Cannot open "<<filename<<endl;
+		throw(-1);
+	}
+
+	// Write the CV coordinates first
+	int myOffsetNcv;
+	MPI_Scan(&ncv, &myOffsetNcv, 1, MPI_INT, MPI_SUM, mpi_comm);
+	myOffsetNcv -= ncv;
+	displacement = MPI_Offset(initDisp + sizeof(double)*myOffsetNcv*(3+m));
+	if(MPI_File_set_view(fh, displacement, MPI_INT, MPI_INT, "native", MPI_INFO_NULL)!=0) {
+		// Note: native     = Data in this representation are stored in a file exactly as it is in memory
+		//       Internal   = Data in this representation can be used for I/O operations in a homogeneous or heterogeneous environment
+		//       External32 = This data representation states that read and write operations convert all data from and to the "external32" representation
+		cerr<<"ERROR! "<<funcID<<"(): Cannot set the first MPI_File_set_view -- offset="<<displacement<<endl;
+		throw(-1);
+	}
+	double* bufferDouble = new double [ncv*3];
+	for(int icv=0; icv<ncv; ++icv) {
+		int indexStart = icv*3;
+		for(int i=0; i<3; ++i)
+			bufferDouble[indexStart+i] = x_cv[icv][i];
+	}
+	MPI_File_write(fh, bufferDouble, ncv*3, MPI_DOUBLE, &status);
+	delete [] bufferDouble; 	bufferDouble = NULL;
+
+	// Write the flow data
+	displacement += MPI_Offset(3*ncv*sizeof(double));
+	bufferDouble = new double [ncv*m];
+	for(int icv=0; icv<ncv; ++icv) {
+		int indexStart = icv*m;
+		bufferDouble[indexStart] = rho[icv];
+		for(int i=0; i<3; ++i)
+			bufferDouble[indexStart+1+i] = rhou[icv][i];
+		bufferDouble[indexStart+4] = rhoE[icv];
+		for(int iScal=0; iScal<nScal; ++iScal) {
+			double *phi = scalarTranspEqVector[iScal].phi;
+			bufferDouble[indexStart+5+iScal] = phi[icv];
+		}
+	}
+	MPI_File_write(fh, bufferDouble, ncv*m, MPI_DOUBLE, &status);
+	delete [] bufferDouble; 	bufferDouble = NULL;
+
+	// 2-4. Close the file
+	MPI_File_close(&fh);
+	MPI_Barrier(mpi_comm);
+
+	/*
+	 * 3. Write the foot
+	 */
+	if(mpi_rank == mpi_size-1) {
+		ofstream ofile;
+		ofile.open(filename, ios_base::out | ios_base::app | ios_base::binary);
+		int dummyInt = EOF_ERROR_CHECK_CODE; 	ofile.write(reinterpret_cast<char*>(&dummyInt), sizeof(int));
+		ofile.close();
+	}
+	MPI_Barrier(mpi_comm);
+
+	if(mpi_rank==0)
+		wtimeF = MPI_Wtime();
+
+	/***********
+	 ** Show the summary on the screen if the debugging level is high
+	 ***********/
+	if(mpi_rank==0)
+		cout<<"> The flow data is written on "<<filename<<" (RUN TIME = "<<wtimeF-wtime0<<" [sec]) \n"<<endl;
+
+	/***********
+	 ** Free the memory
+	 ***********/
+	delete [] xcvMinArray;
+	delete [] xcvMaxArray;
+}
+
+/*
  * Method: updateEigenVecTecplotNS
  * -------------------------------
  * Update NS variabls (rho_Dct_1stReal, rho_Adj_1stReal, etc.) from DirectEvecs and AdjointEvecs.
@@ -1223,6 +1455,12 @@ void VanGoghWithModels::getPerturbParams(PerturbParams &perturbParams) {
 		perturbParams.disturbSmoothXmin = getParam("SMOOTHING")->getDouble("SMOOTH_XMIN");
 		perturbParams.disturbSmoothXmax = getParam("SMOOTHING")->getDouble("SMOOTH_XMAX");
 		perturbParams.disturbSmoothEdgeSize = getParam("SMOOTHING")->getDouble("SMOOTH_EDGE_SIZE");
+	}
+	
+	string boolStringOM = getStringParam("CALC_OPTIMAL_METRIC", "TRUE");
+	std::transform(boolStringOM.begin(), boolStringOM.end(), boolStringOM.begin(), ::tolower);
+	if(boolStringOM.compare("yes")==0 || boolStringOM.compare("y")==0 || boolStringOM.compare("true")==0 || boolStringOM.compare("t")==0) {
+		perturbParams.calcOptimalMetric = true;
 	}
 }
 
@@ -1582,52 +1820,117 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
  * OPTIMAL METRIC
  ****************************/
 
-///*
-// * Method: calcMetricsAdj
-// * ----------------------
-// * Calculate metrics using adjoint: Let phi=flow field, phi0=flow field on the unstable branch, y=least stable eigenvector, a=adjoint vector,
-// *                                           (phi-phi0)*a
-// *                                  metric = ------------
-// *                                                y*a
-// * Return: metricNumer = (phi-phi0)*a
-// *         metricDenom = y*a
-// */
-//void VanGoghKOm::calcMetricsAdj(double* metricNumer, double* metricDenom,
-//		const double *rho_unstable, const double (*rhou_unstable)[3], const double *rhoE_unstable, const double *kine_unstable, const double *omega_unstable,
-//		const double *rho_1stMode, const double (*rhou_1stMode)[3], const double *rhoE_1stMode, const double *kine_1stMode, const double *omega_1stMode,
-//		const double *rho_adj, const double (*rhou_adj)[3], const double *rhoE_adj, const double *kine_adj, const double *omega_adj) {
-//	// define variables
-//	int m = 7; // number of variables
-//	double myTemp[m];
-//
-//	// calculate numerator = (phi-phi0)*a
-//	for(int i=0; i<m; ++i)
-//		myTemp[i] = 0.0;
-//	for(int icv=0; icv<ncv; ++icv) {
-//		myTemp[0] += (rho[icv]-rho_unstable[icv])*rho_adj[icv];
-//		myTemp[1] += (rhou[icv][0]-rhou_unstable[icv][0])*rhou_adj[icv][0];
-//		myTemp[2] += (rhou[icv][1]-rhou_unstable[icv][1])*rhou_adj[icv][1];
-//		myTemp[3] += (rhou[icv][2]-rhou_unstable[icv][2])*rhou_adj[icv][2];
-//		myTemp[4] += (rhoE[icv]-rhoE_unstable[icv])*rhoE_adj[icv];
-//		myTemp[5] += (kine[icv]-kine_unstable[icv])*kine_adj[icv];
-//		myTemp[6] += (omega[icv]-omega_unstable[icv])*omega_adj[icv];
-//	}
-//	MPI_Allreduce(myTemp, metricNumer, m, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//
-//	// calculate denominator = y*a
-//	for(int i=0; i<m; ++i)
-//		myTemp[i] = 0.0;
-//	for(int icv=0; icv<ncv; ++icv) {
-//		myTemp[0] += rho_1stMode[icv]*rho_adj[icv];
-//		myTemp[1] += rhou_1stMode[icv][0]*rhou_adj[icv][0];
-//		myTemp[2] += rhou_1stMode[icv][1]*rhou_adj[icv][1];
-//		myTemp[3] += rhou_1stMode[icv][2]*rhou_adj[icv][2];
-//		myTemp[4] += rhoE_1stMode[icv]*rhoE_adj[icv];
-//		myTemp[5] += kine_1stMode[icv]*kine_adj[icv];
-//		myTemp[6] += omega_1stMode[icv]*omega_adj[icv];
-//	}
-//	MPI_Allreduce(myTemp, metricDenom, m, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//}
+/*
+ * Method: calcOptMetrics
+ * ----------------------
+ * Calculate the optimal metrics using adjoint. 
+ * Formulation: Let phi=flow field, phi0=flow field on the unstable branch, y=least stable eigenvector, a=adjoint vector,
+ *                       (phi-phi0)*a
+ *              metric = ------------
+ *                           y*a
+ * Return: metricNumer = (phi-phi0)*a
+ *         metricDenom = y*a
+ */
+void VanGoghWithModels::calcOptMetrics(double* metricNumer, double* metricDenom) {
+	assert(metricNumer != NULL && metricDenom != NULL);
+	
+	// define variables
+	int nScal = scalarTranspEqVector.size();
+	int m = 5+nScal; // number of variables
+
+	// initialize the solution vectors
+	for(int i=0; i<m; ++i) {
+		metricNumer[i] = 0.0;
+		metricDenom[i] = 0.0;
+	}
+
+	// calculate numerator(=(phi-phi0)*a) and denominator(=y*a)
+	calcOptMetricsNS(metricNumer, metricDenom, nScal);
+	calcOptMetricsScalarRansTurbModel(metricNumer, metricDenom, nScal);
+	calcOptMetricsScalarRansCombModel(metricNumer, metricDenom, nScal);
+}
+
+/*
+ * Method: calcOptMetricsNS
+ * ------------------------
+ * Calculate the NS part of the optimal metrics using adjoint. 
+ * Formulation: Let phi=flow field, phi0=flow field on the unstable branch, y=least stable eigenvector, a=adjoint vector,
+ *                       (phi-phi0)*a
+ *              metric = ------------
+ *                           y*a
+ * Return: metricNumer = (phi-phi0)*a
+ *         metricDenom = y*a
+ */
+void VanGoghWithModels::calcOptMetricsNS(double* metricNumer, double* metricDenom, const int nScal) {
+	assert(rho_unstable != NULL && rhou_unstable != NULL && rhoE_unstable != NULL);
+	assert(!AdjointEvecs.empty());
+	assert(!DirectEvecs.empty());
+	
+	// define variables
+	double myTemp[5];
+
+	// calculate numerator = (phi-phi0)*a
+	for(int i=0; i<5; ++i)
+		myTemp[i] = 0.0;
+	for(int icv=0; icv<ncv; ++icv) {
+		myTemp[0] += (rho[icv]-rho_unstable[icv]) * AdjointEvecs[0][0][icv].real();
+		myTemp[1] += (rhou[icv][0]-rhou_unstable[icv][0]) * AdjointEvecs[0][1][icv].real();
+		myTemp[2] += (rhou[icv][1]-rhou_unstable[icv][1]) * AdjointEvecs[0][2][icv].real();
+		myTemp[3] += (rhou[icv][2]-rhou_unstable[icv][2]) * AdjointEvecs[0][3][icv].real();
+		myTemp[4] += (rhoE[icv]-rhoE_unstable[icv]) * AdjointEvecs[0][4][icv].real();
+	}
+	double totTemp[5]; 	for(int i=0; i<5; ++i) totTemp[i] = 0.0;
+	MPI_Allreduce(myTemp, totTemp, 5, MPI_DOUBLE, MPI_SUM, mpi_comm);
+	for(int i=0; i<5; ++i)
+		metricNumer[i] = totTemp[i];
+
+	// calculate denominator = y*a
+	for(int i=0; i<5; ++i)
+		myTemp[i] = 0.0;
+	for(int icv=0; icv<ncv; ++icv) {
+		myTemp[0] += DirectEvecs[0][0][icv].real() * AdjointEvecs[0][0][icv].real();
+		myTemp[1] += DirectEvecs[0][1][icv].real() * AdjointEvecs[0][1][icv].real();
+		myTemp[2] += DirectEvecs[0][2][icv].real() * AdjointEvecs[0][2][icv].real();
+		myTemp[3] += DirectEvecs[0][3][icv].real() * AdjointEvecs[0][3][icv].real();
+		myTemp[4] += DirectEvecs[0][4][icv].real() * AdjointEvecs[0][4][icv].real();
+	}
+	for(int i=0; i<5; ++i) totTemp[i] = 0.0;
+	MPI_Allreduce(myTemp, totTemp, 5, MPI_DOUBLE, MPI_SUM, mpi_comm);
+	for(int i=0; i<5; ++i)
+		metricDenom[i] = totTemp[i];
+}
+
+/*
+ * Method: writeOptimalMeticOnFile
+ * -------------------------------
+ * Write the optimal metrics (for rho,rhou,etc.) on file
+ */
+void VanGoghWithModels::writeOptimalMeticOnFile(const int itest, char filename[], bool rewrite, const double* metricNumer, const double* metricDenom, const int nScal) {
+	if(mpi_rank==0) {
+		FILE *fp;
+		if(rewrite) {
+			fp = fopen(filename, "w");
+			fprintf(fp, "ITEST,    METRIC_RHO, METRIC_RHOU-X, METRIC_RHOU-Y, METRIC_RHOU-Z,   METRIC_RHOE\n");
+			for(int i=0; i<nScal; ++i)
+				fprintf(fp, ", METRIC_SCAL-%d", i);
+			fprintf(fp, "\n");
+		} else
+			fp = fopen(filename, "a");
+
+		fprintf(fp, "%5d", itest);
+		for(int i=0; i<5+nScal; ++i) {
+			if(i==3) // Note: rhou-Z can be zero
+				fprintf(fp, ", %13.6e", metricNumer[i]/(metricDenom[i]+MACHINE_EPS));
+			else
+				fprintf(fp, ", %13.6e", metricNumer[i]/metricDenom[i]);
+		}
+		fprintf(fp, "\n");
+
+		fclose(fp);
+	}
+
+	MPI_Barrier(mpi_comm);
+}
 
 /****************************
  * VANGOGH OVERLOADED METHODS
