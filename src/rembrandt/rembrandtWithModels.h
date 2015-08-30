@@ -34,7 +34,19 @@ enum HOW_TO_GET_JACOBIAN {FROM_MAT_BINARY_FILE, CALC_USING_ADOLC};
 
 #define THRESHOLD_EVAL_DIFF 1.0e-8
 
+#define COEFF_BOOST_SENS 1.0e6  // Sensitivity becomes very tiny (because it is a multiplication between two small numbers).
+                                // Thus, scale the sensitivity so that it is much larger than the machine zero.
+
 #define FILENAME_DIRECT_EVALS "SLEPC_DIRECT_EVALS.csv"
+
+/*
+ * Inline function: calcComplexMag
+ * -------------------------------
+ * Calculate the magnitude of a complex number
+ */
+inline double calcComplexMag(const double RealPart, const double ImagPart) {
+	return sqrt(RealPart*RealPart + ImagPart*ImagPart);
+}
 
 // ###########################################################################################
 // ------                                                                               ------
@@ -71,18 +83,18 @@ protected:
 	// -------------------------
 	// Tecplot output
 	// -------------------------
-	// The least-stable DIRECT modes
-	double *FirstDirectMode_rho;
-	double (*FirstDirectMode_rhou)[3];
-	double (*FirstDirectMode_vel)[3];
-	double *FirstDirectMode_rhoE;
+	// The least-stable DIRECT modes (Since the least-stable modes are real, we don't store their imaginary parts)
+	double *FirstDirectMode_real_rho;
+	double (*FirstDirectMode_real_rhou)[3];
+	double (*FirstDirectMode_real_vel)[3];
+	double *FirstDirectMode_real_rhoE;
 	// NOTE: scalars should be registered in the child class
 
-	// The least-stable ADJOINT modes
-	double *FirstAdjointMode_rho;
-	double (*FirstAdjointMode_rhou)[3];
-	double (*FirstAdjointMode_vel)[3];
-	double *FirstAdjointMode_rhoE;
+	// The least-stable ADJOINT modes (Since the least-stable modes are real, we don't store their imaginary parts)
+	double *FirstAdjointMode_real_rho;
+	double (*FirstAdjointMode_real_rhou)[3];
+	double (*FirstAdjointMode_real_vel)[3];
+	double *FirstAdjointMode_real_rhoE;
 	// NOTE: scalars should be registered in the child class
 
 	// Structural sensitivity
@@ -259,6 +271,16 @@ protected:
 	int calcGlobalModes(const int nevSlepc);
 
 	/*
+	 * Method: getSlepcEPSParams
+	 * -------------------------
+	 * Get SLEPc EPS (eigen problem solver parameters) from the input file
+	 *
+	 * Arguments:
+	 *   nevSlepc = This is required only for printing output
+	 */
+	void getSlepcEPSParams(SlepcEPSParams &slepcEPSParams, const int nevSlepc);
+
+	/*
 	 * Method: getEigenOfInterestFromString
 	 * ------------------------------------
 	 *
@@ -304,6 +326,37 @@ protected:
 		//                    Wrapper to blzpack:  EPSBLZPACK   (smallest Re(lambda);           EPS_HEP,EPS_GHEP; no)
 		//                    Wrapper to trlan  :  EPSTRLAN     (largest & smallest Re(lambda); EPS_HEP;          no)
 		//                    Wrapper to blopex :  EPSBLOPEX    (smallest Re(lambda);           EPS_HEP,EPS_GHEP; Complex)
+
+	/*
+	 * Method: getSlepcSTparams
+	 * ------------------------
+	 * get the spectral transformation (ST) parameters for Slepc from the input file
+	 *
+	 * Arguments:
+	 *   EPSsolverType is required for error checks: For EPSGD or EPSJD, you must use ST.
+	 *
+	 * Note: targetValue is not set here -- You must set it separately.
+	 */
+	void getSlepcSTparams(SlepcSTparams &slepcSTparams, const SlepcEPSParams &slepcEPSParams);
+
+	/*
+	 * Method: getEvecRange
+	 * --------------------
+	 * Get the ranges of eigen-vectors
+	 * Return = minVal_Real[], maxVal_Real[], minVal_Imag[], maxVal_Imag[]
+	 */
+	void getEvecsRange(double* minVal_Real, double* maxVal_Real, double* minVal_Imag, double* maxVal_Imag,
+			double** EvecsReal, double** EvecsImag, const int nevSlepc);
+
+	/*
+	 * Method: checkTwoEvecsDifferenceRange
+	 * ------------------------------------
+	 * Get the ranges of the difference between two eigen-vectors
+	 * Return = 1-norm of real and imaginary parts
+	 */
+	void checkTwoEvecsDifferenceRange(double* diff1Norm_real, double* diff1Norm_imag, double* diffInfNorm_real, double* diffInfNorm_imag,
+			double** EvecsReal_1st, double** EvecsImag_1st, double** EvecsReal_2nd, double** EvecsImag_2nd,
+			const int nevSlepc);
 };
 
 #endif

@@ -24,16 +24,16 @@ void RembrandtWithModels::init() {
 	// -------------------------
 	// Tecplot output
 	// -------------------------
-	FirstDirectMode_rho  = NULL; 	registerScalar(FirstDirectMode_rho,  "FirstDirectMode_RHO",  CV_DATA);
-	FirstDirectMode_rhou = NULL;	registerVector(FirstDirectMode_rhou, "FirstDirectMode_RHOU", CV_DATA);
-	FirstDirectMode_vel  = NULL; 	registerVector(FirstDirectMode_vel,  "FirstDirectMode_VEL",  CV_DATA);
-	FirstDirectMode_rhoE = NULL; 	registerScalar(FirstDirectMode_rhoE, "FirstDirectMode_RHOE", CV_DATA);
+	FirstDirectMode_real_rho  = NULL; 	registerScalar(FirstDirectMode_real_rho,  "FirstDirectMode_REAL_RHO",  CV_DATA);
+	FirstDirectMode_real_rhou = NULL;	registerVector(FirstDirectMode_real_rhou, "FirstDirectMode_REAL_RHOU", CV_DATA);
+	FirstDirectMode_real_vel  = NULL; 	registerVector(FirstDirectMode_real_vel,  "FirstDirectMode_REAL_VEL",  CV_DATA);
+	FirstDirectMode_real_rhoE = NULL; 	registerScalar(FirstDirectMode_real_rhoE, "FirstDirectMode_REAL_RHOE", CV_DATA);
 	// NOTE: scalars should be registered in the child class
 
-	FirstAdjointMode_rho  = NULL; 	registerScalar(FirstAdjointMode_rho,  "FirstAdjointMode_RHO",  CV_DATA);
-	FirstAdjointMode_rhou = NULL; 	registerVector(FirstAdjointMode_rhou, "FirstAdjointMode_RHOU", CV_DATA);
-	FirstAdjointMode_vel  = NULL; 	registerVector(FirstAdjointMode_vel,  "FirstAdjointMode_VEL",  CV_DATA);
-	FirstAdjointMode_rhoE = NULL; 	registerScalar(FirstAdjointMode_rhoE, "FirstAdjointMode_RHOE", CV_DATA);
+	FirstAdjointMode_real_rho  = NULL; 	registerScalar(FirstAdjointMode_real_rho,  "FirstAdjointMode_REAL_RHO",  CV_DATA);
+	FirstAdjointMode_real_rhou = NULL; 	registerVector(FirstAdjointMode_real_rhou, "FirstAdjointMode_REAL_RHOU", CV_DATA);
+	FirstAdjointMode_real_vel  = NULL; 	registerVector(FirstAdjointMode_real_vel,  "FirstAdjointMode_REAL_VEL",  CV_DATA);
+	FirstAdjointMode_real_rhoE = NULL; 	registerScalar(FirstAdjointMode_real_rhoE, "FirstAdjointMode_REAL_RHOE", CV_DATA);
 	// NOTE: scalars should be registered in the child class
 
 	rho_sens  = NULL;	registerScalar(rho_sens,  "SENSITIVITY_RHO",  CV_DATA);
@@ -68,6 +68,7 @@ void RembrandtWithModels::clear() {
 			delete [] directEvecsImag[i];
 		delete [] directEvecsImag; 	directEvecsImag = NULL;
 	}
+
 	if(adjointEvalsReal != NULL) {
 		delete [] adjointEvalsReal; 	adjointEvalsReal = NULL;
 	}
@@ -89,10 +90,10 @@ void RembrandtWithModels::clear() {
 	// SLEPc context
 	// -------------------------
 	if (petscSolver2 != NULL) {
-		delete [] petscSolver2;  	petscSolver2 = NULL;
+		delete petscSolver2;  	petscSolver2 = NULL;
 	}
 	if (slepcSolver2 != NULL) {
-		delete [] slepcSolver2;  	slepcSolver2 = NULL;
+		delete slepcSolver2;  	slepcSolver2 = NULL;
 	}
 }
 
@@ -360,43 +361,58 @@ int RembrandtWithModels::runEigenAnalysis() {
 			// -------------------------------------------------
 			// Tecplot output for the least-stable direct modes
 			// -------------------------------------------------
-			FirstDirectMode_rho[icv]   = directEvecsReal[directLeastStableIndex][indexTemp];
+			FirstDirectMode_real_rho[icv]   = directEvecsReal[directLeastStableIndex][indexTemp];
 			for(int i=0; i<3; ++i) {
-				FirstDirectMode_rhou[icv][i] = directEvecsReal[directLeastStableIndex][indexTemp+1+i];
-				FirstDirectMode_vel[icv][i]  = directEvecsReal[directLeastStableIndex][indexTemp+1+i]/FirstDirectMode_rho[icv];
+				FirstDirectMode_real_rhou[icv][i] = directEvecsReal[directLeastStableIndex][indexTemp+1+i];
+				FirstDirectMode_real_vel[icv][i]  = directEvecsReal[directLeastStableIndex][indexTemp+1+i]/FirstDirectMode_real_rho[icv];
 			}
-			FirstDirectMode_rhoE[icv]  = directEvecsReal[directLeastStableIndex][indexTemp+4];
+			FirstDirectMode_real_rhoE[icv]  = directEvecsReal[directLeastStableIndex][indexTemp+4];
 
 			// -------------------------------------------------
 			// Tecplot output for the least-stable adjoint modes
 			// -------------------------------------------------
-			FirstAdjointMode_rho[icv]   = adjointEvecsReal[adjointLeastStableIndex][indexTemp];
+			FirstAdjointMode_real_rho[icv]   = adjointEvecsReal[adjointLeastStableIndex][indexTemp];
 			for(int i=0; i<3; ++i) {
-				FirstAdjointMode_rhou[icv][i] = adjointEvecsReal[adjointLeastStableIndex][indexTemp+1+i];
-				FirstAdjointMode_vel[icv][i]  = adjointEvecsReal[adjointLeastStableIndex][indexTemp+1+i]/FirstAdjointMode_rho[icv];
+				FirstAdjointMode_real_rhou[icv][i] = adjointEvecsReal[adjointLeastStableIndex][indexTemp+1+i];
+				FirstAdjointMode_real_vel[icv][i]  = adjointEvecsReal[adjointLeastStableIndex][indexTemp+1+i]/FirstAdjointMode_real_rho[icv];
 			}
-			FirstAdjointMode_rhoE[icv]  = adjointEvecsReal[adjointLeastStableIndex][indexTemp+4];
+			FirstAdjointMode_real_rhoE[icv]  = adjointEvecsReal[adjointLeastStableIndex][indexTemp+4];
 
 			// -------------------------------------------------
 			// Structural sensitivity
 			// -------------------------------------------------
-			rho_sens[icv] 	= fabs(FirstDirectMode_rho[icv] * FirstAdjointMode_rho[icv]);
+//			rho_sens[icv] = calcComplexMag(FirstDirectMode_real_rho[icv], directEvecsImag[directLeastStableIndex][indexTemp])
+//					* calcComplexMag(FirstAdjointMode_real_rho[icv], adjointEvecsImag[directLeastStableIndex][indexTemp]) ;
+//			for(int i=0; i<3; ++i) {
+//				rhou_sens[icv][i] = calcComplexMag(FirstDirectMode_real_rhou[icv][i], directEvecsImag[directLeastStableIndex][indexTemp+1+i])
+//						* calcComplexMag(FirstAdjointMode_real_rhou[icv][i], adjointEvecsImag[directLeastStableIndex][indexTemp+1+i]) ;
+//
+//				double firstDirectMode_imag_vel = directEvecsImag[directLeastStableIndex][indexTemp+1+i] / directEvecsImag[directLeastStableIndex][indexTemp];
+//				double firstAdjointMode_imag_vel = adjointEvecsImag[directLeastStableIndex][indexTemp+1+i] / adjointEvecsImag[directLeastStableIndex][indexTemp];
+//				vel_sens[icv][i]  = calcComplexMag(FirstDirectMode_real_vel[icv][i], firstDirectMode_imag_vel)
+//						* calcComplexMag(FirstAdjointMode_real_vel[icv][i], firstAdjointMode_imag_vel);
+//			}
+//			rhoE_sens[icv] = calcComplexMag(FirstDirectMode_real_rhoE[icv], directEvecsImag[directLeastStableIndex][indexTemp+4])
+//							* calcComplexMag(FirstAdjointMode_real_rhoE[icv], adjointEvecsImag[directLeastStableIndex][indexTemp+4]) ;
+
+			// Because the least stable modes are real anyways, we don't need to worry about the imaginary parts anyways
+			rho_sens[icv] = fabs(COEFF_BOOST_SENS * FirstDirectMode_real_rho[icv] * FirstAdjointMode_real_rho[icv]);
 			for(int i=0; i<3; ++i) {
-				rhou_sens[icv][i] = fabs(FirstDirectMode_rhou[icv][i] * FirstAdjointMode_rhou[icv][i]);
-				vel_sens[icv][i]  = fabs(FirstDirectMode_vel[icv][i] * FirstAdjointMode_vel[icv][i]);
+				rhou_sens[icv][i] = fabs(COEFF_BOOST_SENS * FirstDirectMode_real_rhou[icv][i] * FirstAdjointMode_real_rhou[icv][i]);
+				vel_sens[icv][i]  = fabs(COEFF_BOOST_SENS * FirstDirectMode_real_vel[icv][i] * FirstAdjointMode_real_vel[icv][i]);
 			}
-			rhoE_sens[icv]	= fabs(FirstDirectMode_rhoE[icv] * FirstAdjointMode_rhoE[icv]);
+			rhoE_sens[icv] = fabs(COEFF_BOOST_SENS * FirstDirectMode_real_rhoE[icv] * FirstAdjointMode_real_rhoE[icv]);
 		}
 
-		updateCvDataG1G2(FirstDirectMode_rho,  REPLACE_DATA);
-		updateCvDataG1G2(FirstDirectMode_rhou, REPLACE_ROTATE_DATA);
-		updateCvDataG1G2(FirstDirectMode_vel,  REPLACE_ROTATE_DATA);
-		updateCvDataG1G2(FirstDirectMode_rhoE, REPLACE_DATA);
+		updateCvDataG1G2(FirstDirectMode_real_rho,  REPLACE_DATA);
+		updateCvDataG1G2(FirstDirectMode_real_rhou, REPLACE_ROTATE_DATA);
+		updateCvDataG1G2(FirstDirectMode_real_vel,  REPLACE_ROTATE_DATA);
+		updateCvDataG1G2(FirstDirectMode_real_rhoE, REPLACE_DATA);
 
-		updateCvDataG1G2(FirstAdjointMode_rho,  REPLACE_DATA);
-		updateCvDataG1G2(FirstAdjointMode_rhou, REPLACE_ROTATE_DATA);
-		updateCvDataG1G2(FirstAdjointMode_vel,  REPLACE_ROTATE_DATA);
-		updateCvDataG1G2(FirstAdjointMode_rhoE, REPLACE_DATA);
+		updateCvDataG1G2(FirstAdjointMode_real_rho,  REPLACE_DATA);
+		updateCvDataG1G2(FirstAdjointMode_real_rhou, REPLACE_ROTATE_DATA);
+		updateCvDataG1G2(FirstAdjointMode_real_vel,  REPLACE_ROTATE_DATA);
+		updateCvDataG1G2(FirstAdjointMode_real_rhoE, REPLACE_DATA);
 
 		updateCvDataG1G2(rho_sens,  REPLACE_DATA);
 		updateCvDataG1G2(rhou_sens, REPLACE_ROTATE_DATA);
@@ -2766,9 +2782,8 @@ void RembrandtWithModels::writeEigenPairsParallel(char filename[], const int ste
 	delete [] xcvMaxArray;
 }
 
-
 //
-// PRIVATE METHODS!!
+// PROTECTED METHODS!!
 //
 
 /*
@@ -2777,133 +2792,14 @@ void RembrandtWithModels::writeEigenPairsParallel(char filename[], const int ste
  * Calculate both direct and adjoint global-modes
  */
 int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
-	// Get the slepc parameters
-	if (!checkParam("SLEPC_EIGEN_PARAM")) {
-		ParamMap::add("SLEPC_EIGEN_PARAM  NCV=15  MPD=15  TOL=1.0e-7  MAX_ITER=1000"); // add default values
-		if (mpi_rank == 0)
-			cout<< "WARNING: added keyword \"SLEPC_EIGEN_PARAM  NCV=15  MPD=15  TOL=1.0e-7  MAX_ITER=1000\""<< " to parameter map!" << endl;
-	}
-	int ncvSlepc                  = getParam("SLEPC_EIGEN_PARAM")->getInt("NCV");
-	int mpdSlepc                  = getParam("SLEPC_EIGEN_PARAM")->getInt("MPD");
+	// Get the Slepc EPS (eigen problem solver) parameters
+	SlepcEPSParams slepcEPSParams;
+	getSlepcEPSParams(slepcEPSParams, nevSlepc);
 
-	string tempString1 = getParam("SLEPC_EIGEN_PARAM")->getString("EIGEN_OF_INTEREST");
-	EPSWhich WhichEigenOfInterest = getEigenOfInterestFromString(tempString1);
-
-	string tempString2 = getParam("SLEPC_EIGEN_PARAM")->getString("EPS_SOLVER_TYPE");
-	EPSType EPSsolverType         = getEPSsolverTypeFromString(tempString2);
-
-	double tolSlepc               = getParam("SLEPC_EIGEN_PARAM")->getDouble("TOL");
-	int max_iterSlepc             = getParam("SLEPC_EIGEN_PARAM")->getInt("MAX_ITER");
-
-	int EPSmonitorInterv = getIntParam("SLEPC_EPS_CHECK_INTERVAL", "100");
-
+	// Get the ST (spectral transformation) parameters for Slepc
 	SlepcSTparams slepcSTparams; // By default, SlepcSTparams.useST = false
-
-	if (!checkParam("SLEPC_ST_PARAM")) {
-		if(EPSsolverType == EPSGD || EPSsolverType == EPSJD) {
-			if(mpi_rank == 0)
-				cerr<<"ERROR! For EPSGD or EPSJD, you must use ST, but \"SLEPC_ST_PARAM\" cannot be found in the input file."<<endl
-					<<"       It should be in the form of \"SLEPC_ST_PARAM  USE_ST=YES  ST_TYPE=STPRECOND  KSP_TYPE=GMRES  PC_METHOD=ASM  ST_SHIFT=0.0\""<<endl;
-			throw(REMBRANDT_ERROR_CODE);
-		}
-
-		if(mpi_rank == 0)
-			cerr<<"WARNING! \"SLEPC_ST_PARAM\" cannot be found in the input file"<<endl
-			    <<"         If you want to use ST, add \"SLEPC_ST_PARAM  USE_ST=YES  ST_TYPE=STSINVERT  KSP_TYPE=PREONLY  PC_METHOD=LU  ST_SHIFT=0.0\""<<endl
-			    <<endl;
-	} else {
-		string tempStringST = getParam("SLEPC_ST_PARAM")->getString("USE_ST");
-		std::transform(tempStringST.begin(), tempStringST.end(), tempStringST.begin(), ::tolower);
-		if(tempStringST.compare("true")==0 || tempStringST.compare("yes")==0) {
-			slepcSTparams.useST = true;
-
-			// sttype
-			string tempStringSTParam = getParam("SLEPC_ST_PARAM")->getString("ST_TYPE");
-				// Available ST types:
-				//   Spectral Transformation | STType    | Operator
-				//   -----------------------------------------------------------------------
-				//   Shift of Origin         | STSHIFT   | B^(-1)*A + \sigma*I
-				//   Spectrum Folding        | STFOLD    | (B^(-1)*A - \sigma*I)^2
-				//   Shift-and-invert        | STSINVERT | (A - \sigma*B)^(-1) * B
-				//   Generalized Cayley      | STCAYLEY  | (A - \sigma*B)^(-1) * (A + \nu*B)
-				//   Preconditioner          | STPRECOND | K^(-1) ~ (A - \sigma*B)^(-1)
-				//   -----------------------------------------------------------------------
-				//   Shell Transformation    | STSHELL   | user-defined
-				// Default = STPRECOND
-			if(tempStringSTParam.compare("SHIFT") == 0)
-				slepcSTparams.sttype_ = STSHIFT;
-			else if(tempStringSTParam.compare("FOLD") == 0)
-				slepcSTparams.sttype_ = STFOLD;
-			else if(tempStringSTParam.compare("SINVERT") == 0)
-				slepcSTparams.sttype_ = STSINVERT;
-			else if(tempStringSTParam.compare("CAYLEY") == 0)
-				slepcSTparams.sttype_ = STCAYLEY;
-			else
-				slepcSTparams.sttype_ = STPRECOND; // This is the default
-
-			// ksptype
-			tempStringSTParam = getParam("SLEPC_ST_PARAM")->getString("KSP_TYPE");
-
-			if(tempStringSTParam.compare("GMRES") == 0)
-				slepcSTparams.ksptype_ = KSPGMRES;
-			else if(tempStringSTParam.compare("PREONLY") == 0)  // You need this to use LU decompostion
-				slepcSTparams.ksptype_ = KSPPREONLY;
-			else if(tempStringSTParam.compare("BICG") == 0)
-				slepcSTparams.ksptype_ = KSPBICG;
-			else {
-				if(mpi_rank == 0)
-					cerr<<"ERROR! SLEPC_ST_PARAM->KSP_TYPE = "<<tempStringSTParam<<" is not supported in REMBRANDT"<<endl;
-				throw(REMBRANDT_ERROR_CODE);
-			}
-
-			// pcMethod
-			tempStringSTParam = getParam("SLEPC_ST_PARAM")->getString("PC_METHOD");
-
-			if(tempStringSTParam.compare("LU") == 0)
-				slepcSTparams.pcMethod = PCLU;
-			else if(tempStringSTParam.compare("BJACOBI") == 0) // Block Jacobi
-				slepcSTparams.pcMethod = PCBJACOBI;
-			else if(tempStringSTParam.compare("ASM") == 0) // Additive Schwarz
-				slepcSTparams.pcMethod = PCASM;
-			else if(tempStringSTParam.compare("ILU") == 0) {
-				if(mpi_size==1)
-					slepcSTparams.pcMethod = PCILU;   // Incomplete LU -- The ILU preconditioner in Petsc only works for serial -- For parallel, call an external package
-				else
-					slepcSTparams.pcMethod = PCHYPRE; // Incomplete LU -- For parallel, use PCHYPRE with the PCHYPRESetType(pc, "euclid") command
-			}
-			else {
-				if(mpi_rank == 0)
-					cerr<<"ERROR! SLEPC_ST_PARAM->PC_METHOD = "<<tempStringSTParam<<" is not supported in REMBRANDT"<<endl;
-				throw(REMBRANDT_ERROR_CODE);
-			}
-
-			// STshift and nu
-			slepcSTparams.STshift = getParam("SLEPC_ST_PARAM")->getDouble("ST_SHIFT");  // Sometimes, STshift is called "sigma".
-			                                                                            // Often, people use the same value as EPS_TARGET for STshift.
-			if(slepcSTparams.sttype_ == STCAYLEY)
-				slepcSTparams.nu = getParam("SLEPC_ST_PARAM")->getDouble("ST_NU"); // Note: "nu" is only required for Generalized Cayley
-
-//			if(mpi_rank == 0)
-//				slepcSTparams.showParamOnScreen();
-		} else {
-			if(EPSsolverType == EPSGD || EPSsolverType == EPSJD) {
-				cerr<<"ERROR! For EPSGD or EPSJD, you must use ST"<<endl;
-				throw(REMBRANDT_ERROR_CODE);
-			}
-		}
-	}
-
-	double targetValue = 0.0; // If "EPS_TARGET_MAGNITUDE", "EPS_TARGET_REAL", or "EPS_TARGET_IMAGINARY" is used, set the target-value.
-	if(WhichEigenOfInterest == EPS_TARGET_MAGNITUDE || WhichEigenOfInterest == EPS_TARGET_REAL || WhichEigenOfInterest == EPS_TARGET_IMAGINARY)
-		targetValue = getParam("SLEPC_EIGEN_PARAM")->getDouble("TARGET_VALUE");
-
-	if(mpi_rank==0) {
-		cout<<endl
-			<<"Rembrandt::calcGlobalModes(): nev="<<nevSlepc<<", ncv="<<ncvSlepc<<", mpd="<<mpdSlepc<<", tol="<<tolSlepc<<", max_iter="<<max_iterSlepc<<endl
-			<<"                              EIGEN_OF_INTEREST="<<getStringFromEigenOfInterest(WhichEigenOfInterest)<<", EPS_SOLVER_TYPE="<<tempString2<<endl;
-		if(WhichEigenOfInterest == EPS_TARGET_MAGNITUDE || WhichEigenOfInterest == EPS_TARGET_REAL || WhichEigenOfInterest == EPS_TARGET_IMAGINARY)
-			cout<<"                              TARGET_VALUE="<<targetValue<<endl;
-	}
+	getSlepcSTparams(slepcSTparams, slepcEPSParams); // This method gets the parameters only if "SLEPC_ST_PARAM" exists in the input file.
+	                                                 // Also, it gives ERROR if SLEPC_ST_PARAM is not specified even though EPSsolverType is EPSGD or EPSJD.
 
 	// Allocate variables
 	double* relError = new double [nevSlepc];
@@ -2921,35 +2817,19 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 		slepcSolver2 = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, "PCNONE", 0, true);
 	}
 
+	// -----------------------------
 	// Solve for direct global-modes
+	// -----------------------------
 	string epsConvHistoryFilename = "SLEPC_HISTORY_DIRECT_MODE.csv";
 	slepcSolver2->setConvHistoryFileName(epsConvHistoryFilename);
+	bool transposeBeforeSolve = false;
 	int nconvDirect = slepcSolver2->solveEigenProblemSlepc<MatComprsedSTL>(directEvalsReal, directEvalsImag, directEvecsReal, directEvecsImag, relError, numIter,
 										jacMatrixSTL, cvora, nbocv_v_global, nScal, ncv_gg,
-										nevSlepc, ncvSlepc, mpdSlepc, WhichEigenOfInterest, EPSsolverType,
-										tolSlepc, max_iterSlepc, slepcSTparams, EPSmonitorInterv, targetValue);
+										nevSlepc, slepcEPSParams, slepcSTparams, transposeBeforeSolve);
 
 	// Check the ranges of the eigenvectors
-	double myMinVal_Real[nevSlepc], myMaxVal_Real[nevSlepc], myMinVal_Imag[nevSlepc], myMaxVal_Imag[nevSlepc];
-	for(int iev=0; iev<nevSlepc; ++iev) {
-		myMinVal_Real[iev] =  ABSURDLY_BIG_NUMBER;
-		myMaxVal_Real[iev] = -ABSURDLY_BIG_NUMBER;
-		myMinVal_Imag[iev] =  ABSURDLY_BIG_NUMBER;
-		myMaxVal_Imag[iev] = -ABSURDLY_BIG_NUMBER;
-	}
-	for(int iev=0; iev<nevSlepc; ++iev) {
-		for(int localIndex=0; localIndex<(cvora[mpi_rank+1]-cvora[mpi_rank])*(5+nScal); ++localIndex) {
-			myMinVal_Real[iev] = min(myMinVal_Real[iev], directEvecsReal[iev][localIndex]);
-			myMaxVal_Real[iev] = max(myMaxVal_Real[iev], directEvecsReal[iev][localIndex]);
-			myMinVal_Imag[iev] = min(myMinVal_Imag[iev], directEvecsImag[iev][localIndex]);
-			myMaxVal_Imag[iev] = max(myMaxVal_Imag[iev], directEvecsImag[iev][localIndex]);
-		}
-	}
 	double minVal_Real[nevSlepc], maxVal_Real[nevSlepc], minVal_Imag[nevSlepc], maxVal_Imag[nevSlepc];
-	MPI_Allreduce(myMinVal_Real, minVal_Real, nevSlepc, MPI_DOUBLE, MPI_MIN, mpi_comm);
-	MPI_Allreduce(myMaxVal_Real, maxVal_Real, nevSlepc, MPI_DOUBLE, MPI_MAX, mpi_comm);
-	MPI_Allreduce(myMinVal_Imag, minVal_Imag, nevSlepc, MPI_DOUBLE, MPI_MIN, mpi_comm);
-	MPI_Allreduce(myMaxVal_Imag, maxVal_Imag, nevSlepc, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	getEvecsRange(minVal_Real, maxVal_Real, minVal_Imag, maxVal_Imag, directEvecsReal, directEvecsImag, nevSlepc);
 
 	// Report the results (both on the screen and on a file)
 	if(mpi_rank==0) {
@@ -2977,27 +2857,21 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 	}
 
 	MPI_Barrier(mpi_comm);
+	delete slepcSolver2; 	slepcSolver2 = NULL;
 
+	// ------------------------------
 	// Solve for adjoint global-modes
-	slepcSolver2->transpose();
+	// ------------------------------
+	slepcSolver2 = new SlepcSolver2(cvora, nbocv2_i, nbocv2_v, 5 + nScal, "PCNONE", 0, true);
+
+//	slepcSolver2->transpose();
+
 	epsConvHistoryFilename = "SLEPC_HISTORY_ADJOINT_MODE.csv";
 	slepcSolver2->setConvHistoryFileName(epsConvHistoryFilename);
+	transposeBeforeSolve = true;
 	int nconvAdjoint = slepcSolver2->solveEigenProblemSlepc<MatComprsedSTL>(adjointEvalsReal, adjointEvalsImag, adjointEvecsReal, adjointEvecsImag, relError, numIter,
 			jacMatrixSTL, cvora, nbocv_v_global, nScal, ncv_gg,
-			nevSlepc, ncvSlepc, mpdSlepc, WhichEigenOfInterest, EPSsolverType,
-			tolSlepc, max_iterSlepc, slepcSTparams, EPSmonitorInterv, targetValue);
-
-	// Report the results (only on the screen)
-	if(mpi_rank==0) {
-		cout<<endl
-		    <<">> "<<nconvAdjoint<<" converged ADJOINT eigen-pairs after "<<numIter<<" iterations"<<endl;
-		cout<<"   Result for each eigen-pair:"<<endl;
-		for(int i=0; i<std::min<int>(nevSlepc, nconvAdjoint); ++i)
-			printf("    %2d   REL_ERROR = %.5e   EVAL = %.5e + %.5ei\n", i, relError[i], adjointEvalsReal[i], adjointEvalsImag[i]);
-		if(nconvAdjoint == 0)
-			cout<<"    NOT AVAILABLE because # of converged eigenpairs = "<<nconvAdjoint<<endl;
-		cout<<endl;
-	}
+			nevSlepc, slepcEPSParams, slepcSTparams, transposeBeforeSolve);
 
 	// We don't need to write the adjoint eigenvalues on a file because they must be the same as the direct eigenvalues.
 	// Instead, check if the two set of eigenvalues are the same:
@@ -3029,7 +2903,42 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 		}
 	}
 
+	// Check the ranges of the eigenvectors
+	getEvecsRange(minVal_Real, maxVal_Real, minVal_Imag, maxVal_Imag, adjointEvecsReal, adjointEvecsImag, nevSlepc);
+
+	// Report the results (only on the screen)
+	if(mpi_rank==0) {
+		cout<<endl
+		    <<">> "<<nconvAdjoint<<" converged ADJOINT eigen-pairs after "<<numIter<<" iterations"<<endl;
+		cout<<"   Result for each eigen-pair:"<<endl;
+		for(int i=0; i<std::min<int>(nevSlepc, nconvAdjoint); ++i)
+			printf("    %2d   REL_ERROR = %.5e   EVAL = %.5e + %.5ei  EVEC-RANGE = (real=%.3e~%.3e, imag=%.3e~%.3e)\n",
+					i, relError[i], adjointEvalsReal[i], adjointEvalsImag[i], minVal_Real[i], maxVal_Real[i], minVal_Imag[i], maxVal_Imag[i]);
+		if(nconvAdjoint == 0)
+			cout<<"    NOT AVAILABLE because # of converged eigenpairs = "<<nconvAdjoint<<endl;
+		cout<<endl;
+	}
+
+	// Check the difference of the direct global modes and the adjoint global modes
+	if(debugLevel > 1) {
+		if(nconvDirect > 0 && nconvAdjoint > 0) {
+			double diff1Norm_real[nevSlepc], diff1Norm_imag[nevSlepc], diffInfNorm_real[nevSlepc], diffInfNorm_imag[nevSlepc];
+			checkTwoEvecsDifferenceRange(diff1Norm_real, diff1Norm_imag, diffInfNorm_real, diffInfNorm_imag,
+					directEvecsReal, directEvecsImag, adjointEvecsReal, adjointEvecsImag, nevSlepc);
+			if(mpi_rank==0) {
+				cout<<endl
+						<<">> Difference between the direct and the adjoint modes:"<<endl;
+				for(int i=0; i<std::min<int>(nevSlepc, nconvAdjoint); ++i)
+					printf("    %2d   DIFF_REAL = (1-norm=%.5e, inf-norm=%.5e)   DIFF_IMAG = (1-norm=%.5e, inf-norm=%.5e)\n",
+							i, diff1Norm_real[i], diffInfNorm_real[i], diff1Norm_imag[i], diffInfNorm_imag[i]);
+				cout<<endl;
+			}
+		}
+	}
+
 	MPI_Barrier(mpi_comm);
+
+	delete slepcSolver2; 	slepcSolver2 = NULL;
 
 	// Free memory
 	delete [] relError;
@@ -3037,6 +2946,46 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 	// Return
 //		return std::min<int>(std::min<int>(nconvDirect, nconvAdjoint), nevSlepc); // Note: Many times nconv >= nevSlepc, which will generate segmentation falut
 	return std::min<int>(nconvDirect, nevSlepc); // Note: Many times nconv >= nevSlepc, which will generate segmentation falut
+}
+
+/*
+ * Method: getSlepcEPSParams
+ * -------------------------
+ * Get SLEPc EPS (eigen problem solver parameters) from the input file
+ *
+ * Arguments:
+ *   nevSlepc = This is required only for printing output
+ */
+void RembrandtWithModels::getSlepcEPSParams(SlepcEPSParams &slepcEPSParams, const int nevSlepc) {
+	// Get the slepc parameters
+	if (!checkParam("SLEPC_EIGEN_PARAM")) {
+		ParamMap::add("SLEPC_EIGEN_PARAM  NCV=15  MPD=15  TOL=1.0e-7  MAX_ITER=1000"); // add default values
+		if (mpi_rank == 0)
+			cout<< "WARNING: added keyword \"SLEPC_EIGEN_PARAM  NCV=15  MPD=15  TOL=1.0e-7  MAX_ITER=1000\""<< " to parameter map!" << endl;
+	}
+	slepcEPSParams.ncvSlepc = getParam("SLEPC_EIGEN_PARAM")->getInt("NCV");
+	slepcEPSParams.mpdSlepc = getParam("SLEPC_EIGEN_PARAM")->getInt("MPD");
+
+	slepcEPSParams.stringWhichEigenOfInterest = getParam("SLEPC_EIGEN_PARAM")->getString("EIGEN_OF_INTEREST");
+	slepcEPSParams.WhichEigenOfInterest       = getEigenOfInterestFromString(slepcEPSParams.stringWhichEigenOfInterest);
+
+	slepcEPSParams.stringEPSsolverType = getParam("SLEPC_EIGEN_PARAM")->getString("EPS_SOLVER_TYPE");
+	slepcEPSParams.EPSsolverType       = getEPSsolverTypeFromString(slepcEPSParams.stringEPSsolverType);
+
+	slepcEPSParams.tolSlepc      = getParam("SLEPC_EIGEN_PARAM")->getDouble("TOL");
+	slepcEPSParams.max_iterSlepc = getParam("SLEPC_EIGEN_PARAM")->getInt("MAX_ITER");
+
+	slepcEPSParams.EPSmonitorInterv = getIntParam("SLEPC_EPS_CHECK_INTERVAL", "100");
+
+	slepcEPSParams.targetValue = 0.0; // If "EPS_TARGET_MAGNITUDE", "EPS_TARGET_REAL", or "EPS_TARGET_IMAGINARY" is used, set the target-value.
+	if(slepcEPSParams.WhichEigenOfInterest == EPS_TARGET_MAGNITUDE || slepcEPSParams.WhichEigenOfInterest == EPS_TARGET_REAL
+			|| slepcEPSParams.WhichEigenOfInterest == EPS_TARGET_IMAGINARY)
+		slepcEPSParams.targetValue = getParam("SLEPC_EIGEN_PARAM")->getDouble("TARGET_VALUE");
+
+	// Show the result on the screen
+	if(mpi_rank==0) {
+		slepcEPSParams.showParamOnScreen(nevSlepc);
+	}
 }
 
 /*
@@ -3193,5 +3142,173 @@ EPSType RembrandtWithModels::getEPSsolverTypeFromString(string &tempString) {
 	}
 }
 
+/*
+ * Method: getSlepcSTparams
+ * ------------------------
+ * get the spectral transformation (ST) parameters for Slepc from the input file
+ *
+ * Arguments:
+ *   EPSsolverType is required for error checks: For EPSGD or EPSJD, you must use ST.
+ *
+ * Note: targetValue is not set here -- You must set it separately.
+ */
+void RembrandtWithModels::getSlepcSTparams(SlepcSTparams& slepcSTparams, const SlepcEPSParams &slepcEPSParams) {
+	if (!checkParam("SLEPC_ST_PARAM")) {
+		if(slepcEPSParams.EPSsolverType == EPSGD || slepcEPSParams.EPSsolverType == EPSJD) {
+			if(mpi_rank == 0)
+				cerr<<"ERROR! For EPSGD or EPSJD, you must use ST, but \"SLEPC_ST_PARAM\" cannot be found in the input file."<<endl
+				<<"       It should be in the form of \"SLEPC_ST_PARAM  USE_ST=YES  ST_TYPE=STPRECOND  KSP_TYPE=GMRES  PC_METHOD=ASM  ST_SHIFT=0.0\""<<endl;
+			throw(REMBRANDT_ERROR_CODE);
+		}
 
+		if(mpi_rank == 0)
+			cerr<<"WARNING! \"SLEPC_ST_PARAM\" cannot be found in the input file"<<endl
+			<<"         If you want to use ST, add \"SLEPC_ST_PARAM  USE_ST=YES  ST_TYPE=STSINVERT  KSP_TYPE=PREONLY  PC_METHOD=LU  ST_SHIFT=0.0\""<<endl
+			<<endl;
+	} else {
+		string tempStringST = getParam("SLEPC_ST_PARAM")->getString("USE_ST");
+		std::transform(tempStringST.begin(), tempStringST.end(), tempStringST.begin(), ::tolower);
+		if(tempStringST.compare("true")==0 || tempStringST.compare("yes")==0) {
+			slepcSTparams.useST = true;
+
+			// sttype
+			string tempStringSTParam = getParam("SLEPC_ST_PARAM")->getString("ST_TYPE");
+			// Available ST types:
+			//   Spectral Transformation | STType    | Operator
+			//   -----------------------------------------------------------------------
+			//   Shift of Origin         | STSHIFT   | B^(-1)*A + \sigma*I
+			//   Spectrum Folding        | STFOLD    | (B^(-1)*A - \sigma*I)^2
+			//   Shift-and-invert        | STSINVERT | (A - \sigma*B)^(-1) * B
+			//   Generalized Cayley      | STCAYLEY  | (A - \sigma*B)^(-1) * (A + \nu*B)
+			//   Preconditioner          | STPRECOND | K^(-1) ~ (A - \sigma*B)^(-1)
+			//   -----------------------------------------------------------------------
+			//   Shell Transformation    | STSHELL   | user-defined
+			// Default = STPRECOND
+			if(tempStringSTParam.compare("SHIFT") == 0)
+				slepcSTparams.sttype_ = STSHIFT;
+			else if(tempStringSTParam.compare("FOLD") == 0)
+				slepcSTparams.sttype_ = STFOLD;
+			else if(tempStringSTParam.compare("SINVERT") == 0)
+				slepcSTparams.sttype_ = STSINVERT;
+			else if(tempStringSTParam.compare("CAYLEY") == 0)
+				slepcSTparams.sttype_ = STCAYLEY;
+			else
+				slepcSTparams.sttype_ = STPRECOND; // This is the default
+
+			// ksptype
+			tempStringSTParam = getParam("SLEPC_ST_PARAM")->getString("KSP_TYPE");
+
+			if(tempStringSTParam.compare("GMRES") == 0)
+				slepcSTparams.ksptype_ = KSPGMRES;
+			else if(tempStringSTParam.compare("PREONLY") == 0)  // You need this to use LU decompostion
+				slepcSTparams.ksptype_ = KSPPREONLY;
+			else if(tempStringSTParam.compare("BICG") == 0)
+				slepcSTparams.ksptype_ = KSPBICG;
+			else {
+				if(mpi_rank == 0)
+					cerr<<"ERROR! SLEPC_ST_PARAM->KSP_TYPE = "<<tempStringSTParam<<" is not supported in REMBRANDT"<<endl;
+				throw(REMBRANDT_ERROR_CODE);
+			}
+
+			// pcMethod
+			tempStringSTParam = getParam("SLEPC_ST_PARAM")->getString("PC_METHOD");
+
+			if(tempStringSTParam.compare("LU") == 0)
+				slepcSTparams.pcMethod = PCLU;
+			else if(tempStringSTParam.compare("BJACOBI") == 0) // Block Jacobi
+				slepcSTparams.pcMethod = PCBJACOBI;
+			else if(tempStringSTParam.compare("ASM") == 0) // Additive Schwarz
+				slepcSTparams.pcMethod = PCASM;
+			else if(tempStringSTParam.compare("ILU") == 0) {
+				if(mpi_size==1)
+					slepcSTparams.pcMethod = PCILU;   // Incomplete LU -- The ILU preconditioner in Petsc only works for serial -- For parallel, call an external package
+				else
+					slepcSTparams.pcMethod = PCHYPRE; // Incomplete LU -- For parallel, use PCHYPRE with the PCHYPRESetType(pc, "euclid") command
+			}
+			else {
+				if(mpi_rank == 0)
+					cerr<<"ERROR! SLEPC_ST_PARAM->PC_METHOD = "<<tempStringSTParam<<" is not supported in REMBRANDT"<<endl;
+				throw(REMBRANDT_ERROR_CODE);
+			}
+
+			// STshift and nu
+			slepcSTparams.STshift = getParam("SLEPC_ST_PARAM")->getDouble("ST_SHIFT");  // Sometimes, STshift is called "sigma".
+			// Often, people use the same value as EPS_TARGET for STshift.
+			if(slepcSTparams.sttype_ == STCAYLEY)
+				slepcSTparams.nu = getParam("SLEPC_ST_PARAM")->getDouble("ST_NU"); // Note: "nu" is only required for Generalized Cayley
+
+			//			if(mpi_rank == 0)
+			//				slepcSTparams.showParamOnScreen();
+		} else {
+			if(slepcEPSParams.EPSsolverType == EPSGD || slepcEPSParams.EPSsolverType == EPSJD) {
+				cerr<<"ERROR! For EPSGD or EPSJD, you must use ST"<<endl;
+				throw(REMBRANDT_ERROR_CODE);
+			}
+		}
+	}
+}
+
+/*
+ * Method: getEvecRange
+ * --------------------
+ * Get the ranges of eigen-vectors
+ * Return = minVal_Real[], maxVal_Real[], minVal_Imag[], maxVal_Imag[]
+ */
+void RembrandtWithModels::getEvecsRange(double* minVal_Real, double* maxVal_Real, double* minVal_Imag, double* maxVal_Imag,
+		double** EvecsReal, double** EvecsImag, const int nevSlepc) {
+	double myMinVal_Real[nevSlepc], myMaxVal_Real[nevSlepc], myMinVal_Imag[nevSlepc], myMaxVal_Imag[nevSlepc];
+	for(int iev=0; iev<nevSlepc; ++iev) {
+		myMinVal_Real[iev] =  ABSURDLY_BIG_NUMBER;
+		myMaxVal_Real[iev] = -ABSURDLY_BIG_NUMBER;
+		myMinVal_Imag[iev] =  ABSURDLY_BIG_NUMBER;
+		myMaxVal_Imag[iev] = -ABSURDLY_BIG_NUMBER;
+	}
+	for(int iev=0; iev<nevSlepc; ++iev) {
+		for(int localIndex=0; localIndex<(cvora[mpi_rank+1]-cvora[mpi_rank])*(5+nScal); ++localIndex) {
+			myMinVal_Real[iev] = min(myMinVal_Real[iev], EvecsReal[iev][localIndex]);
+			myMaxVal_Real[iev] = max(myMaxVal_Real[iev], EvecsReal[iev][localIndex]);
+			myMinVal_Imag[iev] = min(myMinVal_Imag[iev], EvecsImag[iev][localIndex]);
+			myMaxVal_Imag[iev] = max(myMaxVal_Imag[iev], EvecsImag[iev][localIndex]);
+		}
+	}
+	MPI_Allreduce(myMinVal_Real, minVal_Real, nevSlepc, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxVal_Real, maxVal_Real, nevSlepc, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	MPI_Allreduce(myMinVal_Imag, minVal_Imag, nevSlepc, MPI_DOUBLE, MPI_MIN, mpi_comm);
+	MPI_Allreduce(myMaxVal_Imag, maxVal_Imag, nevSlepc, MPI_DOUBLE, MPI_MAX, mpi_comm);
+}
+
+/*
+ * Method: checkTwoEvecsDifferenceRange
+ * ------------------------------------
+ * Get the ranges of the difference between two eigen-vectors
+ * Return = 1-norm of real and imaginary parts
+ */
+void RembrandtWithModels::checkTwoEvecsDifferenceRange(double* diff1Norm_real, double* diff1Norm_imag, double* diffInfNorm_real, double* diffInfNorm_imag,
+		double** EvecsReal_1st, double** EvecsImag_1st, double** EvecsReal_2nd, double** EvecsImag_2nd,
+		const int nevSlepc) {
+	double myDiff1Norm_real[nevSlepc], myDiff1Norm_imag[nevSlepc];
+	double myDiffInfNorm_real[nevSlepc], myDiffInfNorm_imag[nevSlepc];
+	for(int iev=0; iev<nevSlepc; ++iev) {
+		myDiff1Norm_real[iev] = 0.0;
+		myDiff1Norm_imag[iev] = 0.0;
+		myDiffInfNorm_real[iev] = -ABSURDLY_BIG_NUMBER;
+		myDiffInfNorm_imag[iev] = -ABSURDLY_BIG_NUMBER;
+	}
+	for(int iev=0; iev<nevSlepc; ++iev) {
+		for(int localIndex=0; localIndex<(cvora[mpi_rank+1]-cvora[mpi_rank])*(5+nScal); ++localIndex) {
+			double abs_diff_real = fabs(EvecsReal_1st[iev][localIndex] - EvecsReal_2nd[iev][localIndex]);
+			double abs_diff_imag = fabs(EvecsImag_1st[iev][localIndex] - EvecsImag_2nd[iev][localIndex]);
+
+			myDiff1Norm_real[iev] += abs_diff_real;
+			myDiff1Norm_imag[iev] += abs_diff_imag;
+			myDiffInfNorm_real[iev] = max(myDiffInfNorm_real[iev], abs_diff_real);
+			myDiffInfNorm_imag[iev] = max(myDiffInfNorm_imag[iev], abs_diff_imag);
+		}
+	}
+
+	MPI_Allreduce(myDiff1Norm_real, diff1Norm_real, nevSlepc, MPI_DOUBLE, MPI_SUM, mpi_comm);
+	MPI_Allreduce(myDiff1Norm_imag, diff1Norm_imag, nevSlepc, MPI_DOUBLE, MPI_SUM, mpi_comm);
+	MPI_Allreduce(myDiffInfNorm_real, diffInfNorm_real, nevSlepc, MPI_DOUBLE, MPI_MAX, mpi_comm);
+	MPI_Allreduce(myDiffInfNorm_imag, diffInfNorm_imag, nevSlepc, MPI_DOUBLE, MPI_MAX, mpi_comm);
+}
 

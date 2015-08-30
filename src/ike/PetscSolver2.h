@@ -1401,6 +1401,48 @@ struct SlepcConvgHistory {
 };
 
 /*
+ * Struct: SlepcEPSParams
+ * ----------------------
+ * SLEPc EPS (eigen problem solver) parameters
+ */
+struct SlepcEPSParams {
+	SlepcEPSParams() {
+		ncvSlepc = 15;
+		mpdSlepc = 15;
+
+		tolSlepc = 1.0e-7;
+		max_iterSlepc = 1000;
+
+		EPSmonitorInterv = 100;
+
+		targetValue = 0.0;
+	}
+
+	void showParamOnScreen(int nevSlepc) {
+		cout<<endl
+			<<"SlepcEPSParams: nev="<<nevSlepc<<", ncv="<<ncvSlepc<<", mpd="<<mpdSlepc<<", tol="<<tolSlepc<<", max_iter="<<max_iterSlepc<<endl
+			<<"                EIGEN_OF_INTEREST="<<stringWhichEigenOfInterest<<", EPS_SOLVER_TYPE="<<stringEPSsolverType<<endl;
+		if(WhichEigenOfInterest == EPS_TARGET_MAGNITUDE || WhichEigenOfInterest == EPS_TARGET_REAL || WhichEigenOfInterest == EPS_TARGET_IMAGINARY)
+			cout<<"                                  TARGET_VALUE="<<targetValue<<endl;
+	}
+
+	int ncvSlepc;
+	int mpdSlepc;
+
+	EPSWhich WhichEigenOfInterest;
+	string stringWhichEigenOfInterest; // Used only when the user want to print it on the screen
+	EPSType EPSsolverType;
+	string stringEPSsolverType;        // Used only when the user want to print it on the screen
+
+	double tolSlepc;
+	int max_iterSlepc;
+
+	int EPSmonitorInterv;
+
+	double targetValue; // If "EPS_TARGET_MAGNITUDE", "EPS_TARGET_REAL", or "EPS_TARGET_IMAGINARY" is used, set the target-value.
+};
+
+/*
  * Struct: SlepcSTparams
  * ---------------------
  * SLEPc Spectral Transformation (Preconditioner, shift-and-invert, etc.) parameters
@@ -1667,7 +1709,7 @@ public:
 	/*
 	 * Method: transpose
 	 * -----------------
-	 * Take the transpose of the matrix
+	 * Take the transpose of the matrix.
 	 */
 	void transpose() {
 		MatTranspose(A_, MAT_REUSE_MATRIX, &A_);
@@ -1887,13 +1929,25 @@ public:
 	template <class MatT>
 	int solveEigenProblemSlepc(double *evalsReal, double *evalsImag, double **evecsReal, double **evecsImag, double *relError, int &numIter,
 			MatT &A, const int *cvora, const int *cv_gl, const int nScal, const int ncv_gg,
-			const PetscInt nev, const PetscInt ncv, const PetscInt mpd, EPSWhich WhichEigenOfInterest, EPSType EPSsolverType,
-			const double tol, const int max_iter, SlepcSTparams &slepcSTparams, const int EPSmonitorInterv = 100, const double targetValue = 0.0) {
+			const PetscInt nev, SlepcEPSParams &slepcEPSParams, SlepcSTparams &slepcSTparams, const bool transposeBeforeSolve = false) {
+
+		PetscInt ncv = slepcEPSParams.ncvSlepc;
+		PetscInt mpd = slepcEPSParams.mpdSlepc;
+		EPSWhich WhichEigenOfInterest = slepcEPSParams.WhichEigenOfInterest;
+		EPSType EPSsolverType = slepcEPSParams.EPSsolverType;
+		double tol   = slepcEPSParams.tolSlepc;
+		int max_iter = slepcEPSParams.max_iterSlepc;
+		int EPSmonitorInterv = slepcEPSParams.EPSmonitorInterv;
+		double targetValue = slepcEPSParams.targetValue;
+
 		// Set-up the matrix
 		if(!alreadyHasMatrix)
 			setJacobianMatrixForSlepc(A, cvora, cv_gl, 5+nScal, ncv_gg);
 		else
 			if(mpi_rank==0) cout<<"WARNING in SlepcSolver2::solveEigenProblemSlepc(): Matrix already exists. Use the pre-existing one"<<endl;
+
+		if(transposeBeforeSolve)
+			transpose();
 
 		// Initialize the eigen-problem context
 		setEigenSolver(nev, ncv, mpd, WhichEigenOfInterest, EPSsolverType, tol, max_iter, EPSmonitorInterv, targetValue, slepcSTparams);

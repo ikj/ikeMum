@@ -79,13 +79,13 @@ public:
 	 * ----------------------------
 	 *
 	 */
-	void applyDiffFilterG1G2(double *phif, const double *phi);
+	void applyDiffFilterG1G2(double *phif, const double *phi, const double absTol=1.0e-6, const int maxIter=1000);
 	/*
 	 * Method: appplyDiffFilterG1G2
 	 * ----------------------------
 	 *
 	 */
-	void applyDiffFilterG1G2(double (*phif)[3], const double (*phi)[3]);
+	void applyDiffFilterG1G2(double (*phif)[3], const double (*phi)[3], const double absTol=1.0e-6, const int maxIter=1000);
 
 	/*
 	 * Method: specify_filter_width

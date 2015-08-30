@@ -1382,7 +1382,7 @@ public:
           ugp->cv_flag[icv] = 0;
         geom->flagCvs(ugp);
 
-        char filename[32];
+        char filename[50];
         sprintf(filename, "%s.%06d.plt", name.c_str(), step);
         ugp->writeFlaggedCvsTecplot(filename);
       }
@@ -1404,7 +1404,7 @@ public:
 		  ugp->cv_flag[icv] = 0;
 		geom->flagCvs(ugp);
 
-		char filename[32];
+		char filename[50];
 		sprintf(filename, "%s.dump.%06d.%04d.plt", name.c_str(), step, subStep);
 		ugp->writeFlaggedCvsTecplot(filename);
 	  }
@@ -1426,8 +1426,8 @@ public:
 		  ugp->cv_flag[icv] = 0;
 		geom->flagCvs(ugp);
 
-		char filename[32];
-		sprintf(filename, "%s.%case04d.%06d.plt", name.c_str(), caseNum, step);
+		char filename[50];
+		sprintf(filename, "%s.case%04d.%06d.plt", name.c_str(), caseNum, step);
 		ugp->writeFlaggedCvsTecplot(filename);
 	  }
 	}

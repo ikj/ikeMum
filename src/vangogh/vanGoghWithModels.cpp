@@ -203,7 +203,7 @@ void VanGoghWithModels::run() {
 	if(!isAlreadyPerturbeRestart) {
 		itest = 0; // In general, "itest=0" means the initial unperturbed field, whereas "itest=1" is the first perturbed field.
 		
-		char filenameQoI[10];
+		char filenameQoI[15];
 		sprintf(filenameQoI, "QoI.txt");
 		writeQoIOnFile(itest, filenameQoI, true);
 		
@@ -221,7 +221,7 @@ void VanGoghWithModels::run() {
 				cout<<metricNumer[5+nScal-1]/metricDenom[5+nScal-1]<<endl;
 			}
 			
-			writeOptimalMeticOnFile(itest, "OptimalMetrics.txt", true, metricNumer, metricDenom, nScal);
+			writeOptimalMeticOnFile(itest, OPTIMAL_METRIC_INIT_FILENAME, true, metricNumer, metricDenom, nScal);
 		}
 	} 
 	
@@ -321,9 +321,9 @@ void VanGoghWithModels::run() {
 			}
 			
 			if(isAlreadyPerturbeRestart)
-				writeOptimalMeticOnFile(itest, "OptimalMetrics.txt", firstItest, metricNumer, metricDenom, nScal);
+				writeOptimalMeticOnFile(itest, OPTIMAL_METRIC_INIT_FILENAME, firstItest, metricNumer, metricDenom, nScal);
 			else
-				writeOptimalMeticOnFile(itest, "OptimalMetrics.txt", false, metricNumer, metricDenom, nScal);
+				writeOptimalMeticOnFile(itest, OPTIMAL_METRIC_INIT_FILENAME, false, metricNumer, metricDenom, nScal);
 		}
 		
 		// -------------------------------------------------
@@ -332,20 +332,21 @@ void VanGoghWithModels::run() {
 		// calculate state variables: press, etc.
 		calcStateVariables();
 
-		char filenameResidual[30];
+		char filenameResidual[40];
 		sprintf(filenameResidual, "residHist.case%04d.csv", itest);
 		writeResidualOnFile(itest, filenameResidual, true);
 
-		writeData(itest, 0); // Save each case on a different file
+		writeData2(itest, 0); // Save each case on a different file
 
 		// write restart file
-		char restartInitFilename[30];
+		char restartInitFilename[40];
 		sprintf(restartInitFilename, "Restart.case%04d.init", itest);
 		writeRestart(restartInitFilename);
 
 		// run solver
 		string tIntName = getStringParam("TIME_INTEGRATION");
 
+		{
 		if (tIntName == "FORWARD_EULER")                 runForwardEuler();
 		else if (tIntName == "RK")                       runRK();
 		else if (tIntName == "BACKWARD_EULER")           runBackwardEuler();
@@ -355,17 +356,35 @@ void VanGoghWithModels::run() {
 			cerr << "ERROR: wrong time integration scheme specified !" << endl;
 			cerr << "available integration schemes are: FORWARD_EULER, RK, BACKWARD_EULER, BDF2" << endl;
 		}
+		}
 
-		char filenameQoI[10];
+		// Post-processing
+		char filenameQoI[15];
 		sprintf(filenameQoI, "QoI.txt");
 		if(isAlreadyPerturbeRestart)
 			writeQoIOnFile(itest, filenameQoI, firstItest);
 		else
 			writeQoIOnFile(itest, filenameQoI, false);
 
-		writeData(itest, step); // Save each case on a different file
+		if(perturbParams.calcOptimalMetric) {
+			calcOptMetrics(metricNumer, metricDenom);
+			if(mpi_rank == 0) {
+				cout<<"> Optimal metric of the perturbed field = ";
+				for(int i=0; i<5+nScal-1; ++i) {
+					if(i==3) // rhow can be zero
+						cout<<metricNumer[i]/(metricDenom[i] + MACHINE_EPS)<<" | ";
+					else 
+						cout<<metricNumer[i]/metricDenom[i]<<" | ";
+				}
+				cout<<metricNumer[5+nScal-1]/metricDenom[5+nScal-1]<<endl;
+			}
+			
+			writeOptimalMeticOnFile(itest, OPTIMAL_METRIC_FINAL_FILENAME, firstItest, metricNumer, metricDenom, nScal);
+		}
+		
+		writeData2(itest, step); // Save each case on a different file
 
-		char restartFilename[32];
+		char restartFilename[40];
 		sprintf(restartFilename, "Restart.test%04d.%06d.out", itest, step);
 		writeRestart(restartFilename);
 
@@ -1398,7 +1417,7 @@ void VanGoghWithModels::storeInitRestartNS() {
  ****************************/
 /*
  * Method: getPerturbParams
- * ----------------------
+ * ------------------------
  * Get the parameters for perturbations
  */
 void VanGoghWithModels::getPerturbParams(PerturbParams &perturbParams) {
@@ -1503,8 +1522,9 @@ void VanGoghWithModels::perturbFieldNS() {
 	// ---------------
 	// Perturb rho
 	// ---------------
+	double disturbRatio = perturbParams.disturbMag;
 	bool applyClipping = true;
-	perturbScalar(rho, array_perturb, "rho", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+	perturbScalar(rho, array_perturb, disturbRatio, "rho", applyClipping);  // Note: updateCvDataG1G2() was called in this method
 
 	// write the perturbation for Tecplot output
 	for(int icv=0; icv<ncv; ++icv)
@@ -1514,9 +1534,10 @@ void VanGoghWithModels::perturbFieldNS() {
 	// ---------------
 	// Perturb rhou-X
 	// ---------------
+	disturbRatio = perturbParams.disturbMag;
 	int coord = 0;
 	applyClipping = false;
-	perturbVector(rhou, coord, array_perturb, "rhou-X", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+	perturbVector(rhou, coord, array_perturb, disturbRatio, "rhou-X", applyClipping);  // Note: updateCvDataG1G2() was called in this method
 
 	// write the perturbation for Tecplot output
 	for(int icv=0; icv<ncv; ++icv)
@@ -1526,8 +1547,9 @@ void VanGoghWithModels::perturbFieldNS() {
 	// Perturb rhou-Y
 	// ---------------
 	coord = 1;
+	disturbRatio = perturbParams.disturbMag;
 	applyClipping = false;
-	perturbVector(rhou, coord, array_perturb, "rhou-Y", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+	perturbVector(rhou, coord, array_perturb, disturbRatio, "rhou-Y", applyClipping);  // Note: updateCvDataG1G2() was called in this method
 
 	// write the perturbation for Tecplot output
 	for(int icv=0; icv<ncv; ++icv)
@@ -1537,8 +1559,9 @@ void VanGoghWithModels::perturbFieldNS() {
 	// ---------------
 	// Perturb rhoE
 	// ---------------
+	disturbRatio = perturbParams.disturbMag;
 	applyClipping = true;
-	perturbScalar(rhoE, array_perturb, "rhoE", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+	perturbScalar(rhoE, array_perturb, disturbRatio, "rhoE", applyClipping);  // Note: updateCvDataG1G2() was called in this method
 
 	// write the perturbation for Tecplot output
 	for(int icv=0; icv<ncv; ++icv)
@@ -1606,7 +1629,7 @@ void VanGoghWithModels::perturbFieldNS() {
  *           coeff = rmsVal * perturbParams.disturbMag ,  where rmsVal is the RMS value of the given scalar array.
  *           array_perturb[icv] = coeff * RANDOM_VARIABLE
  */
-double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_perturb, const char varName[], const bool applyClipping) {
+double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_perturb, const double disturbRatio, const char varName[], const bool applyClipping) {
 	assert(array_perturb != NULL);
 
 	// Smoothing: Some parameters for the hat-shaped function
@@ -1643,7 +1666,7 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
 			buildCvDifferentialFilter();
 		assert(perturbParams.maxFilterWidth > 0.0);
 
-		applyDiffFilterG1G2(tempFiltered, array_perturb);
+		applyDiffFilterG1G2(tempFiltered, array_perturb, perturbParams.filterAbsTol, perturbParams.filterMaxIter);
 		for(int icv=0; icv<ncv; ++icv)
 			array_perturb[icv] = tempFiltered[icv];
 //		updateCvDataG1G2(array_perturb, REPLACE_DATA);
@@ -1655,7 +1678,7 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
 	// Update the designated variable
 	// ------------------------------
 	double rmsVal = calcRMS(scalarArray, false); // get RMS
-	double coeff = rmsVal * perturbParams.disturbMag; // calculate the coefficient based on the RMS
+	double coeff = rmsVal * disturbRatio; // calculate the coefficient based on the RMS
 
 	int myCountClip = 0;
 	for(int icv=0; icv<ncv; ++icv) {
@@ -1726,7 +1749,7 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
  *           coeff = rmsVal * perturbParams.disturbMag ,  where rmsVal is the RMS value of the given scalar array.
  *           array_perturb[icv] = coeff * RANDOM_VARIABLE
  */
-double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coord, double* array_perturb, const char varName[], const bool applyClipping) {
+double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coord, double* array_perturb, const double disturbRatio, const char varName[], const bool applyClipping) {
 	assert(array_perturb != NULL);
 	assert(coord>=0 && coord<3);
 
@@ -1764,7 +1787,7 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 			buildCvDifferentialFilter();
 		assert(perturbParams.maxFilterWidth > 0.0);
 
-		applyDiffFilterG1G2(tempFiltered, array_perturb);
+		applyDiffFilterG1G2(tempFiltered, array_perturb, perturbParams.filterAbsTol, perturbParams.filterMaxIter);
 		for(int icv=0; icv<ncv; ++icv)
 			array_perturb[icv] = tempFiltered[icv];
 //		updateCvDataG1G2(array_perturb, REPLACE_DATA);
@@ -1776,7 +1799,7 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 	// Update the designated variable
 	// -----------------------------
 	double rmsVal = calcRMS3D(vectorArray, coord, false); // get RMS
-	double coeff = rmsVal * perturbParams.disturbMag; // calculate the coefficient based on the RMS
+	double coeff = rmsVal * disturbRatio; // calculate the coefficient based on the RMS
 
 	int myCountClip = 0;
 	for(int icv=0; icv<ncv; ++icv) {
@@ -1814,6 +1837,28 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 	}
 
 	return coeff;
+}
+
+/*
+ * Method: specify_filter_width
+ * ----------------------------
+ * Original method = DiffFilter::specify_filter_width()
+ *     delta^2
+ * p = -------, where delta = filter width, if p is constant everywhere
+ *      40.0
+ */
+double VanGoghWithModels::specify_filter_width(const int ifa) {
+	assert(ifa < nfa_b2gg);  // The size of the wdFace array is equal to nfa_b2gg.
+	assert(wdFace[ifa] > 0.0);
+	
+	if(wdFace[ifa] >= perturbParams.filterBoundaryLength)
+		return pow(perturbParams.maxFilterWidth, 2.0) / 40.0;
+	
+	double ratio = wdFace[ifa] / perturbParams.filterBoundaryLength;
+	double filterWidth = perturbParams.minFilterWidth + ratio*(perturbParams.maxFilterWidth - perturbParams.minFilterWidth);
+	assert(filterWidth > 0.0 && filterWidth <= perturbParams.maxFilterWidth);
+	
+	return pow(filterWidth, 2.0) / 40.0;
 }
 
 /****************************
@@ -1906,6 +1951,8 @@ void VanGoghWithModels::calcOptMetricsNS(double* metricNumer, double* metricDeno
  * Write the optimal metrics (for rho,rhou,etc.) on file
  */
 void VanGoghWithModels::writeOptimalMeticOnFile(const int itest, char filename[], bool rewrite, const double* metricNumer, const double* metricDenom, const int nScal) {
+	assert(metricNumer!=NULL && metricDenom!=NULL);
+
 	if(mpi_rank==0) {
 		FILE *fp;
 		if(rewrite) {
@@ -1913,7 +1960,7 @@ void VanGoghWithModels::writeOptimalMeticOnFile(const int itest, char filename[]
 			fprintf(fp, "ITEST,    METRIC_RHO, METRIC_RHOU-X, METRIC_RHOU-Y, METRIC_RHOU-Z,   METRIC_RHOE");
 			for(int i=0; i<nScal; ++i)
 				fprintf(fp, ", METRIC_SCAL-%d", i);
-			fprintf(fp, "\n");
+			fprintf(fp, ",  TOT\n");
 		} else
 			fp = fopen(filename, "a");
 
@@ -1924,6 +1971,15 @@ void VanGoghWithModels::writeOptimalMeticOnFile(const int itest, char filename[]
 			else
 				fprintf(fp, ", %13.6e", metricNumer[i]/metricDenom[i]);
 		}
+		
+		double metricNumerSum = 0.0;
+		double metricDenomSum = 0.0;
+		for(int i=0; i<5+nScal; ++i) {
+			metricNumerSum += metricNumer[i];
+			metricDenomSum += metricDenom[i];
+		}
+		fprintf(fp, ", %13.6e", metricNumerSum/metricDenomSum);
+		
 		fprintf(fp, "\n");
 
 		fclose(fp);
@@ -1944,23 +2000,35 @@ void VanGoghWithModels::writeResidualOnFile(const int itest, char filename[], bo
 	int nScal = scalarTranspEqVector.size();
 
 	if(mpi_rank==0) {
-		FILE *fp;
+		FILE* fp;
 		if(rewrite) {
 			fp = fopen(filename, "w");
-			fprintf(fp, "STEP,  rho,         rhou-X,      rhou-Y,      rhou-Z,      rhoE,      ");
-			for (int iScal = 0; iScal < nScal; iScal++)
-				fprintf(fp, "%12s", scalarTranspEqVector[iScal].getName());
-			fprintf(fp, "\n");
-		} else
-			fp = fopen(filename, "a");
-
-		if(Residual == NULL) {
-			if(mpi_rank==0)
-				cout<<"WARNING "<<classID<<"::writeResidualOnFile(): Residual is NULL"<<endl;
+			if (fp != NULL) {
+				fprintf(fp, "  STEP,  rho,          rhou-X,       rhou-Y,       rhou-Z,       rhoE");
+				for (int iScal = 0; iScal < nScal; iScal++)
+					fprintf(fp, ", %12s", scalarTranspEqVector[iScal].getName());
+				fprintf(fp, "\n");
+			} else {
+				cout<<"ERROR VanGoghWithModels::writeResidualOnFile(): cannot open "<<filename<<endl;
+				assert(false);
+			}
 		} else {
-			fprintf(fp, "%6d, %12.4e %12.4e %12.4e %12.4e %12.4e", step, Residual[0], Residual[1], Residual[2], Residual[3], Residual[4]);
-			for (int iScal = 0; iScal < nScal; iScal++)
-				fprintf(fp, "%12.4e", Residual[5+iScal]);
+			if (fp != NULL) {
+				fp = fopen(filename, "a");
+			} else {
+				cout<<"ERROR VanGoghWithModels::writeResidualOnFile(): cannot open "<<filename<<endl;
+				assert(false);
+			}
+		}
+
+		if(JoeWithModels::Residual == NULL) {
+			cout<<"WARNING "<<classID<<"::writeResidualOnFile(): Residual is NULL"<<endl;
+		} else {
+			fprintf(fp, "%6d, %12.4e, %12.4e, %12.4e, %12.4e, %12.4e", 
+					step, JoeWithModels::Residual[0], JoeWithModels::Residual[1], JoeWithModels::Residual[2], JoeWithModels::Residual[3], JoeWithModels::Residual[4]);
+			for (int iScal = 0; iScal < nScal; iScal++) {
+				fprintf(fp, ", %12.4e", JoeWithModels::Residual[5+iScal]);
+			}
 			fprintf(fp, "\n");
 		}
 

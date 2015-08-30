@@ -1042,7 +1042,7 @@ void JoeWithModels::runBackwardEuler()
 	  writeJoeUncoupledNSMatrixWeightedDiagBinaryParallel(filenameMatrixWeightedDiag, A, cvora, ncv, nbocv_i, nbocv_v_global, cv_volume, local_dt);
   }
 
-  writeRestart();
+//  writeRestart();
   writeData(step);
 
 

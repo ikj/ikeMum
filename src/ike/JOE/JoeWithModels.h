@@ -100,6 +100,8 @@ public:
   }
 
   void nonVirtualInit() {
+	  Residual = NULL;
+
 	  totResid_dq  = 0.0;
 	  totResid_rhs = 0.0;
 

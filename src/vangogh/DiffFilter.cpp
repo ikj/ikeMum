@@ -1,5 +1,6 @@
 #include "DiffFilter.h"
 #define DONT_SHOW_CG_DETAILS
+
 /*
  * Method: filterConsturcted
  * -------------------------
@@ -17,7 +18,7 @@ bool DiffFilter::filterConsturcted() {
  * ----------------------------
  *
  */
-void DiffFilter::applyDiffFilterG1G2(double *phif, const double *phi) {
+void DiffFilter::applyDiffFilterG1G2(double *phif, const double *phi, const double absTol, const int maxIter) {
 	assert(cvDf != NULL);
 	assert(phif != NULL && phi != NULL);
 
@@ -29,7 +30,7 @@ void DiffFilter::applyDiffFilterG1G2(double *phif, const double *phi) {
 	}
 	updateCvDataG1G2(phif,REPLACE_DATA);
 
-	solveCvScalarCgG1G2(phif, cvDf, rhs, ABSOLUTE_RESIDUAL, 1.0e-06, 1000);
+	solveCvScalarCgG1G2(phif, cvDf, rhs, ABSOLUTE_RESIDUAL, absTol, maxIter);
 	delete [] rhs;
 }
 
@@ -38,7 +39,7 @@ void DiffFilter::applyDiffFilterG1G2(double *phif, const double *phi) {
  * ----------------------------
  *
  */
-void DiffFilter::applyDiffFilterG1G2(double (*phif)[3], const double (*phi)[3]) {
+void DiffFilter::applyDiffFilterG1G2(double (*phif)[3], const double (*phi)[3], const double absTol, const int maxIter) {
 	assert(cvDf != NULL);
 	assert(phif != NULL && phi != NULL);
 
@@ -51,7 +52,7 @@ void DiffFilter::applyDiffFilterG1G2(double (*phif)[3], const double (*phi)[3]) 
 		}
 		updateCvDataG1G2(soln1D, REPLACE_DATA);
 
-		solveCvScalarCgG1G2(soln1D, cvDf, rhs, ABSOLUTE_RESIDUAL, 1.0e-06, 1000);
+		solveCvScalarCgG1G2(soln1D, cvDf, rhs, ABSOLUTE_RESIDUAL, absTol, maxIter);
 
 		FOR_ICV {
 			phif[icv][i] = soln1D[icv];

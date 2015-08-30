@@ -45,6 +45,9 @@ enum RAND_DISTRIB_FUNC {NORMAL_DISTRIB, UNIFORM_DISTRIB};
 
 #define VANGOGH_DEBUG_LEVEL 1
 
+#define OPTIMAL_METRIC_INIT_FILENAME "OptimalMetrics_step0.txt"
+#define OPTIMAL_METRIC_FINAL_FILENAME "OptimalMetrics_final.txt"
+
 //// TO DO: MATLAB version of file read!!!!
 //#define NVARS_EIGEN 7
 //#define NEIGENS 30
@@ -62,6 +65,9 @@ struct PerturbParams {
 		useSmoothing = false;
 		useFiltering = false;
 		calcOptimalMetric = false;
+		
+		filterAbsTol = 1.0e-6;
+		filterMaxIter = 5000;
 	}
 
 	RAND_DISTRIB_FUNC randDistribFunc;
@@ -77,6 +83,8 @@ struct PerturbParams {
     double minFilterWidth;
 	double maxFilterWidth;
 	double filterBoundaryLength;
+	double filterAbsTol; // Abs tolerence of the CG solver that will be used for differential filtering
+	int filterMaxIter;   // Max iteration number of the CG solver that will be used for differential filtering
 
 	RAND_DISTRIB_FUNC RandDistribFunc;
 	
@@ -673,7 +681,7 @@ public:
 	 *           coeff = rmsVal * perturbParams.disturbMag ,  where rmsVal is the RMS value of the given scalar array.
 	 *           array_perturb[icv] = coeff * RANDOM_VARIABLE
 	 */
-	double perturbScalar(double* scalarArray, double* array_perturb, const char varName[], const bool applyClipping);
+	virtual double perturbScalar(double* scalarArray, double* array_perturb, const double disturbRatio, const char varName[], const bool applyClipping);
 
 	/*
 	 * Method: perturbVector
@@ -686,7 +694,17 @@ public:
 	 *           coeff = rmsVal * perturbParams.disturbMag ,  where rmsVal is the RMS value of the given scalar array.
 	 *           array_perturb[icv] = coeff * RANDOM_VARIABLE
 	 */
-	double perturbVector(double (*vectorArray)[3], const int coord, double* array_perturb, const char varName[], const bool applyClipping);
+	virtual double perturbVector(double (*vectorArray)[3], const int coord, double* array_perturb, const double disturbRatio, const char varName[], const bool applyClipping);
+	
+	/*
+	 * Method: specify_filter_width
+	 * ----------------------------
+	 * Original method = DiffFilter::specify_filter_width()
+	 *     delta^2
+	 * p = -------, where delta = filter width, if p is constant everywhere
+	 *      40.0
+	 */
+	double specify_filter_width(const int ifa);
 
 	/****************************
 	 * OPTIMAL METRIC
