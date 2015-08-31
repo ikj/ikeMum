@@ -2880,27 +2880,43 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 		throw(REMBRANDT_ERROR_CODE);
 	}
 
+	vector<double> diff_real, diff_imag;
+	diff_real.resize(nconvAdjoint, ABSURDLY_BIG_NUMBER);
+	diff_imag.resize(nconvAdjoint, ABSURDLY_BIG_NUMBER);
+	vector<int> correspDirectIndices;
+	correspDirectIndices.resize(nconvDirect, -1);
 	for(int i=0; i< nconvAdjoint; ++i) {
-		double diff_real = ABSURDLY_BIG_NUMBER;
-		double diff_imag = ABSURDLY_BIG_NUMBER;
 		double diff_magSq = ABSURDLY_BIG_NUMBER;
 
 		for(int j=0; j< nconvDirect; ++j) {
-			double diff_real_temp = adjointEvalsReal[i] - directEvalsReal[i];
-			double diff_imag_temp = adjointEvalsImag[i] - directEvalsImag[i];
+			double diff_real_temp = adjointEvalsReal[i] - directEvalsReal[j];
+			double diff_imag_temp = adjointEvalsImag[i] - directEvalsImag[j];
 			double diff_magSq_temp = pow(diff_real_temp, 2.0) + pow(diff_imag_temp, 2.0);
 
-			if(diff_magSq > diff_magSq_temp) {
-				diff_real = diff_real_temp;
-				diff_imag = diff_imag_temp;
+			if(diff_magSq_temp < diff_magSq) {
 				diff_magSq = diff_magSq_temp;
+				diff_real[i] = diff_real_temp;
+				diff_imag[i] = diff_imag_temp;
+				correspDirectIndices[i] = j;
 			}
 		}
+	}
 
-		if(fabs(diff_real) > THRESHOLD_EVAL_DIFF || fabs(diff_imag) > THRESHOLD_EVAL_DIFF) {
-			if(mpi_rank==0) cerr<<"ERROR! The "<<i<<"th adjoint e-val is different from the matching direct e-val: diff = "<<diff_real<<" + "<<diff_imag<<"i"<<endl;
-			throw(REMBRANDT_ERROR_CODE);
+	int equalEvalsCount = 0;
+	if(mpi_rank == 0) { cout<<">> Comparison between Direct and Adjoint eigenvalues:"<<endl; };
+	for(int i=0; i< nconvAdjoint; ++i) {
+		if(fabs(diff_real[i]) < THRESHOLD_EVAL_DIFF || fabs(diff_imag[i]) < THRESHOLD_EVAL_DIFF) {
+			++equalEvalsCount;
+			if(mpi_rank == 0) { printf("     [%2d] Matched adjoint e-val with the %2dth direct e-val: error = %g + %gi\n", i, correspDirectIndices[i], diff_real[i], diff_imag[i]); }
+		} else {
+			if(mpi_rank == 0) { printf("     [%2d] NO matched e-val! Closest direct e-val = %2d ----- error = %g + %gi\n", i, correspDirectIndices[i], diff_real[i], diff_imag[i]); }
 		}
+	}
+	if(mpi_rank == 0) { cout<<"   Total "<<equalEvalsCount<<" matched e-vals"<<endl; }
+
+	if(equalEvalsCount == 0) {
+		if(mpi_rank==0) cerr<<"ERROR! NO matched e-vals between Direct and Adjoint"<<endl;
+		throw(REMBRANDT_ERROR_CODE);
 	}
 
 	// Check the ranges of the eigenvectors

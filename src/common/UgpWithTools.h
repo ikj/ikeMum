@@ -1412,7 +1412,7 @@ public:
   }
 
   void write2(const int caseNum, const int step, UgpWithTools1 * ugp) {
-	if (step%interval==0) {
+//	if (step%interval==0) {
 	  // set the data flags...
 	  ugp->clearDataFlags();
 	  for (list<string>::iterator var = varList.begin(); var!=varList.end(); var++) {
@@ -1430,7 +1430,7 @@ public:
 		sprintf(filename, "%s.case%04d.%06d.plt", name.c_str(), caseNum, step);
 		ugp->writeFlaggedCvsTecplot(filename);
 	  }
-	}
+//	}
   }
 };
 
