@@ -228,7 +228,6 @@ public:
   {
     setLinSysForPetsc(Ap, rhs, noora, nbono_i, nbono_v, nbono_v_gl);
 
-    
     /*
     PC pc; // preconditioner context
     KSPGetPC(ksp,&pc);
@@ -260,8 +259,6 @@ public:
     KSPGMRESSetRestart(ksp, 100);
     KSPSetFromOptions(ksp);
     */
-    
-
 
     KSPSolve(ksp, b_, x_);
 

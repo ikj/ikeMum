@@ -25,6 +25,10 @@
 
 enum RAND_DISTRIB_FUNC {NORMAL_DISTRIB, UNIFORM_DISTRIB};
 
+#ifndef MPI_WTIME_IS_GLOBAL
+#define MPI_WTIME_IS_GLOBAL // MPI_Wtime() is synchronized across all processes in MPI_COMM_WORLD.
+#endif
+
 #ifndef PI
 #define PI 3.14159265359
 #endif
@@ -331,6 +335,10 @@ protected:
 	int itest;
 	int ntests;
 	
+	// total wall-time
+	double vanGogh_startWtime; // The wall-clock-time when van Gogh starts
+	                              // This information is provides because the end-user somtimes wants to know the starting wall time.
+
 	// xcvMin & xcvMax (will be used while reading Q1.bin file from IKE or EigenPairs.bin file)
 	double xcvMin[3];
 	double xcvMax[3];
@@ -424,6 +432,9 @@ public:
 		itest = 0;
 		ntests = 0;
 
+		// The starting wall time of vanGogh
+		vanGogh_startWtime = MPI_Wtime();
+
 		for(int i=0; i<3; ++i) {
 			xcvMin[i] =  ABSURDLY_BIG_NUMBER;
 			xcvMax[i] = -ABSURDLY_BIG_NUMBER;
@@ -467,6 +478,20 @@ public:
 	 */
 	virtual void run();
 	
+	/*
+	 * Method: temporalHook
+	 * --------------------
+	 *
+	 */
+	virtual void temporalHook();
+
+	/*
+	 * Method: finalHook
+	 * -----------------
+	 *
+	 */
+	virtual void finalHook();
+
 	/****************************
 	 * UTILITY METHODS
 	 ****************************/
@@ -684,6 +709,19 @@ public:
 	virtual double perturbScalar(double* scalarArray, double* array_perturb, const double disturbRatio, const char varName[], const bool applyClipping);
 
 	/*
+	 * Method: perturbScalar
+	 * ---------------------
+	 * Perturb the initial field with random variables and apply filter to the perturbations
+	 * Note: The array "array_perturb" is used only in this method, but sometimes the user may want to take a look at it.
+	 *       Thus, it is given as an argument.
+	 *
+	 * Arguments: coeff = interval size for UNIFORM, std for GAUSSIAN
+	 *
+	 * Return: array_perturb[icv] = coeff * RANDOM_VARIABLE
+	 */
+	virtual void perturbScalarArray(double* scalarArray, double* array_perturb, const double coeff, const char varName[], const bool applyClipping);
+
+	/*
 	 * Method: perturbVector
 	 * ---------------------
 	 * Perturb the initial field with random variables and apply filter to the perturbations
@@ -696,6 +734,19 @@ public:
 	 */
 	virtual double perturbVector(double (*vectorArray)[3], const int coord, double* array_perturb, const double disturbRatio, const char varName[], const bool applyClipping);
 	
+	/*
+	 * Method: perturbVectorArray
+	 * --------------------------
+	 * Perturb the initial field with random variables and apply filter to the perturbations
+	 * Note: The array "array_perturb" is used only in this method, but sometimes the user may want to take a look at it.
+	 *       Thus, it is given as an argument.
+	 *
+	 * Arguments: coeff = interval size for UNIFORM, std for GAUSSIAN
+	 *
+	 * Return: array_perturb[icv] = coeff * RANDOM_VARIABLE
+	 */
+	virtual void perturbVectorArray(double (*vectorArray)[3], const int coord, double* array_perturb, const double coeff, const char varName[], const bool applyClipping);
+
 	/*
 	 * Method: specify_filter_width
 	 * ----------------------------
@@ -784,6 +835,15 @@ public:
 	 *
 	 */
 	virtual void writeResidualOnFile(const int itest, char filename[], bool rewrite);
+
+	/*
+	 * Method: writeFlowHistory
+	 * --------------------------
+	 * Write flow history (the optimal metric, other QoI's) on a file
+	 * This is called by temporalHook() -- i.e. This can be called at each step in a test case.
+	 * If the end-users want to add more QoI's, they should write their own writeFlowHistory().
+	 */
+	virtual void writeFlowHistory(const char filename[], const double* metricNumer, const double* metricDenom, const bool rewrite);
 };
 
 #endif

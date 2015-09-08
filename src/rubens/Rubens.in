@@ -1,0 +1,80 @@
+LOGGING_LEVEL = WARNING  # EVERYTHING, DEBUG_HI, DEBUG_LO, INFO_HI, INFO_LO, WARNING, ERROR, CRITICAL, FATAL, SILENT 
+
+################################
+#     FLOW PARAMETERS
+################################
+T_REF = 242.0                 # reference temperature 
+P_REF = 1813.0                # ref pressure
+RHO_REF = 0.02596             # ref density 
+U_INITIAL = 2313.0 0.0 0.0    # initial vel 
+
+GAMMA = 1.3
+
+MU_MODE = SUTHERLAND 
+MU_REF = 1.716e-5     # Sutherland's reference viscosity
+SL_TREF = 273.15                      # Tref for Sutherland law	
+SL_SREF = 110.4                       # Sref for Sutherland law
+
+INITIAL_CONDITION_TURB = 32.0 1.0e4
+
+#SCALAR_REF kine=32.0 omega=1.0e4
+
+################################
+#      HEAT RELEASE FUNC
+# -----------------------------
+N_PSALC_CONTROL_PARAMS = 1
+SHAPE_HEAT_RELEASE = 0.75  
+
+################################
+#     SAVED FLOW DATA
+################################
+#######
+# Mesh and restart file
+RESTART = ./restart.pt6.in 
+
+#######
+# Q1 files
+PATH_Q1_DIRECTORY = /home/ikj/calculation/Bifurcation/HyShot2DductLength/KARTHIKHEAT/LENGTH90mm/IKE/FROMPhi3.000e8/SHORTER_ARCLENGTH_RUN49 
+STARTING_PT = 6 
+FINAL_PT = 49 
+
+################################
+#      SOLVER SETTINGS
+################################
+
+DT = 1.0e-7   # You must provide an arbitrary DT even though it is not used in Rubens
+
+# second order spatial for all equations
+SPATIAL_SECOND_ORDER    # if line is commented then first order in space for inviscid fluxes
+GRAD_RECONSTRUCTION  SCHEME=GREENGAUSS  LIMITER=YES  EPS=0.01
+
+#################################
+#     BOUNDARY 
+#################################
+inlet = HOOK
+outlet = NEUMANN #CBC_SUBSONIC_OUTLET 1813.0
+lowerwall = WALL TEMP = 300.0
+upperwall = WALL TEMP = 300.0
+
+symm = SYMMETRY
+
+# bc for scalar (turbulence variable)
+inlet.kine = HOOK
+outlet.kine = 32.0
+lowerwall.kine = 0.0
+upperwall.kine = 0.0
+
+inlet.omega = HOOK
+outlet.omega = 1.0e4
+forebody.omega = HOOK
+lowerwall.omega = HOOK
+upperwall.omega = HOOK
+
+#################################
+#      OUTPUT SETTINGS 
+# -------------------------------
+FLOWFIELD_OUTPUT = NO   # output flowfield after reading every Q1 (YES / NO)
+
+WRITE_DATA FORMAT=TECPLOT NAME=HYSHOT2D90mm INTERVAL=1 GEOM=ALL VARS= RHO RHOU RHOE vel press temp kine omega gamma sos residField RHSRHO RHSRHOU RHSRHOE
+
+

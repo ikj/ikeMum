@@ -1071,483 +1071,502 @@ void JoeWithModels::runBackwardEuler()
 
 void JoeWithModels::runBDF2()
 {
-  int nScal = scalarTranspEqVector.size();
-
-  double *myResidual = new double[5+nScal];
-  Residual           = new double[5+nScal];
-  double *fstResidual = new double[5+nScal];
-  double *relResidual = new double[5+nScal];
-
-  double *RHSrho = new double[ncv];
-  double (*RHSrhou)[3] = new double[ncv][3];
-  double *RHSrhoE = new double[ncv];
-
-  double (*A)[5][5] = new double[nbocv_s][5][5];
-  double (*dq)[5] = new double[ncv_g][5];
-  double (*rhs)[5] = new double[ncv][5];
-  double (*qn)[5] = new double[ncv][5];
-  double (*qnm1)[5] = new double[ncv][5];
-
-  double ***AScal   = NULL;  if (nScal > 0) getMem3D(&AScal,    0, nScal-1, 0, 5, 0, nbocv_s-1, "AScal");
-  double **dScal    = NULL;  if (nScal > 0) getMem2D(&dScal,    0, nScal-1, 0, ncv_g-1, "dScal");
-  double **rhsScal  = NULL;  if (nScal > 0) getMem2D(&rhsScal,  0, nScal-1, 0, ncv-1, "rhsScal");
-  double **qnScal   = NULL;  if (nScal > 0) getMem2D(&qnScal,   0, nScal-1, 0, ncv-1, "qnScal");
-  double **qnm1Scal = NULL;  if (nScal > 0) getMem2D(&qnm1Scal, 0, nScal-1, 0, ncv-1, "qnm1Scal");
-
-  //------------------------------------
-  // some parameters
-  //------------------------------------
-  double underRelax = getDoubleParam("UNDER_RELAXATION", "0.9");
-  int bdf2_TVD_limiter = getIntParam("BDF2_TVD_LIMITER", "1");
-
-  if (!checkParam("NEWTON_SOLVER_TRESHOLDS"))
-  {
-    ParamMap::add("NEWTON_SOLVER_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-6");    // add default values
-    if (mpi_rank == 0)
-      cout << "WARNING: added keyword \"NEWTON_SOLVER_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-6\"" <<
-              " to parameter map!" << endl;
-  }
-  int    mnNewton       = getParam("NEWTON_SOLVER_TRESHOLDS")->getInt("MAX_ITER");
-  double absResidNewton = getParam("NEWTON_SOLVER_TRESHOLDS")->getDouble("ABS_RESID");
-  double relResidNewton = getParam("NEWTON_SOLVER_TRESHOLDS")->getDouble("REL_RESID");
-
-  if (!checkParam("LINEAR_SOLVER_NS_TRESHOLDS"))
-  {
-    ParamMap::add("LINEAR_SOLVER_NS_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-2");    // add default values
-    if (mpi_rank == 0)
-      cout << "WARNING: added keyword \"LINEAR_SOLVER_NS_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-2\"" <<
-              " to parameter map!" << endl;
-  }
-  int maxIterLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getInt("MAX_ITER");
-  double zeroAbsLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getDouble("ABS_RESID");
-  double zeroRelLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getDouble("REL_RESID");
-
-  if (!checkParam("CFL_RAMP"))
-  {
-    ParamMap::add("CFL_RAMP AFTER_ITER=100  INTERVAL_ITER=10  FACTOR_CFL=1.0  MAX_CFL=100.0");    // add default: no increase of CFL number!
-    if (mpi_rank == 0)
-      cout << "WARNING: added \"CFL_RAMP AFTER_ITER=100  INTERVAL_ITER=10  FACTOR_CFL=1.0  MAX_CFL=100.0\" to parameter map" << endl;
-  }
-
-  int startIncCFL = getParam("CFL_RAMP")->getInt("AFTER_ITER");
-  int intervalIncCFL = getParam("CFL_RAMP")->getInt("INTERVAL_ITER");
-  double incCFL = getParam("CFL_RAMP")->getDouble("FACTOR_CFL");
-  double maxCFL = getParam("CFL_RAMP")->getDouble("MAX_CFL");
-
-  // -------------------------------------------------------------------------------------------
-  // update state properties: velocity, pressure, temperature, enthalpy, gamma and R
-  // -------------------------------------------------------------------------------------------
-  calcStateVariables();
-
-  // -------------------------------------------------------------------------------------------
-  // update material properties: laminar viscosity and heat conductivity
-  // -------------------------------------------------------------------------------------------
-  calcMaterialProperties();
-
-  // -------------------------------------------------------------------------------------------
-  // set BC's for NS and scalars
-  // -------------------------------------------------------------------------------------------
-  setBC();
-
-  // -------------------------------------------------------------------------------------------
-  // update turbulent properties: mut and initialize strain rate, vort mag, ... for turb scalars
-  // -------------------------------------------------------------------------------------------
-  calcRansTurbViscMuet();
-
-
-  // -------------------------------------------------------------------------------------------
-  //
-  //   Loop over time steps
-  //
-  // -------------------------------------------------------------------------------------------
-
-  int done = 0;
-  if ((nsteps >= 0)&&(step >= nsteps))  done = 1;
-
-  if (initial_flowfield_output == "YES")
-    writeData(0);
-
-  // provide total runtime
-  double wtime, wtime0;
-  MPI_Barrier(mpi_comm);
-  if (mpi_rank == 0)
-    wtime = MPI_Wtime();
-
-
-
-  //double bdf2Alfa = 1.5, bdf2Beta = 2.0, bdf2Gamma = 0.5;
-  double bdf2Alfa = 0.5, bdf2Beta = 1.0, bdf2Gamma = 0.5;
-
-  // store n and n-1 and solve n+1 using second order
-  for (int icv=0; icv<ncv; icv++)
-  {
-    qn[icv][0] = rho[icv];
-    qn[icv][1] = rhou[icv][0];
-    qn[icv][2] = rhou[icv][1];
-    qn[icv][3] = rhou[icv][2];
-    qn[icv][4] = rhoE[icv];
-  }
-
-  for (int iScal = 0; iScal < nScal; iScal++)
-  {
-    double *phi = scalarTranspEqVector[iScal].phi;
-    for (int icv=0; icv<ncv; icv++)
-      qnScal[iScal][icv] = rho[icv]*phi[icv];
-  }
-
-  for(int i=0; i<5+nScal; ++i)
-	  Residual[i] = 1.0e20;
-
-  while (done != 1)
-  {
-    step++;
-    if ((step >= startIncCFL) && (step%intervalIncCFL == 0) && (cfl < maxCFL))      cfl *= incCFL;
-    double dt_min = calcDt(cfl);
-    time += dt_min;
-
-
-    // store n and n-1 and solve n+1 using second order
-    for (int icv=0; icv<ncv; icv++)
-    {
-      qnm1[icv][0] = qn[icv][0];
-      qnm1[icv][1] = qn[icv][1];
-      qnm1[icv][2] = qn[icv][2];
-      qnm1[icv][3] = qn[icv][3];
-      qnm1[icv][4] = qn[icv][4];
-
-      qn[icv][0] = rho[icv];
-      qn[icv][1] = rhou[icv][0];
-      qn[icv][2] = rhou[icv][1];
-      qn[icv][3] = rhou[icv][2];
-      qn[icv][4] = rhoE[icv];
-    }
-
-    for (int iScal = 0; iScal < nScal; iScal++)
-    {
-      double *phi = scalarTranspEqVector[iScal].phi;
-
-      for (int icv=0; icv<ncv; icv++)
-      {
-        qnm1Scal[iScal][icv] = qnScal[iScal][icv];
-        qnScal[iScal][icv] = rho[icv]*phi[icv];
-      }
-    }
-
-
-    // ---------------------------------------------------------------------------------
-    // start Newton iterations
-    // ---------------------------------------------------------------------------------
-
-    if ((mpi_rank == 0) && (step%check_interval == 0))
-      printf("dt: %.6le\n", dt_min);
-
-    relResidual[4] = 1.0e20;
-
-    int pN = 0;
-    while ((pN < mnNewton) && (relResidual[4] > relResidNewton) && (pN == 0 || Residual[4] > absResidNewton))              // newton steps!!!
-    {
-      for (int i = 0; i < 5+nScal; i++)
-        myResidual[i] = 0.0;
-
-      for (int noc = 0; noc < nbocv_s; noc++)                             // set A, dq to zero! rhs is set zero in calcRHS
-        for (int i = 0; i < 5; i++)
-          for (int j = 0; j < 5; j++)
-            A[noc][i][j] = 0.0;
-      for (int icv = 0; icv < ncv_g; icv++)
-        for (int i = 0; i < 5; i++)
-          dq[icv][i] = 0.0;
-
-      for (int iScal = 0; iScal < nScal; iScal++)                         // set AScal, dScal to zero! rhs is set zero in calcRHS
-      {
-        for (int i = 0; i <= 5; i++)
-          for (int noc = 0; noc < nbocv_s; noc++)
-            AScal[iScal][i][noc] = 0.0;
-        for (int icv = 0; icv < ncv_g; icv++)
-          dScal[iScal][icv] = 0.0;
-      }
-
-
-      // ---------------------------------------------------------------------------------
-      // calculate RHS for both NSE and scalars
-      // ---------------------------------------------------------------------------------
-
-      calcRhs(RHSrho, RHSrhou, RHSrhoE, rhsScal, A, AScal, true);
-
-      // ---------------------------------------------------------------------------------
-      // solve linear system for the NSE
-      // ---------------------------------------------------------------------------------
-
-      for (int icv=0; icv<ncv; ++icv)                                 // prepare rhs and A
-      {
-        double tmp = cv_volume[icv]/(local_dt[icv]);
-
-        double psi[5] = {1.0, 1.0, 1.0, 1.0, 1.0};
-        //double psi[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
-        if (bdf2_TVD_limiter == 1) {
-        	bool tvdRzeroDemoninator = false;
-        	for(int i=0; i<5; ++i)
-        		if(qn[icv][0] == qnm1[icv][0]) {
-        			tvdRzeroDemoninator = true;
-        			break;
-        		}
-
-// Note: The following parts give ERROR at step ==2 due to psi[]'s that become NaN
-//        	if( !tvdRzeroDemoninator ) {
-//        		double tvdR[5], minmod[5];
-//
-//        		tvdR[0] = (rho[icv]-    qn[icv][0])/(qn[icv][0]-qnm1[icv][0]);
-//        		tvdR[1] = (rhou[icv][0]-qn[icv][1])/(qn[icv][1]-qnm1[icv][1]);
-//        		tvdR[2] = (rhou[icv][1]-qn[icv][2])/(qn[icv][2]-qnm1[icv][2]);
-//        		tvdR[3] = (rhou[icv][2]-qn[icv][3])/(qn[icv][3]-qnm1[icv][3]);
-//        		tvdR[4] = (rhoE[icv]-   qn[icv][4])/(qn[icv][4]-qnm1[icv][4]);
-//
-//        		for (int i=0; i<5; i++) {
-//        			if (tvdR[i] > 0.0) {
-//        				if (1.0 < fabs(tvdR[i]))    minmod[i] = 1.0;
-//        				else                        minmod[i] = tvdR[i];
-//        			}
-//        			else {
-//        				minmod[i] = 0.0;
-//        			}
-//        			psi[i] = pow(minmod[i]/max(1.0, fabs(tvdR[i])), 0.5);
-//        		}
-//        	}
-        }
-
-        rhs[icv][0] = underRelax*(RHSrho[icv]     - ((1.0+psi[0]*bdf2Alfa)*rho[icv]     - (1.0+psi[0]*bdf2Beta)*qn[icv][0] + psi[0]*bdf2Gamma*qnm1[icv][0])*tmp);
-        rhs[icv][1] = underRelax*(RHSrhou[icv][0] - ((1.0+psi[1]*bdf2Alfa)*rhou[icv][0] - (1.0+psi[1]*bdf2Beta)*qn[icv][1] + psi[1]*bdf2Gamma*qnm1[icv][1])*tmp);
-        rhs[icv][2] = underRelax*(RHSrhou[icv][1] - ((1.0+psi[2]*bdf2Alfa)*rhou[icv][1] - (1.0+psi[2]*bdf2Beta)*qn[icv][2] + psi[2]*bdf2Gamma*qnm1[icv][2])*tmp);
-        rhs[icv][3] = underRelax*(RHSrhou[icv][2] - ((1.0+psi[3]*bdf2Alfa)*rhou[icv][2] - (1.0+psi[3]*bdf2Beta)*qn[icv][3] + psi[3]*bdf2Gamma*qnm1[icv][3])*tmp);
-        rhs[icv][4] = underRelax*(RHSrhoE[icv]    - ((1.0+psi[4]*bdf2Alfa)*rhoE[icv]    - (1.0+psi[4]*bdf2Beta)*qn[icv][4] + psi[4]*bdf2Gamma*qnm1[icv][4])*tmp);
-
-        residField[icv] = RHSrhoE[icv];
-
-        for (int i=0; i<5; i++)
-          myResidual[i] += fabs(rhs[icv][i]);
-
-        for (int i = 0; i < 5; i++)
-          A[nbocv_i[icv]][i][i] += (1.0+psi[0]*bdf2Alfa)*tmp;                               // diagonal part ( vol/dt + A )
-      }
-
-      solveCoupledLinSysNS(dq, A, rhs, zeroAbsLS, zeroRelLS, maxIterLS);  // solve linear system
-
-      for (int icv=0; icv<ncv; icv++)                                 // update solution: Q_new = Q_old + Delta_Q
-      {
-        rho[icv]     += dq[icv][0];
-        rhou[icv][0] += dq[icv][1];
-        rhou[icv][1] += dq[icv][2];
-        rhou[icv][2] += dq[icv][3];
-        rhoE[icv]    += dq[icv][4];
-      }
-
-      UpdateCvDataStateVec(dq);                                       // update dq since neighbors needed to compute RHS of scalars
-
-      // ---------------------------------------------------------------------------------
-      // solve linear system for the scalars
-      // ---------------------------------------------------------------------------------
-
-      // the scalars are solved separately from the NSE but in order to ensure consistency with
-      // the continuity equation, the implicit terms (i.e., dependence of the scalars on rho, rhou)
-      // are used on the RHS of the equations. This means that AScal[iScal][4] is the only implicit
-      // term on the LHS, while AScal[iScal][0-3] are put back to the right side.
-
-      for (int iScal = 0; iScal < nScal; iScal++)                               // prepare rhs and A
-      {
-        double *phi = scalarTranspEqVector[iScal].phi;
-
-        for (int icv = 0; icv < ncv; ++icv)
-        {
-          double tmp = cv_volume[icv]/(local_dt[icv]);
-          double rhoPhi = (rho[icv]-dq[icv][0])*phi[icv];
-
-          double psi = 1.0;
-          if (bdf2_TVD_limiter == 1)
-          {
-            double minmod, tvdR = (rhoPhi-qnScal[iScal][icv])/(qnScal[iScal][icv]-qnm1Scal[iScal][icv]);
-            if (tvdR > 0.0)
-            {
-              if (1.0 < fabs(tvdR))    minmod= 1.0;
-              else                     minmod = tvdR;
-            }
-            else                       minmod = 0.0;
-
-            psi = pow(minmod/max(1.0, fabs(tvdR)), 0.5);
-          }
-
-          rhsScal[iScal][icv] = underRelax*( rhsScal[iScal][icv]
-                                   -( (1.0+psi*bdf2Alfa)*rhoPhi
-                                     - (1.0+psi*bdf2Beta)*qnScal[iScal][icv]
-                                       + psi*bdf2Gamma*qnm1Scal[iScal][icv]) * tmp );
-
-          int noc_f = nbocv_i[icv];
-          int noc_l = nbocv_i[icv + 1] - 1;
-
-          AScal[iScal][5][noc_f] += (1.0+psi*bdf2Alfa)*tmp;                                 // diagonal part ( vol/dt + A )
-
-          // move the other implicit terms to the RHS
-          for (int noc = noc_f; noc <= noc_l; noc++)
-            rhsScal[iScal][icv] = rhsScal[iScal][icv]
-                                - AScal[iScal][0][noc] * dq[nbocv_v[noc]][0]
-                                - AScal[iScal][1][noc] * dq[nbocv_v[noc]][1]
-                                - AScal[iScal][2][noc] * dq[nbocv_v[noc]][2]
-                                - AScal[iScal][3][noc] * dq[nbocv_v[noc]][3]
-                                - AScal[iScal][4][noc] * dq[nbocv_v[noc]][4];
-
-          myResidual[5+iScal] += fabs(rhsScal[iScal][icv]);
-        }
-
-        solveLinSysScalar(dScal[iScal], AScal[iScal][5], rhsScal[iScal],
-                          scalarTranspEqVector[iScal].phiZero,
-                          scalarTranspEqVector[iScal].phiZeroRel,
-                          scalarTranspEqVector[iScal].phiMaxiter,
-                          scalarTranspEqVector[iScal].getName());
-
-        // update scalars and clip
-        for (int icv = 0; icv < ncv; icv++)
-          phi[icv] = min(max((phi[icv]*(rho[icv]-dq[icv][0]) + dScal[iScal][icv])/rho[icv], scalarTranspEqVector[iScal].lowerBound), scalarTranspEqVector[iScal].upperBound);
-
-      }
-
-      // -------------------------------------------------------------------------------------------
-      // update state properties: velocity, pressure, temperature, enthalpy, gamma and R
-      // -------------------------------------------------------------------------------------------
-      updateCvDataG1G2(rho, REPLACE_DATA);
-      updateCvDataG1G2(rhou, REPLACE_ROTATE_DATA);
-      updateCvDataG1G2(rhoE, REPLACE_DATA);
-
-      for (int iScal = 0; iScal < nScal; iScal++)
-        updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
-
-      calcStateVariables();
-
-      calcMaterialProperties();
-
-      setBC();
-
-      calcRansTurbViscMuet();
-
-      MPI_Allreduce(myResidual, Residual, 5+nScal, MPI_DOUBLE, MPI_SUM, mpi_comm);
-
-      if (pN == 0)
-        for (int i=0; i<5+nScal; i++)
-          fstResidual[i] = Residual[i];
-
-      for (int i=0; i<5+nScal; i++)
-        relResidual[i] = Residual[i]/(fstResidual[i]+1.0e-10);
-
-      if (mpi_rank == 0)
-      {
-        if (step%check_interval == 0)
-        {
-          printf("Newton step residual: %d:\t", pN+1);
-          for (int i=0; i<5+nScal; i++)
-            printf("%.4le\t", relResidual[i]);
-          printf("\n");
-        }
-      }
-
-      pN++;
-    }
-
-    // =========================================================================================
-    // calculate and show residual
-    // =========================================================================================
-
-    if (step%check_interval == 0)
-    {
-      if ((mpi_rank == 0) && (step%(check_interval*10) == 0))
-        cout << "\ndone step: "<< step << ", cfl: " << cfl << ", min. dt: " << dt_min << " time: " << time << endl;
-
-      showResidue(Residual);
-    }
-
-    // IKJ: For output display (Metric to see the convergence of the simulation)
-    for (int icv = 0; icv < ncv; icv++) {
-    	residField[icv] = rhs[icv][4];
-    	log10_resid_rhoE[icv] = log10(fabs(RHSrhoE[icv]) + 1.0e-15);
-    }
-    for (int iScal = 0; iScal < nScal; iScal++)
-    	for (int icv = 0; icv < ncv; icv++)
-    		log10_resid_scalar0[icv] = log10(fabs(rhsScal[iScal][icv]/underRelax) + 1.0e-15);
-    updateCvDataG1G2(residField,       REPLACE_DATA);
-    updateCvDataG1G2(log10_resid_rhoE, REPLACE_DATA);
-    if(nScal>0)
-    	updateCvDataG1G2(log10_resid_scalar0, REPLACE_DATA);
-
-    // IKJ
-    double myTotResid_rhs = 0.0;
-    double myTotResid_dq  = 0.0;
-    for (int icv = 0; icv < ncv; icv++) {
-    	myTotResid_rhs += fabs(RHSrho[icv]);
-    	for (int i=0; i<3; i++)
-    		myTotResid_rhs += fabs(RHSrhou[icv][i]);
-    	myTotResid_rhs += fabs(RHSrhoE[icv]);
-
-    	myTotResid_dq += fabs(rho[icv]- qn[icv][0]);
-    	for (int i=0; i<3; i++)
-    		myTotResid_dq += fabs(rhou[icv][i] - qn[icv][1+i]);
-    	myTotResid_dq += fabs(rhoE[icv] - qn[icv][4]);
-    }
-	for (int iScal = 0; iScal < nScal; iScal++) {
-		double *phi = scalarTranspEqVector[iScal].phi;
-		for (int icv = 0; icv < ncv; icv++) {
-			myTotResid_rhs += fabs(rhsScal[iScal][icv]);
-			myTotResid_dq  += fabs(phi[icv] - qnScal[iScal][icv]/qn[icv][0]);
-		}
+	int nScal = scalarTranspEqVector.size();
+
+	double *myResidual = new double[5+nScal];
+	Residual           = new double[5+nScal];
+	double *fstResidual = new double[5+nScal];
+	double *relResidual = new double[5+nScal];
+
+	double *RHSrho = new double[ncv];
+	double (*RHSrhou)[3] = new double[ncv][3];
+	double *RHSrhoE = new double[ncv];
+
+	double (*A)[5][5] = new double[nbocv_s][5][5];
+	double (*dq)[5] = new double[ncv_g][5];
+	double (*rhs)[5] = new double[ncv][5];
+	double (*qn)[5] = new double[ncv][5];
+	double (*qnm1)[5] = new double[ncv][5];
+
+	double ***AScal   = NULL;  if (nScal > 0) getMem3D(&AScal,    0, nScal-1, 0, 5, 0, nbocv_s-1, "AScal");
+	double **dScal    = NULL;  if (nScal > 0) getMem2D(&dScal,    0, nScal-1, 0, ncv_g-1, "dScal");
+	double **rhsScal  = NULL;  if (nScal > 0) getMem2D(&rhsScal,  0, nScal-1, 0, ncv-1, "rhsScal");
+	double **qnScal   = NULL;  if (nScal > 0) getMem2D(&qnScal,   0, nScal-1, 0, ncv-1, "qnScal");
+	double **qnm1Scal = NULL;  if (nScal > 0) getMem2D(&qnm1Scal, 0, nScal-1, 0, ncv-1, "qnm1Scal");
+
+	//------------------------------------
+	// some parameters
+	//------------------------------------
+	double underRelax = getDoubleParam("UNDER_RELAXATION", "0.9");
+	int bdf2_TVD_limiter = getIntParam("BDF2_TVD_LIMITER", "1");
+
+	if (!checkParam("NEWTON_SOLVER_TRESHOLDS"))
+	{
+		ParamMap::add("NEWTON_SOLVER_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-6");    // add default values
+		if (mpi_rank == 0)
+			cout << "WARNING: added keyword \"NEWTON_SOLVER_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-6\"" <<
+			" to parameter map!" << endl;
 	}
-    MPI_Allreduce(&myTotResid_dq,  &totResid_dq,  1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-    MPI_Allreduce(&myTotResid_rhs, &totResid_rhs, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+	int    mnNewton       = getParam("NEWTON_SOLVER_TRESHOLDS")->getInt("MAX_ITER");
+	double absResidNewton = getParam("NEWTON_SOLVER_TRESHOLDS")->getDouble("ABS_RESID");
+	double relResidNewton = getParam("NEWTON_SOLVER_TRESHOLDS")->getDouble("REL_RESID");
 
-    temporalHook();
-    dumpProbes(step, 0.0);
-    writeData(step);
+	if (!checkParam("LINEAR_SOLVER_NS_TRESHOLDS"))
+	{
+		ParamMap::add("LINEAR_SOLVER_NS_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-2");    // add default values
+		if (mpi_rank == 0)
+			cout << "WARNING: added keyword \"LINEAR_SOLVER_NS_TRESHOLDS  MAX_ITER=30  ABS_RESID=1.0e-8  REL_RESID=1.0e-2\"" <<
+			" to parameter map!" << endl;
+	}
+	int maxIterLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getInt("MAX_ITER");
+	double zeroAbsLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getDouble("ABS_RESID");
+	double zeroRelLS = getParam("LINEAR_SOLVER_NS_TRESHOLDS")->getDouble("REL_RESID");
 
-    if ((write_restart > 0) && (step % write_restart == 0))
-      writeRestart(step);
+	if (!checkParam("CFL_RAMP"))
+	{
+		ParamMap::add("CFL_RAMP AFTER_ITER=100  INTERVAL_ITER=10  FACTOR_CFL=1.0  MAX_CFL=100.0");    // add default: no increase of CFL number!
+		if (mpi_rank == 0)
+			cout << "WARNING: added \"CFL_RAMP AFTER_ITER=100  INTERVAL_ITER=10  FACTOR_CFL=1.0  MAX_CFL=100.0\" to parameter map" << endl;
+	}
 
-    if ((step >= nsteps) || (Residual[4] <= resid_energ_th))   done = 1;
-  }
+	int startIncCFL = getParam("CFL_RAMP")->getInt("AFTER_ITER");
+	int intervalIncCFL = getParam("CFL_RAMP")->getInt("INTERVAL_ITER");
+	double incCFL = getParam("CFL_RAMP")->getDouble("FACTOR_CFL");
+	double maxCFL = getParam("CFL_RAMP")->getDouble("MAX_CFL");
 
-  MPI_Barrier(mpi_comm);
-  if (mpi_rank == 0)
-  {
-    double wtime0 = wtime;
-    wtime = MPI_Wtime();
-    cout << " > runtime for iterations[s]: " << wtime - wtime0 << endl;
-  }
+	// -------------------------------------------------------------------------------------------
+	// update state properties: velocity, pressure, temperature, enthalpy, gamma and R
+	// -------------------------------------------------------------------------------------------
+	calcStateVariables();
+
+	// -------------------------------------------------------------------------------------------
+	// update material properties: laminar viscosity and heat conductivity
+	// -------------------------------------------------------------------------------------------
+	calcMaterialProperties();
+
+	// -------------------------------------------------------------------------------------------
+	// set BC's for NS and scalars
+	// -------------------------------------------------------------------------------------------
+	setBC();
+
+	// -------------------------------------------------------------------------------------------
+	// update turbulent properties: mut and initialize strain rate, vort mag, ... for turb scalars
+	// -------------------------------------------------------------------------------------------
+	calcRansTurbViscMuet();
 
 
-  // ---------------------------------------------------------------------------------
-  // output
-  // ---------------------------------------------------------------------------------
+	// -------------------------------------------------------------------------------------------
+	//
+	//   Loop over time steps
+	//
+	// -------------------------------------------------------------------------------------------
 
-  temporalHook();
-  finalHook();
+	int done = 0;
+	if ((nsteps >= 0)&&(step >= nsteps))  done = 1;
 
-  writeRestart();
+	if (initial_flowfield_output == "YES")
+		writeData(0);
+
+	// provide total runtime
+	double wtime, wtime0;
+	MPI_Barrier(mpi_comm);
+	if (mpi_rank == 0)
+		wtime = MPI_Wtime();
 
 
-  // ---------------------------------------------------------------------------------
-  // delete memory
-  // ---------------------------------------------------------------------------------
-  delete [] RHSrho;
-  delete [] RHSrhou;
-  delete [] RHSrhoE;
 
-  delete [] myResidual;
-  delete [] Residual; 	Residual = NULL;
+	//double bdf2Alfa = 1.5, bdf2Beta = 2.0, bdf2Gamma = 0.5;
+	double bdf2Alfa = 0.5, bdf2Beta = 1.0, bdf2Gamma = 0.5;
 
-  delete [] A;
-  delete [] dq;
-  delete [] rhs;
-  delete [] qn;
-  delete [] qnm1;
+	// store n and n-1 and solve n+1 using second order
+	for (int icv=0; icv<ncv; icv++)
+	{
+		qn[icv][0] = rho[icv];
+		qn[icv][1] = rhou[icv][0];
+		qn[icv][2] = rhou[icv][1];
+		qn[icv][3] = rhou[icv][2];
+		qn[icv][4] = rhoE[icv];
+	}
 
-  if (nScal > 0) freeMem3D(AScal,   0, nScal-1, 0, 5, 0, nbocv_s-1);
-  if (nScal > 0) freeMem2D(dScal,   0, nScal-1, 0, ncv_g-1);
-  if (nScal > 0) freeMem2D(rhsScal, 0, nScal-1, 0, ncv-1);
-  if (nScal > 0) freeMem2D(qnScal, 0, nScal-1, 0, ncv-1);
-  if (nScal > 0) freeMem2D(qnm1Scal, 0, nScal-1, 0, ncv-1);
+	for (int iScal = 0; iScal < nScal; iScal++)
+	{
+		double *phi = scalarTranspEqVector[iScal].phi;
+		for (int icv=0; icv<ncv; icv++)
+			qnScal[iScal][icv] = rho[icv]*phi[icv];
+	}
+
+	for(int i=0; i<5+nScal; ++i)
+		Residual[i] = 1.0e20;
+
+	while (done != 1)
+	{
+		step++;
+		if ((step >= startIncCFL) && (step%intervalIncCFL == 0) && (cfl < maxCFL))      cfl *= incCFL;
+		double dt_min = calcDt(cfl);
+		time += dt_min;
+
+
+		// store n and n-1 and solve n+1 using second order
+		for (int icv=0; icv<ncv; icv++)
+		{
+			qnm1[icv][0] = qn[icv][0];
+			qnm1[icv][1] = qn[icv][1];
+			qnm1[icv][2] = qn[icv][2];
+			qnm1[icv][3] = qn[icv][3];
+			qnm1[icv][4] = qn[icv][4];
+
+			qn[icv][0] = rho[icv];
+			qn[icv][1] = rhou[icv][0];
+			qn[icv][2] = rhou[icv][1];
+			qn[icv][3] = rhou[icv][2];
+			qn[icv][4] = rhoE[icv];
+		}
+
+		for (int iScal = 0; iScal < nScal; iScal++)
+		{
+			double *phi = scalarTranspEqVector[iScal].phi;
+
+			for (int icv=0; icv<ncv; icv++)
+			{
+				qnm1Scal[iScal][icv] = qnScal[iScal][icv];
+				qnScal[iScal][icv] = rho[icv]*phi[icv];
+			}
+		}
+
+
+		// ---------------------------------------------------------------------------------
+		// start Newton iterations
+		// ---------------------------------------------------------------------------------
+
+		if ((mpi_rank == 0) && (step%check_interval == 0))
+			printf("dt: %.6le\n", dt_min);
+
+		relResidual[4] = 1.0e20;
+
+		int pN = 0;
+		while ((pN < mnNewton) && (relResidual[4] > relResidNewton) && (pN == 0 || Residual[4] > absResidNewton))              // newton steps!!!
+		{
+			for (int i = 0; i < 5+nScal; i++)
+				myResidual[i] = 0.0;
+
+			for (int noc = 0; noc < nbocv_s; noc++)                             // set A, dq to zero! rhs is set zero in calcRHS
+				for (int i = 0; i < 5; i++)
+					for (int j = 0; j < 5; j++)
+						A[noc][i][j] = 0.0;
+			for (int icv = 0; icv < ncv_g; icv++)
+				for (int i = 0; i < 5; i++)
+					dq[icv][i] = 0.0;
+
+			for (int iScal = 0; iScal < nScal; iScal++)                         // set AScal, dScal to zero! rhs is set zero in calcRHS
+			{
+				for (int i = 0; i <= 5; i++)
+					for (int noc = 0; noc < nbocv_s; noc++)
+						AScal[iScal][i][noc] = 0.0;
+				for (int icv = 0; icv < ncv_g; icv++)
+					dScal[iScal][icv] = 0.0;
+			}
+
+
+			// ---------------------------------------------------------------------------------
+			// calculate RHS for both NSE and scalars
+			// ---------------------------------------------------------------------------------
+
+			calcRhs(RHSrho, RHSrhou, RHSrhoE, rhsScal, A, AScal, true);
+
+			// ---------------------------------------------------------------------------------
+			// solve linear system for the NSE
+			// ---------------------------------------------------------------------------------
+
+			for (int icv=0; icv<ncv; ++icv)                                 // prepare rhs and A
+			{
+				double tmp = cv_volume[icv]/(local_dt[icv]);
+
+				double psi[5] = {1.0, 1.0, 1.0, 1.0, 1.0};
+				//double psi[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
+				if (bdf2_TVD_limiter == 1) {
+					bool tvdRzeroDemoninator = false;
+					for(int i=0; i<5; ++i)
+						if(fabs(qn[icv][i]-qnm1[icv][i]) < 1.0e-10) {
+							tvdRzeroDemoninator = true;
+							break;
+						}
+
+					if( !tvdRzeroDemoninator ) {
+						double tvdR[5], minmod[5];
+
+						tvdR[0] = (rho[icv]-    qn[icv][0])/(qn[icv][0]-qnm1[icv][0]);
+						tvdR[1] = (rhou[icv][0]-qn[icv][1])/(qn[icv][1]-qnm1[icv][1]);
+						tvdR[2] = (rhou[icv][1]-qn[icv][2])/(qn[icv][2]-qnm1[icv][2]);
+						tvdR[3] = (rhou[icv][2]-qn[icv][3])/(qn[icv][3]-qnm1[icv][3]);
+						tvdR[4] = (rhoE[icv]-   qn[icv][4])/(qn[icv][4]-qnm1[icv][4]);
+
+						for (int i=0; i<5; i++) {
+							if (tvdR[i] > 0.0) {
+								if (1.0 < fabs(tvdR[i]))    minmod[i] = 1.0;
+								else                        minmod[i] = tvdR[i];
+							}
+							else {
+								minmod[i] = 0.0;
+							}
+							psi[i] = pow(minmod[i]/max(1.0, fabs(tvdR[i])), 0.5);
+							if(isnan(psi[i]) || isinf(psi[i])) psi[i] = 1.0;
+						}
+					}
+				}
+
+				rhs[icv][0] = underRelax*(RHSrho[icv]     - ((1.0+psi[0]*bdf2Alfa)*rho[icv]     - (1.0+psi[0]*bdf2Beta)*qn[icv][0] + psi[0]*bdf2Gamma*qnm1[icv][0])*tmp);
+				rhs[icv][1] = underRelax*(RHSrhou[icv][0] - ((1.0+psi[1]*bdf2Alfa)*rhou[icv][0] - (1.0+psi[1]*bdf2Beta)*qn[icv][1] + psi[1]*bdf2Gamma*qnm1[icv][1])*tmp);
+				rhs[icv][2] = underRelax*(RHSrhou[icv][1] - ((1.0+psi[2]*bdf2Alfa)*rhou[icv][1] - (1.0+psi[2]*bdf2Beta)*qn[icv][2] + psi[2]*bdf2Gamma*qnm1[icv][2])*tmp);
+				rhs[icv][3] = underRelax*(RHSrhou[icv][2] - ((1.0+psi[3]*bdf2Alfa)*rhou[icv][2] - (1.0+psi[3]*bdf2Beta)*qn[icv][3] + psi[3]*bdf2Gamma*qnm1[icv][3])*tmp);
+				rhs[icv][4] = underRelax*(RHSrhoE[icv]    - ((1.0+psi[4]*bdf2Alfa)*rhoE[icv]    - (1.0+psi[4]*bdf2Beta)*qn[icv][4] + psi[4]*bdf2Gamma*qnm1[icv][4])*tmp);
+
+				residField[icv] = RHSrhoE[icv];
+
+				for (int i=0; i<5; i++)
+					myResidual[i] += fabs(rhs[icv][i]);
+
+				for (int i = 0; i < 5; i++)
+					A[nbocv_i[icv]][i][i] += (1.0+psi[0]*bdf2Alfa)*tmp;                               // diagonal part ( vol/dt + A )
+			}
+
+			solveCoupledLinSysNS(dq, A, rhs, zeroAbsLS, zeroRelLS, maxIterLS);  // solve linear system
+
+			for (int icv=0; icv<ncv; icv++)                                 // update solution: Q_new = Q_old + Delta_Q
+			{
+				rho[icv]     += dq[icv][0];
+				rhou[icv][0] += dq[icv][1];
+				rhou[icv][1] += dq[icv][2];
+				rhou[icv][2] += dq[icv][3];
+				rhoE[icv]    += dq[icv][4];
+			}
+
+			UpdateCvDataStateVec(dq);                                       // update dq since neighbors needed to compute RHS of scalars
+
+			// ---------------------------------------------------------------------------------
+			// solve linear system for the scalars
+			// ---------------------------------------------------------------------------------
+
+			// the scalars are solved separately from the NSE but in order to ensure consistency with
+			// the continuity equation, the implicit terms (i.e., dependence of the scalars on rho, rhou)
+			// are used on the RHS of the equations. This means that AScal[iScal][4] is the only implicit
+			// term on the LHS, while AScal[iScal][0-3] are put back to the right side.
+
+			for (int iScal = 0; iScal < nScal; iScal++)                               // prepare rhs and A
+			{
+				double *phi = scalarTranspEqVector[iScal].phi;
+
+				for (int icv = 0; icv < ncv; ++icv)
+				{
+					double tmp = cv_volume[icv]/(local_dt[icv]);
+					double rhoPhi = (rho[icv]-dq[icv][0])*phi[icv];
+
+					double psi = 1.0;
+					if (bdf2_TVD_limiter == 1)
+					{
+						// IKJ: We should prevent zero denominators!!
+						bool tvdRzeroDemoninator = false;
+						if(fabs(qnScal[iScal][icv]-qnm1Scal[iScal][icv]) < 1.0e-10)
+							tvdRzeroDemoninator = true;
+
+						if(!tvdRzeroDemoninator) {
+							double minmod, tvdR = (rhoPhi-qnScal[iScal][icv])/(qnScal[iScal][icv]-qnm1Scal[iScal][icv]);
+							if (tvdR > 0.0)
+							{
+								if (1.0 < fabs(tvdR))    minmod= 1.0;
+								else                     minmod = tvdR;
+							}
+							else                       minmod = 0.0;
+
+							psi = pow(minmod/max(1.0, fabs(tvdR)), 0.5); // Note: "psi" often becomes NaN
+							if(isnan(psi) || isinf(psi)) psi = 1.0;
+						}
+					}
+
+					rhsScal[iScal][icv] = underRelax*( rhsScal[iScal][icv]
+					                                                  -( (1.0+psi*bdf2Alfa)*rhoPhi
+					                                                		  - (1.0+psi*bdf2Beta)*qnScal[iScal][icv]
+					                                                		                                     + psi*bdf2Gamma*qnm1Scal[iScal][icv]) * tmp );
+
+					int noc_f = nbocv_i[icv];
+					int noc_l = nbocv_i[icv + 1] - 1;
+
+					AScal[iScal][5][noc_f] += (1.0+psi*bdf2Alfa)*tmp;                                 // diagonal part ( vol/dt + A )
+
+					// move the other implicit terms to the RHS
+					for (int noc = noc_f; noc <= noc_l; noc++)
+						rhsScal[iScal][icv] = rhsScal[iScal][icv]
+						                                     - AScal[iScal][0][noc] * dq[nbocv_v[noc]][0]
+						                                                                               - AScal[iScal][1][noc] * dq[nbocv_v[noc]][1]
+						                                                                                                                         - AScal[iScal][2][noc] * dq[nbocv_v[noc]][2]
+						                                                                                                                                                                   - AScal[iScal][3][noc] * dq[nbocv_v[noc]][3]
+						                                                                                                                                                                                                             - AScal[iScal][4][noc] * dq[nbocv_v[noc]][4];
+
+					myResidual[5+iScal] += fabs(rhsScal[iScal][icv]);
+				}
+
+				solveLinSysScalar(dScal[iScal], AScal[iScal][5], rhsScal[iScal],
+						scalarTranspEqVector[iScal].phiZero,
+						scalarTranspEqVector[iScal].phiZeroRel,
+						scalarTranspEqVector[iScal].phiMaxiter,
+						scalarTranspEqVector[iScal].getName());
+
+				// update scalars and clip
+				for (int icv = 0; icv < ncv; icv++)
+					phi[icv] = min(max((phi[icv]*(rho[icv]-dq[icv][0]) + dScal[iScal][icv])/rho[icv], scalarTranspEqVector[iScal].lowerBound), scalarTranspEqVector[iScal].upperBound);
+
+			}
+
+			// -------------------------------------------------------------------------------------------
+			// update state properties: velocity, pressure, temperature, enthalpy, gamma and R
+			// -------------------------------------------------------------------------------------------
+			updateCvDataG1G2(rho, REPLACE_DATA);
+			updateCvDataG1G2(rhou, REPLACE_ROTATE_DATA);
+			updateCvDataG1G2(rhoE, REPLACE_DATA);
+
+			for (int iScal = 0; iScal < nScal; iScal++)
+				updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
+
+			calcStateVariables();
+
+			calcMaterialProperties();
+
+			setBC();
+
+			calcRansTurbViscMuet();
+
+			MPI_Allreduce(myResidual, Residual, 5+nScal, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
+			if (pN == 0)
+				for (int i=0; i<5+nScal; i++)
+					fstResidual[i] = Residual[i];
+
+			for (int i=0; i<5+nScal; i++)
+				relResidual[i] = Residual[i]/(fstResidual[i]+1.0e-10);
+
+			if (mpi_rank == 0)
+			{
+				if (step%check_interval == 0)
+				{
+					Param *param;
+					if (getParam(param, "LOGGING_LEVEL")) {
+						string name = param->getString();
+
+						bool isLowLogging = ( name.compare("EVERYTHING")==0 || name.compare("DEBUG_HI")==0 || name.compare("DEBUG_LO")==0 ||
+								name.compare("INFO_HI")==0 || name.compare("INFO")==0 || name.compare("INFO_LO")==0 );
+						        // Note: You can find LOGGING_LEVEL info is UgpWithCvCompFlow.h
+
+						if (isLowLogging || (pN>0 && pN%std::max<int>(int((mnNewton-1)/2), 1)==0) || pN == mnNewton-1) {
+							printf("Newton step residual: %d:\t", pN+1);
+							for (int i=0; i<5+nScal; i++)
+								printf("%.4le\t", relResidual[i]);
+							printf("\n");
+						}
+					}
+				}
+			}
+
+			pN++;
+		}
+
+		// =========================================================================================
+		// calculate and show residual
+		// =========================================================================================
+
+		if (step%check_interval == 0)
+		{
+			if ((mpi_rank == 0) && (step%(check_interval*10) == 0))
+				cout << "\ndone step: "<< step << ", cfl: " << cfl << ", min. dt: " << dt_min << " time: " << time << endl;
+
+			showResidue(Residual);
+		}
+
+		// IKJ: For output display (Metric to see the convergence of the simulation)
+		for (int icv = 0; icv < ncv; icv++) {
+			residField[icv] = rhs[icv][4];
+			log10_resid_rhoE[icv] = log10(fabs(RHSrhoE[icv]) + 1.0e-15);
+		}
+		for (int iScal = 0; iScal < nScal; iScal++)
+			for (int icv = 0; icv < ncv; icv++)
+				log10_resid_scalar0[icv] = log10(fabs(rhsScal[iScal][icv]/underRelax) + 1.0e-15);
+		updateCvDataG1G2(residField,       REPLACE_DATA);
+		updateCvDataG1G2(log10_resid_rhoE, REPLACE_DATA);
+		if(nScal>0)
+			updateCvDataG1G2(log10_resid_scalar0, REPLACE_DATA);
+
+		// IKJ
+		double myTotResid_rhs = 0.0;
+		double myTotResid_dq  = 0.0;
+		for (int icv = 0; icv < ncv; icv++) {
+			myTotResid_rhs += fabs(RHSrho[icv]);
+			for (int i=0; i<3; i++)
+				myTotResid_rhs += fabs(RHSrhou[icv][i]);
+			myTotResid_rhs += fabs(RHSrhoE[icv]);
+
+			myTotResid_dq += fabs(rho[icv]- qn[icv][0]);
+			for (int i=0; i<3; i++)
+				myTotResid_dq += fabs(rhou[icv][i] - qn[icv][1+i]);
+			myTotResid_dq += fabs(rhoE[icv] - qn[icv][4]);
+		}
+		for (int iScal = 0; iScal < nScal; iScal++) {
+			double *phi = scalarTranspEqVector[iScal].phi;
+			for (int icv = 0; icv < ncv; icv++) {
+				myTotResid_rhs += fabs(rhsScal[iScal][icv]);
+				myTotResid_dq  += fabs(phi[icv] - qnScal[iScal][icv]/qn[icv][0]);
+			}
+		}
+		MPI_Allreduce(&myTotResid_dq,  &totResid_dq,  1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&myTotResid_rhs, &totResid_rhs, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+
+		temporalHook();
+		dumpProbes(step, 0.0);
+		writeData(step);
+
+		if ((write_restart > 0) && (step % write_restart == 0))
+			writeRestart(step);
+
+		if ((step >= nsteps) || (Residual[4] <= resid_energ_th))   done = 1;
+	}
+
+	MPI_Barrier(mpi_comm);
+	if (mpi_rank == 0)
+	{
+		double wtime0 = wtime;
+		wtime = MPI_Wtime();
+		cout << " > runtime for iterations[s]: " << wtime - wtime0 << endl;
+	}
+
+
+	// ---------------------------------------------------------------------------------
+	// output
+	// ---------------------------------------------------------------------------------
+
+	temporalHook();
+	finalHook();
+
+	writeRestart();
+
+
+	// ---------------------------------------------------------------------------------
+	// delete memory
+	// ---------------------------------------------------------------------------------
+	delete [] RHSrho;
+	delete [] RHSrhou;
+	delete [] RHSrhoE;
+
+	delete [] myResidual;
+	delete [] Residual; 	Residual = NULL;
+
+	delete [] A;
+	delete [] dq;
+	delete [] rhs;
+	delete [] qn;
+	delete [] qnm1;
+
+	if (nScal > 0) freeMem3D(AScal,   0, nScal-1, 0, 5, 0, nbocv_s-1);
+	if (nScal > 0) freeMem2D(dScal,   0, nScal-1, 0, ncv_g-1);
+	if (nScal > 0) freeMem2D(rhsScal, 0, nScal-1, 0, ncv-1);
+	if (nScal > 0) freeMem2D(qnScal, 0, nScal-1, 0, ncv-1);
+	if (nScal > 0) freeMem2D(qnm1Scal, 0, nScal-1, 0, ncv-1);
 
 }
 

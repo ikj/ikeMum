@@ -35,18 +35,18 @@ public:   // constructors
 
     eq = registerScalarTransport("kine", CV_DATA);
     eq->relax = getDoubleParam("RELAX_kine", "0.4");
-    eq->phiZero = 1.0e-8;
-    eq->phiZeroRel = 1.0e-2;
-    eq->phiMaxiter = 500;
+    eq->phiZero = getDoubleParam("ZERO_kine", "1.0e-8");
+    eq->phiZeroRel = getDoubleParam("ZERO_REL_kine", "1.0e-2");
+    eq->phiMaxiter = getIntParam("MAX_ITER_kine", "1000");
     eq->lowerBound = 1.0e-10;
     eq->upperBound = 1.0e10;
 
 
     eq = registerScalarTransport("omega", CV_DATA);
     eq->relax = getDoubleParam("RELAX_omega", "0.4");
-    eq->phiZero = 1.0e-6;
-    eq->phiZeroRel = 1.0e-2;
-    eq->phiMaxiter = 500;
+    eq->phiZero = getDoubleParam("ZERO_omega", "1.0e-8");
+    eq->phiZeroRel = getDoubleParam("ZERO_REL_omega", "1.0e-2");
+    eq->phiMaxiter = getIntParam("MAX_ITER_omega", "1000");
     eq->lowerBound = 1.0e-4;
     eq->upperBound = 1.0e15;
 

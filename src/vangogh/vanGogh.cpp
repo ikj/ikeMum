@@ -40,8 +40,8 @@ struct HyShotGeometry {
 		cout << "**       xInlet  = " << xInlet << endl;
 		cout << "**       xThroat = " << xThroat << endl;
 		cout << "**    combustorLength = " << combustorLength << endl;
-		cout << "**    Y: yLowerwall = "<<yLowerwall << endl;
-		cout << "**       yUpperwall = "<<yUpperwall << endl;
+		cout << "**    Y: yLowerwall = " << yLowerwall << endl;
+		cout << "**       yUpperwall = " << yUpperwall << endl;
 		cout << "**    Width of combustor (width) = " << width << endl;
 		cout << "**    Slope of downstream nozzle (slopeNozzle) = " << slopeNozzle << endl;
 		cout << "**" << endl;
@@ -64,8 +64,8 @@ struct HyShotHeatReleaseModel {
 	double mAir; //Mass flow rate of injected air
 
 	double lengthComb; //Combustor length
-//	double kComb; //Free parameter: Fraction of completed combustion (BLR exp.: 95%)
-//	double dComb; //Free parameter: Shape of heat release
+	double kComb; //Free parameter: Fraction of completed combustion (BLR exp.: 95%)
+	double dComb; //Free parameter: Shape of heat release
 
 	double xCombStart; //Combustion ignition starting position
 	double xCombEnd;
@@ -75,8 +75,8 @@ struct HyShotHeatReleaseModel {
 		cout<<"**    Stoichiometic ratio (fSt)                = "<<fSt<<endl;
 		cout<<"**    Fuel heating value of H2 (hFuel)         = "<<hFuel<<endl;
 		cout<<"**    Mass flow rate of injected air (mAir)    = "<<mAir<<endl;
-//		cout<<"**    Fraction of completed combustion (kComb) = "<<kComb<<endl;
-//		cout<<"**    Shape of heat release (dComb)            = "<<dComb<<endl;
+		cout<<"**    Fraction of completed combustion (kComb) = "<<kComb<<endl;
+		cout<<"**    Shape of heat release (dComb)            = "<<dComb<<endl;
 		cout<<"**    Ignition starting point (xCombStart) = "<<xCombStart<<endl;
 		cout<<"**    Combustion end point (xCombEnd)      = "<<xCombEnd<<endl;
 		cout<<"**    Combustion zone length (lengthComb)  = "<<lengthComb<<endl;
@@ -97,9 +97,18 @@ protected:
 	double *kine_init;
 	double *omega_init;
 
-	// data on the unstable branch (from Q0_PT000**.bin)
+	// data on the unstable(hyperbolic) branch (from Q0_PT000**.bin)
 	double *kine_unstable;
 	double *omega_unstable;
+
+	// -------------------------
+	// Perturbations
+	// -------------------------
+	double *kine_perturb;
+	double *omega_perturb;
+
+	double *press_perturb;
+	double *temp_perturb;
 
 	// -------------------------
 	// Eigenvecs: Tecplot output
@@ -121,6 +130,9 @@ protected:
 	// Heat Release Model: Based on C.Doolan & R.Boyce, AIAA 2008-2603
 	HyShotHeatReleaseModel hyShotHeatReleaseModel;
 	double *heatReleaseFunc;
+
+	// Statistics
+	double sumHeatRelease;
 
 	// Inlet profile
 	int npos;
@@ -192,15 +204,24 @@ protected:
 		omega_unstable = NULL; 	registerScalar(omega_unstable, "UNSTABLE_OMEGA", CV_DATA);
 
 		// -------------------------
+		// Perturbations
+		// -------------------------
+		kine_perturb  = NULL; 	registerScalar(kine_perturb,  "PERTURB_KINE",  CV_DATA);
+		omega_perturb = NULL; 	registerScalar(omega_perturb, "PERTURB_OMEGA", CV_DATA);
+
+		press_perturb = NULL; 	registerScalar(press_perturb, "PERTURB_PRESS", CV_DATA);
+		temp_perturb  = NULL; 	registerScalar(temp_perturb,  "PERTURB_TEMP",  CV_DATA);
+
+		// -------------------------
 		// Eigenvecs: Tecplot output
 		// -------------------------
 		// least-stable global modes
-		kine_Dct_1stReal  = NULL; 	registerScalar(kine_Dct_1stReal,  "DCT1ST_KINE",  CV_DATA);
-		omega_Dct_1stReal = NULL;	registerScalar(omega_Dct_1stReal, "DCT1ST_OMEGA", CV_DATA);
+		kine_Dct_1stReal  = NULL; 	registerScalar(kine_Dct_1stReal,  "DCT1ST_REAL_KINE",  CV_DATA);
+		omega_Dct_1stReal = NULL;	registerScalar(omega_Dct_1stReal, "DCT1ST_REAL_OMEGA", CV_DATA);
 
 		// first adjoint global modes
-		kine_Adj_1stReal  = NULL;	registerScalar(kine_Adj_1stReal,  "ADJ1ST_KINE",  CV_DATA);
-		omega_Adj_1stReal = NULL;	registerScalar(omega_Adj_1stReal, "ADJ1ST_OMEGA", CV_DATA);
+		kine_Adj_1stReal  = NULL;	registerScalar(kine_Adj_1stReal,  "ADJ1ST_REAL_KINE",  CV_DATA);
+		omega_Adj_1stReal = NULL;	registerScalar(omega_Adj_1stReal, "ADJ1ST_REAL_OMEGA", CV_DATA);
 	}
 
 	/*
@@ -210,7 +231,6 @@ protected:
 	 */
 	void clear() {}
 
-
 	// -------------------------
 	// HyShot related parameters
 	// -------------------------
@@ -219,7 +239,7 @@ protected:
 
 		hyShotGeometry.xMin = 0.345717;
 		hyShotGeometry.xInlet = 0.350028;
-		hyShotGeometry.combustorLength = 0.035;
+		hyShotGeometry.combustorLength = 0.090; // This is important because "combustorLength" defines "xThroat"
 		hyShotGeometry.xThroat = hyShotGeometry.xInlet + hyShotGeometry.combustorLength;
 		hyShotGeometry.xMax = hyShotGeometry.xThroat + 0.123;
 		hyShotGeometry.yLowerwall = 0.11952;
@@ -234,16 +254,16 @@ protected:
 
 		heatReleaseParams.fSt   = 0.028; //Stoichiometric fuel/air ratio (0.28 for H2/air)
 //		heatReleaseParams.hFuel = 1.20e8; //Fuel heating value (120MJ/kg for H2)
-		heatReleaseParams.hFuel = 1.20e-1; //Fuel heating value (120MJ/kg for H2)
+		heatReleaseParams.hFuel = 1.20e-1;
 		heatReleaseParams.mAir  = 0.053*7.5; //Mass flow rate of injected air (The viscous 2D hyshot case has actual width of 0.01: Thus, it has 0.053*20)
 
-//		heatReleaseParams.kComb = 0.95; //Free parameter: Fraction of completed combustion (DLR simulation result: 95%)
-//		heatReleaseParams.dComb = shapeHeatRelease; //Free parameter: Shape of heat release (best result from Vince's experiment - he tried dComb=0.5,0.75,1.0,1.25,1.5)
+		heatReleaseParams.kComb = 0.95; //Free parameter: Fraction of completed combustion (DLR simulation result: 95%)
+		heatReleaseParams.dComb = shapeHeatRelease; //Free parameter: Shape of heat release (best result from Vince's experiment - he tried dComb=0.5,0.75,1.0,1.25,1.5)
 
-		heatReleaseParams.xCombStart = GeomParams.xInlet + 0.002851; //Combustion ignition starting position
-		heatReleaseParams.xCombEnd   = GeomParams.xThroat;
+		heatReleaseParams.xCombStart = GeomParams.xInlet + 0.057972; //Combustion ignition starting position = 0.408
+		heatReleaseParams.xCombEnd   = GeomParams.xMax;
 
-		heatReleaseParams.lengthComb = heatReleaseParams.xCombEnd - heatReleaseParams.xCombStart; //Combustor length
+		heatReleaseParams.lengthComb = 0.365; // The length of combustion for the cae of duct length = 300mm
 	}
 
 	void showHyShotParamsOnScreen() {
@@ -268,19 +288,27 @@ protected:
 			double xCoord = x_cv[icv][0];
 			double yCoord = x_cv[icv][1];
 
-			if (xCoord >= hyShotHeatReleaseModel.xCombStart && xCoord <= hyShotHeatReleaseModel.xCombEnd && yCoord >= hyShotGeometry.yLowerwall && yCoord <= hyShotGeometry.yUpperwall) {
-				double area = (hyShotGeometry.yUpperwall - hyShotGeometry.yLowerwall) * hyShotGeometry.width;
+			if (xCoord >= hyShotHeatReleaseModel.xCombStart && yCoord >= hyShotGeometry.yLowerwall) {
+				if ((xCoord >= hyShotGeometry.xThroat) || (xCoord < hyShotGeometry.xThroat && yCoord <= hyShotGeometry.yUpperwall)) {
+					double area = 1.0;
+					if(xCoord <= hyShotGeometry.xThroat)
+						area = (hyShotGeometry.yUpperwall - hyShotGeometry.yLowerwall) * hyShotGeometry.width;
+					else {
+						double height = (hyShotGeometry.yUpperwall - hyShotGeometry.yLowerwall)
+									+ hyShotGeometry.slopeNozzle * (xCoord - hyShotGeometry.xThroat);
+						area = height * hyShotGeometry.width;
+					}
 
-//				double xN = (xCoord-hyShotHeatReleaseModel.xCombStart) / hyShotHeatReleaseModel.lengthComb;
-//
-//				double constFunc = hyShotHeatReleaseModel.dComb * hyShotHeatReleaseModel.kComb / hyShotHeatReleaseModel.lengthComb;
-//				double func = constFunc * pow(hyShotHeatReleaseModel.kComb*xN, hyShotHeatReleaseModel.dComb-1) * exp(-pow(hyShotHeatReleaseModel.kComb*xN, hyShotHeatReleaseModel.dComb));
-				double func = 1.0 / hyShotHeatReleaseModel.lengthComb;
+					double xN = (xCoord-hyShotHeatReleaseModel.xCombStart) / hyShotHeatReleaseModel.lengthComb;
 
-				heatReleaseFunc[icv] = constant/area*func*cv_volume[icv];
+					double constFunc = hyShotHeatReleaseModel.dComb * hyShotHeatReleaseModel.kComb / hyShotHeatReleaseModel.lengthComb;
+					double func = constFunc * pow(hyShotHeatReleaseModel.kComb*xN, hyShotHeatReleaseModel.dComb-1) * exp(-pow(hyShotHeatReleaseModel.kComb*xN, hyShotHeatReleaseModel.dComb));
 
-				++myCountHR;
-				mySumHeatRelease += heatReleaseFunc[icv];
+					heatReleaseFunc[icv] = constant / area * func;
+
+					++myCountHR;
+					mySumHeatRelease += heatReleaseFunc[icv] * cv_volume[icv];
+				}
 			} else
 				heatReleaseFunc[icv] = 0.0;
 		}
@@ -502,24 +530,19 @@ public:
 	 *
 	 */
 	void sourceHook(double *rhs_rho, double (*rhs_rhou)[3], double *rhs_rhoE, double (*A)[5][5]) {
-		static bool firstCall = true;
+		double mySumHeatRelease;
 
-		if(lambda==NULL) {
-			if(mpi_rank == 0)
-				cerr<<"ERROR! lambda was not registered!"<<endl;
-			throw(VANGOGH_ERROR_CODE);
-		} else {
-			if(firstCall && mpi_rank == 0)
-				cout<<"> sourceHook(): lambda[0] = "<<lambda[0]<<endl;
-
+		if(lambda != NULL) {
 			for (int icv=0; icv<ncv; ++icv) {
-				if (x_cv[icv][0] >= hyShotHeatReleaseModel.xCombStart && x_cv[icv][0] <= hyShotHeatReleaseModel.xCombEnd) {
-					rhs_rhoE[icv] += lambda[0] * hyShotHeatReleaseModel.hFuel * heatReleaseFunc[icv];
+				if (x_cv[icv][0] >= hyShotHeatReleaseModel.xCombStart) {
+					rhs_rhoE[icv] += lambda[0]*hyShotHeatReleaseModel.hFuel*heatReleaseFunc[icv] * cv_volume[icv];
+
+					mySumHeatRelease += lambda[0]*hyShotHeatReleaseModel.hFuel*heatReleaseFunc[icv] * cv_volume[icv];
 				}
 			}
 		}
 
-		firstCall = false;
+		MPI_Allreduce(&mySumHeatRelease, &sumHeatRelease, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
 	}
 
 	/*
@@ -528,209 +551,365 @@ public:
 	 *
 	 */
 	void temporalHook() {
-//		// Sum heat release
-//		double totSumHeatRelease_JOE;
-//		MPI_Allreduce(&mySumHeatRelease_JOE, &totSumHeatRelease_JOE, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//
-//		if(mpi_rank==0 && step%(check_interval*100)==0) {
-//			if(fabs(totSumHeatRelease_JOE)>1.0e-10)
-//				printf("   TOTAL HEAT-RELEASE (JOE)= %.5e\n", totSumHeatRelease_JOE);
-//		}
-//
-//		mySumHeatRelease_JOE = 0.0;
-//
-//		//**************
-//		// Record
-//		//**************
-//		int saveQoI = getIntParam("INTERVAL_SAVE_QOI", "100");
-//		if(step%saveQoI == 0) {
-//			char filenameQoI[30];
-//			sprintf(filenameQoI, "QoI.case%04d.csv", itest);
-//			writeQoIOnFile(step, filenameQoI, 0, false);
-//		}
-//
-//		int saveProfile = getIntParam("INTERVAL_SAVE_PROFILE", "100");
-//		if(step%saveProfile == 0) {
-//			char filenameProfile[40];
-//			sprintf(filenameProfile, "profile.case%04d.step%05d.csv", itest, step);
-//			write1Dprofile(filenameProfile);
-//		}
-//
-//		if(step%check_interval==0) {
-//			char filenameResidual[30];
-//			sprintf(filenameResidual, "residual.case%04d.csv", itest);
-//			if(mpi_rank==0) {
-//				FILE *fp = fopen(filenameResidual, "a");
-//
-//				fprintf(fp,"%d, ", step);
-//
-//				int nScal = scalarTranspEqVector.size();
-//				for(int i=0; i<5+nScal-1; ++i)
-//					fprintf(fp, "%11.4e, ", Residual[i]);
-//				fprintf(fp,"%11.4e\n", Residual[5+nScal-1]);
-//
-//				fclose(fp);
-//			}
-//		}
+		// You must add VanGothWithModels::temporalHook() because it contains important functionalities
+		VanGoghWithModels::temporalHook();
+
+		// Your own temporalHook() begins here.
+		int check_interval = getIntParam("CHECK_INTERVAL", "1");
+
+		int goodOM_interval = 200;
+		int goodOM_maxStep = 2000;
+		bool calcWriteGoodInitOM = (step > 0 && step <= goodOM_maxStep && step%goodOM_interval == 0);
+
+		if(step > 0) {
+			if(itest <= 5 && calcWriteGoodInitOM)
+				writeData2(itest, step, true); // Save each case on a different file
+		}
+
+		if(step > 0) {
+			if(perturbParams.calcOptimalMetric && calcWriteGoodInitOM) {
+				int nScal = scalarTranspEqVector.size();
+				double metricNumer[5+nScal];
+				double metricDenom[5+nScal];
+				for(int i=0; i<5+nScal; ++i) { metricNumer[i] = 0.0; 	metricDenom[i] = 0.0; }
+
+				calcOptMetrics(metricNumer, metricDenom);
+
+				char optMetricFilename[40];
+				sprintf(optMetricFilename, "OptimalMetrics_step%05d.txt", step);
+				writeOptimalMeticOnFile(itest, optMetricFilename, false, metricNumer, metricDenom, nScal);
+			}
+		}
 	}
 
-	///*
-	// * Method: perturbFieldScalars
-	// * ---------------------------
-	// * Perturb the initial field with random variables and apply filter to the perturbations
-	// */
-	//void VanGoghKOm::perturbFieldScalars(const RAND_DISTRIB_FUNC randDistribFunc, const bool useSmoothing, const bool useFiltering) {
-	//	if(mpi_rank==0)
-	//		cout<<"VanGoghKOm::perturbFieldScalars()"<<endl;
-	//
-	//	double *kine = getR1("kine");
-	//	double *omega = getR1("omega");
-	//
-	//	// Random variable array and filter array
-	//	assert(array_perturb == NULL);
-	//	array_perturb = new double [ncv_ggff];
-	//
-	//	double *tempFiltered = NULL;
-	//	if(useFiltering)
-	//		tempFiltered = new double [ncv_ggff];
-	//
-	//	// Some parameters for the disturbances
-	//	double disturbMag = getDoubleParam("DISTURB_MAGNITUDE", "0.05");
-	//	double disturbClip = getDoubleParam("DISTURB_CLIP", "0.001");
-	//
-	//	// Some parameters for the hat-shaped smoothing function: f(x) = 1.0 - 0.5*(exp(-a*(x-xMin)) + exp(a*(x-xMax))), where a = ln(100)/edgeSize
-	//	// Note: At xMin & xMax, f(x) = 0.0. At the "edges", f(x) = 0.99. At the center of the domain, f(x) ~= 1.0
-	//	//       The smoothing occurs only if useSmoothing is TRUE.
-	//	double disturbSmoothXmin = getDoubleParam("DISTURB_SMOOTH_XMIN", "-1.0e10");
-	//	double disturbSmoothXmax = getDoubleParam("DISTURB_SMOOTH_XMAX", "1.0e10");
-	//	double disturbSmoothEdgeSize = getDoubleParam("DISTURB_SMOOTH_EDGE_SIZE", "1.0e-5");
-	//	double a = log(100.0)/disturbSmoothEdgeSize;
-	//	assert(disturbSmoothXmin<disturbSmoothXmax);
-	//	assert(a>0);
-	//
-	//	// -------------------
-	//	// Generate kine_perturb
-	//	// -------------------
-	//	if(randDistribFunc == UNIFORM_DISTRIB) {
-	//		randArrayUniform(array_perturb, ncv); // note: randArrayUniform() generates random variables in [0,1]
-	//		for(int icv=0; icv<ncv; ++icv)
-	//			array_perturb[icv] -= 0.5;        // shifting
-	//	} else
-	//		randArrayNormal(array_perturb, ncv);  // default = normal distribution
-	//
-	//	updateCvDataG1G2(array_perturb, REPLACE_DATA);
-	//
-	//	// -------------------
-	//	// Filter kine_perturb
-	//	// -------------------
-	//	// note: parameters for the filtering such as maxFilterWidth and filterBoundaryLength were already set
-	//	if(useFiltering) {
-	//		// Check if filter has been constructed.
-	//		if(!filterConsturcted())
-	//			buildCvDifferentialFilter();
-	//		assert(maxFilterWidth > 0.0);
-	//
-	//		applyDiffFilterG1G2(tempFiltered, array_perturb);
-	//		for(int icv=0; icv<ncv; ++icv)
-	//			array_perturb[icv] = tempFiltered[icv];
-	//		updateCvDataG1G2(array_perturb, REPLACE_DATA);
-	//	}
-	//
-	//	// -------------------
-	//	// Update kine
-	//	// -------------------
-	//	double rmsVal = calcRMS(kine, false); // get RMS
-	//	double coeff = rmsVal*disturbMag; // calculate the coefficient based on the RMS
-	//	int myCountClip = 0;
-	//	for(int icv=0; icv<ncv; ++icv) {
-	//		double disturb = coeff*array_perturb[icv];
-	//		if(useSmoothing) {
-	//			double x = x_cv[icv][0];
-	//			if(x<disturbSmoothXmin || x>disturbSmoothXmax)
-	//				disturb = 0.0;
-	//			else
-	//				disturb *= 1.0 - 0.5*(exp(-a*(x-disturbSmoothXmin)) + exp(a*(x-disturbSmoothXmax)));
-	//		}
-	//		if(kine[icv]+disturb < disturbClip*kine[icv]) {
-	//			kine[icv] = disturbClip*kine[icv];
-	//			++myCountClip;
-	//		} else
-	//			kine[icv] += disturb;
-	//	}
-	//	updateCvDataG1G2(kine,  REPLACE_DATA);
-	//	int countClip; 	MPI_Allreduce(&myCountClip, &countClip, 1, MPI_INT, MPI_SUM, mpi_comm);
-	//	if(mpi_rank == 0) {
-	//		if(randDistribFunc == UNIFORM_DISTRIB)
-	//			printf("    Perturb the kine field with Uniform:  min disturb = %.3e, max disturb = %.3e, # clip = %d \n", -0.5*coeff, 0.5*coeff, countClip);
-	//		else
-	//			printf("    Perturb the kine field with Gaussian:  std = %.3e, # clip = %d \n", coeff, countClip);
-	//	}
-	//
-	//	// -------------------
-	//	// Generate omega_perturb
-	//	// -------------------
-	//	if(randDistribFunc == UNIFORM_DISTRIB) {
-	//		randArrayUniform(array_perturb, ncv); // note: randArrayUniform() generates random variables in [0,1]
-	//		for(int icv=0; icv<ncv; ++icv)
-	//			array_perturb[icv] -= 0.5;        // shifting
-	//	} else
-	//		randArrayNormal(array_perturb, ncv);  // default = normal distribution
-	//	updateCvDataG1G2(array_perturb, REPLACE_DATA);
-	//
-	//	// -------------------
-	//	// Filter omega_perturb
-	//	// -------------------
-	//	if(useFiltering) {
-	//		applyDiffFilterG1G2(tempFiltered, array_perturb);
-	//		for(int icv=0; icv<ncv; ++icv)
-	//			array_perturb[icv] = tempFiltered[icv];
-	//		updateCvDataG1G2(array_perturb, REPLACE_DATA);
-	//	}
-	//
-	//	// -------------------
-	//	// Update omega
-	//	// -------------------
-	//	rmsVal = calcRMS(omega, false); // get RMS
-	//	coeff = rmsVal*disturbMag; // calculate the coefficient based on the RMS
-	//
-	//	myCountClip = 0;
-	//	for(int icv=0; icv<ncv; ++icv) {
-	//		double disturb = coeff*array_perturb[icv];
-	//		if(useSmoothing) {
-	//			double x = x_cv[icv][0];
-	//			if(x<disturbSmoothXmin || x>disturbSmoothXmax)
-	//				disturb = 0.0;
-	//			else
-	//				disturb *= 1.0 - 0.5*(exp(-a*(x-disturbSmoothXmin)) + exp(a*(x-disturbSmoothXmax)));
-	//		}
-	//		if(omega[icv]+disturb < disturbClip*omega[icv]) {
-	//			omega[icv] = disturbClip*omega[icv];
-	//			myCountClip++;
-	//		} else
-	//			omega[icv] += disturb;
-	//	}
-	//	updateCvDataG1G2(omega,  REPLACE_DATA);
-	//	MPI_Allreduce(&myCountClip, &countClip, 1, MPI_INT, MPI_SUM, mpi_comm);
-	//	if(mpi_rank == 0) {
-	//		if(randDistribFunc == UNIFORM_DISTRIB)
-	//			printf("    Perturb the omega field with Uniform: min disturb = %.3e, max disturb = %.3e, # clip = %d \n", -0.5*coeff, 0.5*coeff, countClip);
-	//		else
-	//			printf("    Perturb the omega field with Gaussian: std = %.3e, # clip = %d \n", coeff, countClip);
-	//	}
-	//
-	//	// -------------
-	//	// Clear memory
-	//	// -------------
-	//	delete [] array_perturb; array_perturb = NULL;
-	//	if(useFiltering)
-	//		delete [] tempFiltered;
-	//
-	//	if(mpi_rank==0)
-	//		cout<<endl;
-	//	MPI_Barrier(mpi_comm);
-	//}
+	/*
+	 * Method: finalHook
+	 * -----------------
+	 *
+	 */
+	void finalHook() {
+		// You must add VanGothWithModels::finalHook() because it contains important functionalities
+		VanGoghWithModels::finalHook();
 
+		// Your own finalHook() begins here.
+	}
 
+	/************************************
+	 *---  VANGOGH VIRTUAL FUNCTION  ---*
+	 ************************************/
+	/*
+	 * Method: updateEigenVecTecplotScalarRansTurbModel
+	 * ------------------------------------------------
+	 * Update scalar variabls (e.g. kine_Dct_1stReal, kine_Adj_1stReal, etc.) from DirectEvecs and AdjointEvecs.
+	 * This is just for Tecplot output
+	 */
+	void updateEigenVecTecplotScalarRansTurbModel() {
+		// least-stable global modes
+		for(int icv=0; icv<ncv; ++icv) {
+			kine_Dct_1stReal[icv]  = DirectEvecs[0][5][icv].real();
+			omega_Dct_1stReal[icv] = DirectEvecs[0][6][icv].real();
+		}
+
+		// first adjoint global modes
+		for(int icv=0; icv<ncv; ++icv) {
+			kine_Adj_1stReal[icv]  = AdjointEvecs[0][5][icv].real();
+			omega_Adj_1stReal[icv] = AdjointEvecs[0][6][icv].real();
+		}
+	}
+
+	/*
+	 * Method: updateUnstableVecRansTurbModel
+	 * --------------------------------------
+	 * Update scalar variabls (kine_unstable, etc.) from a qVec that has been generated by reading a IKE binary file.
+	 * This is NOT ONLY for Tecplot output BUT ALSO linear analysis
+	 */
+	void updateUnstableVecRansTurbModel(double* qVecTemp, const int nVars) {
+		assert(qVecTemp!=NULL && kine_unstable!=NULL && omega_unstable!=NULL);
+
+		for(int icv=0; icv<ncv; ++icv) {
+			int index = icv*nVars;
+			kine_unstable[icv]  = qVecTemp[index+5];
+			omega_unstable[icv] = qVecTemp[index+6];
+		}
+	}
+
+	/*
+	 * Method: storeInitRestartScalarRansTurbModel
+	 * -------------------------------------------
+	 * Store initial scalar data in arrays (e.g. kine_init, etc.)
+	 */
+	void storeInitRestartScalarRansTurbModel() {
+		assert(kine_init!=NULL && omega_init!=NULL);
+
+		for (int icv=0; icv<ncv; ++icv) {
+			kine_init[icv]  = kine[icv];
+			omega_init[icv] = omega[icv];
+		}
+		updateCvDataG1G2(kine_init,  REPLACE_DATA);
+		updateCvDataG1G2(omega_init, REPLACE_DATA);
+	}
+
+	/*
+	 * Method: reinitialHookScalarRansTurbModel
+	 * ----------------------------------------
+	 * Similar role to initialHook(): Reinitialize the flow field from the previous simulation.
+	 */
+	void reinitialHookScalarRansTurbModel() {
+		assert(kine_init!=NULL && omega_init!=NULL);
+
+		for (int icv=0; icv<ncv; ++icv) {
+			kine[icv]  = kine_init[icv];
+			omega[icv] = omega_init[icv];
+		}
+	}
+
+	/*
+	 * Method: perturbFieldScalarRansTurbModel
+	 * ---------------------------------------
+	 * WARNING: This method is called earlier than perturbFieldNS()!
+	 * Perturb the initial field with random variables and apply filter to the perturbations
+	 */
+	void perturbFieldScalarRansTurbModel() {
+//		if(mpi_rank==0)
+//			cout<<classID<<"::perturbFieldScalarRansTurbModel()"<<endl;
+//
+//		double *kine = getR1("kine");
+//		double *omega = getR1("omega");
+//
+//		// ---------------
+//		// Perturb kine
+//		// ---------------
+//		bool applyClipping = true;
+//		perturbScalar(kine, array_perturb, "kine", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+//
+//		// write the perturbation for Tecplot output
+//		for(int icv=0; icv<ncv; ++icv)
+//			kine_perturb[icv] = array_perturb[icv];
+//		updateCvDataG1G2(kine_perturb, REPLACE_DATA);
+//
+//		// ---------------
+//		// Perturb omega
+//		// ---------------
+//		applyClipping = true;
+//		perturbScalar(omega, array_perturb, "omega", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+//
+//		// write the perturbation for Tecplot output
+//		for(int icv=0; icv<ncv; ++icv)
+//			omega_perturb[icv] = array_perturb[icv];
+//		updateCvDataG1G2(omega_perturb, REPLACE_DATA);
+//
+//
+//		if(mpi_rank==0)
+//			cout<<endl;
+//		MPI_Barrier(mpi_comm);
+	}
+
+	/*
+	 * Method: perturbFieldNS
+	 * ----------------------
+	 * Perturb the initial field with random variables and apply filter to the perturbations
+	 */
+	void perturbFieldNS() {
+		if(mpi_rank==0)
+			cout<<classID<<"::perturbFieldNS()"<<endl;
+
+		// ---------------
+		// Perturb press
+		// ---------------
+		double disturbRatio = perturbParams.disturbMag;
+		bool applyClipping = true;
+		perturbScalar(UgpWithCvCompFlow::press, array_perturb, disturbRatio, "press", applyClipping);  // Note: updateCvDataG1G2() was called in this method
+
+		// write the perturbation for Tecplot output
+		for(int icv=0; icv<ncv; ++icv)
+			press_perturb[icv] = array_perturb[icv];
+		updateCvDataG1G2(press_perturb, REPLACE_DATA);
+
+		// ---------------
+		// Perturb temp
+		// ---------------
+		disturbRatio = perturbParams.disturbMag;
+		applyClipping = true;
+		perturbScalar(UgpWithCvCompFlow::temp,  array_perturb, disturbRatio, "temp",  applyClipping);  // Note: updateCvDataG1G2() was called in this method
+
+		// write the perturbation for Tecplot output
+		for(int icv=0; icv<ncv; ++icv)
+			temp_perturb[icv] = array_perturb[icv];
+		updateCvDataG1G2(temp_perturb, REPLACE_DATA);
+
+		// -------------------
+		// Update rho and rhoE according to the perturbed press and temp
+		// -------------------
+		double *kineArray = NULL;
+		int kine_Index = getScalarTransportIndex("kine");
+		if(kine_Index>=0)
+			kineArray = scalarTranspEqVector[kine_Index].phi;
+
+		for(int icv=0; icv<ncv; ++icv) {
+			rho[icv] = UgpWithCvCompFlow::press[icv] / UgpWithCvCompFlow::RoM[icv] / UgpWithCvCompFlow::temp[icv];
+
+			double kinecv = 0.0;
+			if(kine_Index>=0)
+				kinecv = kineArray[icv];
+
+			double interRhoE = UgpWithCvCompFlow::press[icv] / (UgpWithCvCompFlow::gamma[icv] - 1.0);
+			double kinetRhoE = 0.5*vecDotVec3d(rhou[icv], rhou[icv])/rho[icv] + rho[icv]*kinecv;
+			rhoE[icv] = interRhoE + kinetRhoE;
+
+			double pressCheck = calcPress(UgpWithCvCompFlow::gamma[icv], rhoE[icv], rhou[icv], rho[icv], kinecv);
+			if(pressCheck < 0.0) {
+				cerr<<"ERROR "<<classID<<"::perturbFieldNS(): pressure becomes negative -- press = "<<pressCheck<<endl;
+				throw(VANGOGH_ERROR_CODE);
+			}
+		}
+		updateCvDataG1G2(rho,  REPLACE_DATA);
+		updateCvDataG1G2(rhoE, REPLACE_DATA);
+
+		if(mpi_rank==0)
+			cout<<endl;
+		MPI_Barrier(mpi_comm);
+	}
+
+	/*
+	 * Method: calcOptMetricsScalarRansTurbModel
+	 * -----------------------------------------
+	 * Calculate the turbulent scalar part of the optimal metrics using adjoint.
+	 * Formulation: Let phi=flow field, phi0=flow field on the unstable branch, y=least stable eigenvector, a=adjoint vector,
+	 *                       (phi-phi0)*a
+	 *              metric = ------------
+	 *                           y*a
+	 * Return: metricNumer = (phi-phi0)*a
+	 *         metricDenom = y*a
+	 */
+	void calcOptMetricsScalarRansTurbModel(double* metricNumer, double* metricDenom, const int nScal) {
+		assert(kine_unstable != NULL && omega_unstable != NULL);
+		assert(!AdjointEvecs.empty());
+		assert(!DirectEvecs.empty());
+
+		// define variables
+		double *kine = getR1("kine");
+		double *omega = getR1("omega");
+
+		int kine_index  = getScalarTransportIndex("kine");  	assert(kine_index == 0  && kine_index < nScal);
+		int omega_index = getScalarTransportIndex("omega"); 	assert(omega_index == 1 && omega_index < nScal);
+
+		int nTurbScal = 2;
+
+		double myTemp[nTurbScal];
+
+		// calculate numerator = (phi-phi0)*a
+		for(int i=0; i<nTurbScal; ++i)
+			myTemp[i] = 0.0;
+		for(int icv=0; icv<ncv; ++icv) {
+			myTemp[0] += (kine[icv]-kine_unstable[icv])   * AdjointEvecs[0][5+kine_index][icv].real();
+			myTemp[1] += (omega[icv]-omega_unstable[icv]) * AdjointEvecs[0][5+omega_index][icv].real();
+		}
+		double totTemp[nTurbScal]; 	for(int i=0; i<nTurbScal; ++i) totTemp[i] = 0.0;
+		MPI_Allreduce(myTemp, totTemp, nTurbScal, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		metricNumer[5+kine_index]  = totTemp[0];
+		metricNumer[5+omega_index] = totTemp[1];
+
+		// calculate denominator = y*a
+		for(int i=0; i<nTurbScal; ++i)
+			myTemp[i] = 0.0;
+		for(int icv=0; icv<ncv; ++icv) {
+			myTemp[0] += DirectEvecs[0][5+kine_index][icv].real()  * AdjointEvecs[0][5+kine_index][icv].real();
+			myTemp[1] += DirectEvecs[0][5+omega_index][icv].real() * AdjointEvecs[0][5+omega_index][icv].real();
+		}
+		for(int i=0; i<nTurbScal; ++i) totTemp[i] = 0.0;
+		MPI_Allreduce(myTemp, totTemp, nTurbScal, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		metricDenom[5+kine_index]  = totTemp[0];
+		metricDenom[5+omega_index] = totTemp[1];
+	}
+
+	/*
+	 * Method: writeQoIOnFile
+	 * ----------------------
+	 * Averaged density and Averaged Mach number
+	 */
+	void writeQoIOnFile(const int itest, char filename[], bool rewrite) {
+		if(UgpWithCvCompFlow::diverg==NULL ) {
+			cerr<<classID<<"::writeQoIOnFile(): diverg has not been assigned"<<endl;
+			throw(-1);
+		}
+
+		if(UgpWithCvCompFlow::grad_rho == NULL && mpi_rank==0)
+			cout<<"WARNING "<<classID<<"::writeQoIOnFile(): grad_rho is NULL"<<endl;
+
+		calcGradRhoIfNecessary();
+
+		//=================
+		// Calculate QoI's
+		//=================
+		// 1 - Shock impingement point on the upperwall
+		string faZoneName = "upperwall";
+
+		// Find local shock location mainly based on the magnitude of grad_rho
+		double myShockLocUpperwall      =  ABSURDLY_BIG_NUMBER;
+		double myShockStrengthUpperwall = -ABSURDLY_BIG_NUMBER;
+		for (list<FaZone>::iterator zone = faZoneList.begin(); zone != faZoneList.end(); zone++) {
+			if (zone->getKind() == FA_ZONE_BOUNDARY) {
+				if (faZoneName.compare(zone->getName()) == 0) {
+					for (int index = 0; index < zone->faVec.size(); ++index) {
+						int ifa = zone->faVec[index];
+						int icv0 = cvofa[ifa][0];
+
+						double grad_rho_mag = sqrt(vecDotVec3d(UgpWithCvCompFlow::grad_rho[icv0], UgpWithCvCompFlow::grad_rho[icv0]));
+						if(grad_rho_mag >= 100.0 && UgpWithCvCompFlow::diverg[icv0] <= 0.0) {   // This value of 100 works for inviscid Hyshot
+							if(myShockStrengthUpperwall < grad_rho_mag) {
+								myShockStrengthUpperwall = grad_rho_mag;
+								myShockLocUpperwall      = x_fa[ifa][0];
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Find global shock location
+		double shockLocUpperwall;
+		double shockStrengthUpperwall;
+		MPI_Allreduce(&myShockStrengthUpperwall, &shockStrengthUpperwall, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
+		if(myShockStrengthUpperwall < shockStrengthUpperwall)
+			myShockLocUpperwall = ABSURDLY_BIG_NUMBER;
+		MPI_Allreduce(&myShockLocUpperwall, &shockLocUpperwall, 1, MPI_DOUBLE, MPI_MIN, mpi_comm);
+
+		// 2 - Volume-averaged density, Volume-averaged density gradient, Subsonic volume portion
+		double avgRho,  avgRhoGradMag,  subsonicPortion;
+		getEngineIntegQuantities(avgRho, avgRhoGradMag, subsonicPortion);
+
+		// 3 - Wall-pressures at the throat
+		double upperwallPress, lowerwallPress;
+		getThroatWallPress(upperwallPress, lowerwallPress);
+
+		// 4 - Thrust of the engine
+		double thrust_X, thrust_Y;
+		get2DengineThrustQuantities(thrust_X, thrust_Y);
+
+		//=================
+		// Write QoI's on the file
+		//=================
+		if(mpi_rank==0) {
+			FILE *fp;
+			if(rewrite) {
+				fp = fopen(filename, "w");
+				fprintf(fp, "ITEST,            LAMBDA,  SHOCK_LOC_UP,       AVG_RHO,  AVG_RHO_GRAD,  THR_P_UPWALL, THR_P_DWNWALL,  SUBSONIC_POR,      THRUST_X,      THRUST_Y\n");
+			} else
+				fp = fopen(filename, "a");
+
+			fprintf(fp, "%5d, %17.10e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e\n",
+					itest, lambda[0], shockLocUpperwall, avgRho, avgRhoGradMag, upperwallPress, lowerwallPress,
+					subsonicPortion, thrust_X, thrust_Y);
+
+			fclose(fp);
+		}
+
+		MPI_Barrier(mpi_comm);
+	}
+
+	/****************************
+	 *---  UTILITY FUNCTION  ---*
+	 ****************************/
 	/*
 	 * Method: calcGradRhoIfNecessary
 	 * -------------------------------
@@ -761,200 +940,277 @@ public:
 	}
 
 	/*
-	 * Method: showQoI
-	 * ---------------
-	 *
+	 * Method: getEngineIntegQuantities
+	 * --------------------------------
+	 * Calculate QoI's integral quantities (calculated in the engine): avgRho, avgRhoGradMag, subsonicPortion
 	 */
-	void showQoI() {
-		string funcID = classID + "::showQoI()";
+	void getEngineIntegQuantities(double &avgRho, double &avgRhoGradMag, double &subsonicPortion) {
+		assert(UgpWithCvCompFlow::grad_rho != NULL);
 
-		if(UgpWithCvCompFlow::diverg==NULL ) {
-			cerr<<funcID<<": diverg has not been assigned"<<endl;
-			throw(-1);
+		double myAvgRho = 0.0, myAvgRhoGradMag = 0.0, mySubsonicPortion = 0.0;
+		double myVolume = 0.0;
+
+		for(int icv=0; icv<ncv; ++icv) {
+			bool inTheEngine = false;
+			if(x_cv[icv][0] >= hyShotGeometry.xInlet) {
+				if(x_cv[icv][0] > hyShotGeometry.xThroat) {
+					if(x_cv[icv][0] <= hyShotGeometry.xMax)
+						inTheEngine = true;
+				} else {
+					if(x_cv[icv][1] >= hyShotGeometry.yLowerwall && x_cv[icv][1] <= hyShotGeometry.yUpperwall)
+						inTheEngine = true;
+				}
+			}
+
+			if(inTheEngine) {
+				myAvgRho += UgpWithCvCompFlow::rho[icv] * cv_volume[icv];
+
+				if(UgpWithCvCompFlow::grad_rho != NULL)
+					myAvgRhoGradMag += sqrt(vecDotVec3d(UgpWithCvCompFlow::grad_rho[icv], UgpWithCvCompFlow::grad_rho[icv])) * cv_volume[icv];
+
+				double uMag = sqrt(vecDotVec3d(UgpWithCvCompFlow::vel[icv], UgpWithCvCompFlow::vel[icv]));
+				if(uMag / UgpWithCvCompFlow::sos[icv] < 1.0)
+					mySubsonicPortion += cv_volume[icv];
+
+				myVolume += cv_volume[icv];
+			}
 		}
 
-		calcGradRhoIfNecessary();
+		double totVolume;
+		MPI_Allreduce(&myAvgRho,          &avgRho,          1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&myAvgRhoGradMag,   &avgRhoGradMag,   1, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&mySubsonicPortion, &subsonicPortion, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
 
-		//=================
-		// Calculate QoI's
-		//=================
-		// 1 - Shock impingement point on the upperwall
-		string faZoneName = "upperwall";
+		MPI_Allreduce(&myVolume, &totVolume, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
 
-		double shockLocUpperwall;
-		double shockStrengthUpperwall;
+		avgRho          /= totVolume;
+		avgRhoGradMag   /= totVolume;
+		subsonicPortion /= totVolume;
+	}
 
-		// Find local shock location mainly based on the magnitude of grad_rho
-		double myShockLocUpperwall      =  ABSURDLY_BIG_NUMBER;
-		double myShockStrengthUpperwall = -ABSURDLY_BIG_NUMBER;
+	/*
+	 * Method: getThroatWallPress
+	 * --------------------------
+	 * Obtain the throat pressure on the lower wall and the upper wall
+	 */
+	void getThroatWallPress(double &upperwallPress, double &lowerwallPress) {
+		double myUpperwallPress = 0.0;
+		double myLowerwallPress = 0.0;
+		int myUpperwallFoundCount = 0;
+		int myLowerwallFoundCount = 0;
+
+		double dxNearThroat = 0.75 * 0.0002;
 		for (list<FaZone>::iterator zone = faZoneList.begin(); zone != faZoneList.end(); zone++) {
 			if (zone->getKind() == FA_ZONE_BOUNDARY) {
-				if (faZoneName.compare(zone->getName()) == 0) {
+				string tempFaZoneName = zone->getNameString();
+
+				if (tempFaZoneName.compare("upperwall") == 0) {
 					for (int index = 0; index < zone->faVec.size(); ++index) {
 						int ifa = zone->faVec[index];
 						int icv0 = cvofa[ifa][0];
 
-						double grad_rho_mag = sqrt(vecDotVec3d(UgpWithCvCompFlow::grad_rho[icv0], UgpWithCvCompFlow::grad_rho[icv0]));
-						if(grad_rho_mag >= 100.0 && UgpWithCvCompFlow::diverg[icv0] <= 0.0) {   // This value of 100 works for inviscid Hyshot
-							if(myShockStrengthUpperwall < grad_rho_mag) {
-								myShockStrengthUpperwall = grad_rho_mag;
-								myShockLocUpperwall      = x_fa[ifa][0];
+						if(icv0 < ncv) {
+							if(x_fa[ifa][0] < hyShotGeometry.xThroat && fabs(x_fa[ifa][0] - hyShotGeometry.xThroat) < dxNearThroat) {
+								myUpperwallPress = UgpWithCvCompFlow::press[icv0];
+								++myUpperwallFoundCount;
+							}
+						}
+					}
+				}
+				if (tempFaZoneName.compare("lowerwall") == 0) {
+					for (int index = 0; index < zone->faVec.size(); ++index) {
+						int ifa = zone->faVec[index];
+						int icv0 = cvofa[ifa][0];
+
+						if(icv0 < ncv) {
+							if(x_fa[ifa][0] < hyShotGeometry.xThroat && fabs(x_fa[ifa][0] - hyShotGeometry.xThroat) < dxNearThroat) {
+								myLowerwallPress = UgpWithCvCompFlow::press[icv0];
+								++myLowerwallFoundCount;
 							}
 						}
 					}
 				}
 			}
 		}
-		// Find global shock location
-		MPI_Allreduce(&myShockStrengthUpperwall, &shockStrengthUpperwall, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
-		if(myShockStrengthUpperwall < shockStrengthUpperwall)
-			myShockLocUpperwall = ABSURDLY_BIG_NUMBER;
-		MPI_Allreduce(&myShockLocUpperwall, &shockLocUpperwall, 1, MPI_DOUBLE, MPI_MIN, mpi_comm);
 
-		// 2 - Volume-averaged density, Averaged density gradient
-		double avgRho,  avgRhoGradMag;
-		double totVolume;
-
-		double myAvgRho = 0.0, myAvgRhoGradMag = 0.0;
-		double myVolume = 0.0;
-
-		for(int icv=0; icv<ncv; ++icv) {
-			if(x_cv[icv][0] >= hyShotGeometry.xMin && x_cv[icv][0] <= hyShotGeometry.xMax) {
-				myAvgRho += UgpWithCvCompFlow::rho[icv] * cv_volume[icv];
-
-				if(UgpWithCvCompFlow::grad_rho != NULL)
-					myAvgRhoGradMag += sqrt(vecDotVec3d(UgpWithCvCompFlow::grad_rho[icv], UgpWithCvCompFlow::grad_rho[icv])) * cv_volume[icv];
-
-				myVolume += cv_volume[icv];
-			}
-		}
-
-		MPI_Allreduce(&myAvgRho,        &avgRho,        1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-		MPI_Allreduce(&myAvgRhoGradMag, &avgRhoGradMag, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-
-		MPI_Allreduce(&myVolume, &totVolume, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-
-		avgRho        /= totVolume;
-		avgRhoGradMag /= totVolume;
-
-		// 3 - Wall-pressures at the throat
-		double myUpperwallPress = 0.0;
-		double myLowerwallPress = 0.0;
-
-		double dxNearThroat = 0.75 * 0.0002;
-		for (list<FaZone>::iterator zone = faZoneList.begin(); zone != faZoneList.end(); zone++) {
-			if (zone->getKind() == FA_ZONE_BOUNDARY) {
-				if (faZoneName.compare("upperwall") == 0) {
-					for (int index = 0; index < zone->faVec.size(); ++index) {
-						int ifa = zone->faVec[index];
-						int icv0 = cvofa[ifa][0];
-
-						if(x_fa[ifa][0] < hyShotGeometry.xThroat && fabs(x_fa[ifa][0] - hyShotGeometry.xThroat) < dxNearThroat)
-							myUpperwallPress = UgpWithCvCompFlow::press[icv0];
-					}
-				}
-				if (faZoneName.compare("lowerwall") == 0) {
-					for (int index = 0; index < zone->faVec.size(); ++index) {
-						int ifa = zone->faVec[index];
-						int icv0 = cvofa[ifa][0];
-
-						if(x_fa[ifa][0] < hyShotGeometry.xThroat && fabs(x_fa[ifa][0] - hyShotGeometry.xThroat) < dxNearThroat)
-							myLowerwallPress = UgpWithCvCompFlow::press[icv0];
-					}
-				}
-			}
-		}
-
-		double upperwallPress;
-		double lowerwallPress;
+		int totUpperwallFoundCount;
+		int totLowerwallFoundCount;
 		MPI_Allreduce(&myUpperwallPress, &upperwallPress, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
 		MPI_Allreduce(&myLowerwallPress, &lowerwallPress, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
+		MPI_Allreduce(&myUpperwallFoundCount, &totUpperwallFoundCount, 1, MPI_INT, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&myLowerwallFoundCount, &totLowerwallFoundCount, 1, MPI_INT, MPI_SUM, mpi_comm);
 
-		//=================
-		// Show QoI's on the screen
-		//=================
-		if(mpi_rank==0) {
-			printf("\n");
-			printf("> QoI: \n");
-			printf(" STEP,            LAMBDA,  SHOCK_LOC_UP,       AVG_RHO,  AVG_RHO_GRAD, THR_PRESS_UPWALL, THR_PRESS_DWNWALL\n");
-			printf("%5d, %17.10e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e\n", step, lambda[0], shockLocUpperwall, avgRho, avgRhoGradMag, upperwallPress, lowerwallPress);
-			printf("\n");
+		if(totUpperwallFoundCount != 1 && mpi_rank == 0)
+			cout<<"WARNING "<<classID<<"::getThroatWallPress(): "<<totUpperwallFoundCount<<" face(s) is(are) found on the upperwall"<<endl;
+		if(totLowerwallFoundCount != 1 && mpi_rank == 0)
+			cout<<"WARNING "<<classID<<"::getThroatWallPress(): "<<totLowerwallFoundCount<<" face(s) is(are) found on the lowerwall"<<endl;
+	}
+
+	/*
+	 * Method: get2DengineThrustQuantities
+	 * -----------------------------------
+	 * Calculate the quantities related to the engine thrust
+	 * Note: the given arguments must have only 2 elements (2D: X-Y)
+	 */
+	void get2DengineThrustQuantities(double &thrust_X, double &thrust_Y) {
+		int INLET_OUTLET_FACE_COUNTS = 130;
+
+		double dxNearInletMin = 0.75 * 0.000028;
+		double dxNearInletMax = 0.75 * 0.000040;
+		double xInletCvMax = hyShotGeometry.xInlet + dxNearInletMax;
+
+		double mySumRhouInlet[2]  = {0.0, 0.0};
+		double mySumPressInlet[2] = {0.0, 0.0};
+		int myCountInletCv = 0;
+
+		for(int icv=0; icv<ncv; ++icv) {
+			bool possiblyInletCv = false;
+			if(x_cv[icv][0] >= hyShotGeometry.xInlet && x_cv[icv][0] <= xInletCvMax) {
+				if(x_cv[icv][1] > hyShotGeometry.yLowerwall && x_cv[icv][1] < hyShotGeometry.yUpperwall)
+					possiblyInletCv = true;
+			}
+
+			if(possiblyInletCv) {
+				// Check if the CV has a face attached to the inlet surface
+				int nofa_f = faocv_i[icv];
+				int nofa_l = faocv_i[icv+1]-1;
+				for (int foc = nofa_f; foc <= nofa_l; foc++) {
+					int ifa = faocv_v[foc];
+
+					if(fabs(x_fa[ifa][0]-hyShotGeometry.xInlet) <= dxNearInletMin) {
+						// face unit normal and area...
+						double nVec[3] = {0.0, 0.0, 0.0};
+						double area    = normVec3d(nVec, fa_normal[ifa]);
+						assert(area > 0.0);
+
+						if (nVec[0] > 0.966 || nVec[0] < -0.966) {  // Note: angle < 15 degrees
+							for(int i=0; i<2; ++i)
+								mySumRhouInlet[i] += area*rhou[icv][i]*fabs(rhou[icv][i]/rho[icv]);  // momentum flux = Area * rho * u^2 * direct
+							for(int i=0; i<2; ++i)
+								mySumPressInlet[i] += area*fabs(nVec[i])*UgpWithCvCompFlow::press[icv];
+							++myCountInletCv;
+
+							break;
+						}
+					}
+				}
+			}
 		}
 
-		MPI_Barrier(mpi_comm);
-	}
+		double mySumRhouOutlet[2]  = {0.0, 0.0};
+		double mySumPressOutlet[2] = {0.0, 0.0};
+		int myCountOutletFa = 0;
 
+		for (list<FaZone>::iterator zone = faZoneList.begin(); zone != faZoneList.end(); zone++) {
+			if (zone->getKind() == FA_ZONE_BOUNDARY) {
+				string tempFaZoneName = zone->getNameString();
 
-	/*
-	 * Method: writeQoIOnFile
-	 * ----------------------
-	 * Averaged density and Averaged Mach number
-	 */
-	void writeQoIOnFile(const int itest, char filename[], bool rewrite) {
-//		double avgRho;
-//		double avgMa;
-//		double subsonicVolPortion;
-//		double pressMax;
-//		double pressMin;
-//		double totVolume;
-//
-//		double myAvgRho      = 0.0;
-//		double myAvgMa       = 0.0;
-//		double mySubsonicVol = 0.0;
-//		double myPressMax = -1.0e22;
-//		double myPressMin =  1.0e22;
-//		double myVolume = 0.0;
-//
-//		for(int icv=0; icv<ncv; ++icv) {
-//			if(x_cv[icv][0] >= xInlet && x_cv[icv][0] <= xThroat) {
-//				myAvgRho += UgpWithCvCompFlow::rho[icv] * cv_volume[icv];
-//
-//				double localMa = fabs(UgpWithCvCompFlow::rhou[icv][0] / UgpWithCvCompFlow::rho[icv]) / UgpWithCvCompFlow::sos[icv];
-//				myAvgMa  += localMa*cv_volume[icv];
-//
-//				myPressMax = max(myPressMax, UgpWithCvCompFlow::press[icv]);
-//				myPressMin = min(myPressMin, UgpWithCvCompFlow::press[icv]);
-//
-//				if(localMa < 1.0)
-//					mySubsonicVol += cv_volume[icv];
-//				myVolume += cv_volume[icv];
-//			}
-//		}
-//
-//		MPI_Allreduce(&myAvgRho,      &avgRho,             1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//		MPI_Allreduce(&myAvgMa,       &avgMa,              1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//		MPI_Allreduce(&myPressMax,    &pressMax,           1, MPI_DOUBLE, MPI_MAX, mpi_comm);
-//		MPI_Allreduce(&myPressMin,    &pressMin,           1, MPI_DOUBLE, MPI_MIN, mpi_comm);
-//		MPI_Allreduce(&mySubsonicVol, &subsonicVolPortion, 1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//		MPI_Allreduce(&myVolume,      &totVolume,          1, MPI_DOUBLE, MPI_SUM, mpi_comm);
-//		avgRho /= totVolume;
-//		avgMa  /= totVolume;
-//		subsonicVolPortion /= totVolume;
-//
-//		if(mpi_rank==0) {
-//			FILE *fp;
-//			if(rewrite) {
-//				fp = fopen(filename, "w");
-//				fprintf(fp, "STEP, AVG_RHO, AVG_MA, SUBSONIC_POR, MAX_PRESS, MIN_PRESS\n");
-//			} else
-//				fp = fopen(filename, "a");
-//
-//			fprintf(fp, "%d, ", step);
-//			fprintf(fp, "%15.8e, %15.8e, %15.8e, %15.8e, %15.8e\n", avgRho, avgMa, subsonicVolPortion, pressMax, pressMin);
-//
-//			fclose(fp);
-//		}
-//
-//		MPI_Barrier(mpi_comm);
+				if (tempFaZoneName.compare("outlet") == 0) {
+					for (int index = 0; index < zone->faVec.size(); ++index) {
+						int ifa = zone->faVec[index];
+						int icv0 = cvofa[ifa][0];
+
+						if(icv0 < ncv) {
+							if(x_fa[ifa][0] > hyShotGeometry.xThroat) {
+								// face unit normal and area...
+								double nVec[3] = {0.0, 0.0, 0.0};
+								double area    = normVec3d(nVec, fa_normal[ifa]);
+								assert(area > 0.0);
+
+								if (nVec[0] > 0.866 || nVec[0] < -0.866) {  // Note: angle < 30 degrees
+									for(int i=0; i<2; ++i)
+										mySumRhouOutlet[i] += area*rhou[icv0][i]*fabs(rhou[icv0][i]/rho[icv0]);  // momentum flux = Area * rho * u^2 * direct
+									for(int i=0; i<2; ++i)
+										mySumPressOutlet[i] += area*fabs(nVec[i])*UgpWithCvCompFlow::press[icv0]; // Here, it is assumed that the faces on the outlet face to the same direction.
+									++myCountOutletFa;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		double totSumRhouInlet[2];  	double totSumRhouOutlet[2];
+		double totSumPressInlet[2]; 	double totSumPressOutlet[2];
+		int totCountInletCv, totCountOutletFa;
+		MPI_Allreduce(&mySumRhouInlet,  &totSumRhouInlet,  2, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&mySumRhouOutlet, &totSumRhouOutlet, 2, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&mySumPressInlet,  &totSumPressInlet,  2, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&mySumPressOutlet, &totSumPressOutlet, 2, MPI_DOUBLE, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&myCountInletCv,  &totCountInletCv,  1, MPI_INT, MPI_SUM, mpi_comm);
+		MPI_Allreduce(&myCountOutletFa, &totCountOutletFa, 1, MPI_INT, MPI_SUM, mpi_comm);
+
+		if(totCountInletCv != INLET_OUTLET_FACE_COUNTS && mpi_rank == 0)
+			cout<<"WARNING "<<classID<<"::get2DengineThrustQuantities(): totCountInletCv(="<<totCountInletCv<<") is not equal to "<<INLET_OUTLET_FACE_COUNTS<<endl;
+		if(totCountOutletFa != INLET_OUTLET_FACE_COUNTS && mpi_rank == 0)
+			cout<<"WARNING "<<classID<<"::get2DengineThrustQuantities(): totCountOutletFa(="<<totCountOutletFa<<") is not equal to "<<INLET_OUTLET_FACE_COUNTS<<endl;
+
+		// Calculate thrust
+		thrust_X = totSumRhouOutlet[0]-totSumRhouInlet[0] + totSumPressOutlet[0]-totSumPressInlet[0];
+		thrust_Y = totSumRhouOutlet[1]-totSumRhouInlet[1] - totSumPressOutlet[1]+totSumPressInlet[1];
 	}
 
 	/*
-	 * Method: writeResidualOnFile
-	 * ---------------------------
-	 * Averaged density and Averaged Mach number
+	 * Method: writeFlowHistory
+	 * --------------------------
+	 * Write flow history (the optimal metric, other QoI's) on a file
 	 */
-	void writeResidualOnFile(const int itest, char filename[], bool rewrite) {
+	void writeFlowHistory(const char filename[], const double* metricNumer, const double* metricDenom, const bool rewrite) {
+		if(perturbParams.calcOptimalMetric) {
+			assert(metricNumer != NULL && metricDenom != NULL);
+		}
 
+		int nScal = scalarTranspEqVector.size();
+
+		// Calculate the optimal metric from the given numeriators and denomiators
+		double OptMetricFlow = 0.0, OptMetricTot = 0.0;
+		if(perturbParams.calcOptimalMetric) {
+			double metricNumerSum = 0.0;
+			double metricDenomSum = 0.0;
+
+			for(int i=0; i<5; ++i) {
+				metricNumerSum += metricNumer[i];
+				metricDenomSum += metricDenom[i];
+			}
+			OptMetricFlow = metricNumerSum / metricDenomSum;
+
+			for(int iScal=0; iScal<nScal; ++iScal) {
+				metricNumerSum += metricNumer[5+iScal];
+				metricDenomSum += metricDenom[5+iScal];
+			}
+			OptMetricTot = metricNumerSum / metricDenomSum;
+		}
+
+		// Calculate QoI's:
+		//   1 - Volume-averaged density, Volume-averaged density gradient, Subsonic volume portion
+		double avgRho, avgRhoGradMag, subsonicPortion;
+		getEngineIntegQuantities(avgRho, avgRhoGradMag, subsonicPortion);
+
+		//   2 - Wall-pressures at the throat
+		double upperwallPress, lowerwallPress;
+		getThroatWallPress(upperwallPress, lowerwallPress);
+
+		//   3 - Thrust of the engine
+		double thrust_X, thrust_Y;
+		get2DengineThrustQuantities(thrust_X, thrust_Y);
+
+		if(mpi_rank==0) {
+			FILE *fp;
+			if(rewrite) {
+				fp = fopen(filename, "w");
+				fprintf(fp, "STEP,    METRIC_FLOW,     METRIC_TOT,       AVG_RHO,  AVG_RHO_GRAD,  THR_P_UPWALL, THR_P_DWNWALL,  SUBSONIC_POR,      THRUST_X,      THRUST_Y\n");
+			} else
+				fp = fopen(filename, "a");
+
+			fprintf(fp, "%5d", step);
+			fprintf(fp, ", %13.6e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e, %13.6e",
+					OptMetricFlow, OptMetricTot, avgRho, avgRhoGradMag, subsonicPortion, upperwallPress, lowerwallPress, thrust_X, thrust_Y);
+
+			fprintf(fp, "\n");
+
+			fclose(fp);
+		}
 	}
 };
 

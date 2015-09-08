@@ -96,13 +96,13 @@ protected:
 	// -------------------------
 	// Tecplot output
 	// -------------------------
-	// The least-stable DIRECT modes
-	double* FirstDirectMode_kine;
-	double* FirstDirectMode_omega;
+	// The least-stable DIRECT modes (Since the least-stable modes are real, we don't store their imaginary parts)
+	double* FirstDirectMode_real_kine;
+	double* FirstDirectMode_real_omega;
 
-	// The least-stable ADJOINT modes
-	double* FirstAdjointMode_kine;
-	double* FirstAdjointMode_omega;
+	// The least-stable ADJOINT modes (Since the least-stable modes are real, we don't store their imaginary parts)
+	double* FirstAdjointMode_real_kine;
+	double* FirstAdjointMode_real_omega;
 
 	// Structural sensitivity
 	double* kine_sens;
@@ -190,11 +190,11 @@ public:
 		// -------------------------
 		// Tecplot output
 		// -------------------------
-		FirstDirectMode_kine  = NULL; 	registerScalar(FirstDirectMode_kine, "FirstDirectMode_KINE", CV_DATA);
-		FirstDirectMode_omega = NULL; 	registerScalar(FirstDirectMode_omega,"FirstDirectMode_OMEGA", CV_DATA);
+		FirstDirectMode_real_kine  = NULL; 	registerScalar(FirstDirectMode_real_kine, "FirstDirectMode_REAL_KINE", CV_DATA);
+		FirstDirectMode_real_omega = NULL; 	registerScalar(FirstDirectMode_real_omega,"FirstDirectMode_REAL_OMEGA", CV_DATA);
 
-		FirstAdjointMode_kine  = NULL; 	registerScalar(FirstAdjointMode_kine, "FirstAdjointMode_KINE", CV_DATA);
-		FirstAdjointMode_omega = NULL; 	registerScalar(FirstAdjointMode_omega,"FirstAdjointMode_OMEGA", CV_DATA);
+		FirstAdjointMode_real_kine  = NULL; 	registerScalar(FirstAdjointMode_real_kine, "FirstAdjointMode_REAL_KINE", CV_DATA);
+		FirstAdjointMode_real_omega = NULL; 	registerScalar(FirstAdjointMode_real_omega,"FirstAdjointMode_REAL_OMEGA", CV_DATA);
 
 		kine_sens  = NULL;	registerScalar(kine_sens,  "SENSITIVITY_kine", CV_DATA);
 		omega_sens = NULL;	registerScalar(omega_sens, "SENSITIVITY_omega", CV_DATA);
@@ -214,27 +214,28 @@ public:
 			// -------------------------------------------------
 			// Tecplot output for the least-stable direct modes
 			// -------------------------------------------------
-			FirstDirectMode_kine[icv]  = directEvecsReal[directLeastStableIndex][indexTemp+5];
-			FirstDirectMode_omega[icv] = directEvecsReal[directLeastStableIndex][indexTemp+6];
+			FirstDirectMode_real_kine[icv]  = directEvecsReal[directLeastStableIndex][indexTemp+5];
+			FirstDirectMode_real_omega[icv] = directEvecsReal[directLeastStableIndex][indexTemp+6];
 
 			// -------------------------------------------------
 			// Tecplot output for the least-stable adjoint modes
 			// -------------------------------------------------
-			FirstAdjointMode_kine[icv]  = adjointEvecsReal[adjointLeastStableIndex][indexTemp+5];
-			FirstAdjointMode_omega[icv] = adjointEvecsReal[adjointLeastStableIndex][indexTemp+6];
+			FirstAdjointMode_real_kine[icv]  = adjointEvecsReal[adjointLeastStableIndex][indexTemp+5];
+			FirstAdjointMode_real_omega[icv] = adjointEvecsReal[adjointLeastStableIndex][indexTemp+6];
 
 			// -------------------------------------------------
 			// Structural sensitivity
 			// -------------------------------------------------
-			kine_sens[icv] 	= fabs(FirstDirectMode_kine[icv] * FirstAdjointMode_kine[icv]);
-			omega_sens[icv]	= fabs(FirstDirectMode_omega[icv] * FirstAdjointMode_omega[icv]);
+			// Note: COEFF_BOOST_SENS is defined in rembrandtWithModels.h
+			kine_sens[icv] 	= fabs(COEFF_BOOST_SENS * FirstDirectMode_real_kine[icv] * FirstAdjointMode_real_kine[icv]);
+			omega_sens[icv]	= fabs(COEFF_BOOST_SENS * FirstDirectMode_real_omega[icv] * FirstAdjointMode_real_omega[icv]);
 		}
 
-		updateCvDataG1G2(FirstDirectMode_kine, REPLACE_DATA);
-		updateCvDataG1G2(FirstDirectMode_omega,REPLACE_DATA);
+		updateCvDataG1G2(FirstDirectMode_real_kine, REPLACE_DATA);
+		updateCvDataG1G2(FirstDirectMode_real_omega,REPLACE_DATA);
 
-		updateCvDataG1G2(FirstAdjointMode_kine, REPLACE_DATA);
-		updateCvDataG1G2(FirstAdjointMode_omega,REPLACE_DATA);
+		updateCvDataG1G2(FirstAdjointMode_real_kine, REPLACE_DATA);
+		updateCvDataG1G2(FirstAdjointMode_real_omega,REPLACE_DATA);
 
 		updateCvDataG1G2(kine_sens, REPLACE_DATA);
 		updateCvDataG1G2(omega_sens,REPLACE_DATA);

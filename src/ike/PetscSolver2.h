@@ -40,7 +40,7 @@ static bool ShowPetscXMatlab = false; // If this is true, the solution vector wi
 #define PETSC_HAVE_MUMPS
 #endif
 
-#define USE_SLEPC_WITH_PETSC
+//#define USE_SLEPC_WITH_PETSC
 #ifdef USE_SLEPC_WITH_PETSC
 	//#include "slepcsys.h"
 	#include <slepceps.h>

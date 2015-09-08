@@ -2827,6 +2827,11 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 										jacMatrixSTL, cvora, nbocv_v_global, nScal, ncv_gg,
 										nevSlepc, slepcEPSParams, slepcSTparams, transposeBeforeSolve);
 
+	if(nconvDirect > nevSlepc) {
+		if(mpi_rank==0) cout<<endl<<"   WARNING! nconvDirect = "<<nconvDirect<<" is bigger than the given nevSlepc = "<<nevSlepc<<endl<<endl;
+		nconvDirect = nevSlepc;
+	}
+
 	// Check the ranges of the eigenvectors
 	double minVal_Real[nevSlepc], maxVal_Real[nevSlepc], minVal_Imag[nevSlepc], maxVal_Imag[nevSlepc];
 	getEvecsRange(minVal_Real, maxVal_Real, minVal_Imag, maxVal_Imag, directEvecsReal, directEvecsImag, nevSlepc);
@@ -2873,13 +2878,34 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 			jacMatrixSTL, cvora, nbocv_v_global, nScal, ncv_gg,
 			nevSlepc, slepcEPSParams, slepcSTparams, transposeBeforeSolve);
 
-	// We don't need to write the adjoint eigenvalues on a file because they must be the same as the direct eigenvalues.
-	// Instead, check if the two set of eigenvalues are the same:
+	if(nconvAdjoint > nevSlepc) {
+		if(mpi_rank==0) cout<<endl<<"   WARNING! nconvAdjoint = "<<nconvAdjoint<<" is bigger than the given nevSlepc = "<<nevSlepc<<endl<<endl;
+		nconvAdjoint = nevSlepc;
+	}
+
 	if(nconvDirect != nconvAdjoint) {
 		if(mpi_rank==0) cerr<<"ERROR! nconvDirect(="<<nconvDirect<<") is not equal to nconvAdjoint(="<<nconvAdjoint<<")"<<endl;
 		throw(REMBRANDT_ERROR_CODE);
 	}
 
+	// Check the ranges of the eigenvectors
+	getEvecsRange(minVal_Real, maxVal_Real, minVal_Imag, maxVal_Imag, adjointEvecsReal, adjointEvecsImag, nevSlepc);
+
+	// Report the results (only on the screen)
+	if(mpi_rank==0) {
+		cout<<endl
+		    <<">> "<<nconvAdjoint<<" converged ADJOINT eigen-pairs after "<<numIter<<" iterations"<<endl;
+		cout<<"   Result for each eigen-pair:"<<endl;
+		for(int i=0; i<std::min<int>(nevSlepc, nconvAdjoint); ++i)
+			printf("    %2d   REL_ERROR = %.5e   EVAL = %.5e + %.5ei  EVEC-RANGE = (real=%.3e~%.3e, imag=%.3e~%.3e)\n",
+					i, relError[i], adjointEvalsReal[i], adjointEvalsImag[i], minVal_Real[i], maxVal_Real[i], minVal_Imag[i], maxVal_Imag[i]);
+		if(nconvAdjoint == 0)
+			cout<<"    NOT AVAILABLE because # of converged eigenpairs = "<<nconvAdjoint<<endl;
+		cout<<endl;
+	}
+
+	// We don't need to write the adjoint eigenvalues on a file because they must be the same as the direct eigenvalues.
+	// Instead, check if the two set of eigenvalues are the same:
 	vector<double> diff_real, diff_imag;
 	diff_real.resize(nconvAdjoint, ABSURDLY_BIG_NUMBER);
 	diff_imag.resize(nconvAdjoint, ABSURDLY_BIG_NUMBER);
@@ -2907,9 +2933,9 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 	for(int i=0; i< nconvAdjoint; ++i) {
 		if(fabs(diff_real[i]) < THRESHOLD_EVAL_DIFF || fabs(diff_imag[i]) < THRESHOLD_EVAL_DIFF) {
 			++equalEvalsCount;
-			if(mpi_rank == 0) { printf("     [%2d] Matched adjoint e-val with the %2dth direct e-val: error = %g + %gi\n", i, correspDirectIndices[i], diff_real[i], diff_imag[i]); }
+			if(mpi_rank == 0) { printf("     %2dth adjoint e-val MATCHED with the %2dth direct e-val  : error = %g + %gi\n", i, correspDirectIndices[i], diff_real[i], diff_imag[i]); }
 		} else {
-			if(mpi_rank == 0) { printf("     [%2d] NO matched e-val! Closest direct e-val = %2d ----- error = %g + %gi\n", i, correspDirectIndices[i], diff_real[i], diff_imag[i]); }
+			if(mpi_rank == 0) { printf("     %2dth adjoint e-val NOT MATCHED! Closest direct e-val=%2d: error = %g + %gi\n", i, correspDirectIndices[i], diff_real[i], diff_imag[i]); }
 		}
 	}
 	if(mpi_rank == 0) { cout<<"   Total "<<equalEvalsCount<<" matched e-vals"<<endl; }
@@ -2917,22 +2943,6 @@ int RembrandtWithModels::calcGlobalModes(const int nevSlepc) {
 	if(equalEvalsCount == 0) {
 		if(mpi_rank==0) cerr<<"ERROR! NO matched e-vals between Direct and Adjoint"<<endl;
 		throw(REMBRANDT_ERROR_CODE);
-	}
-
-	// Check the ranges of the eigenvectors
-	getEvecsRange(minVal_Real, maxVal_Real, minVal_Imag, maxVal_Imag, adjointEvecsReal, adjointEvecsImag, nevSlepc);
-
-	// Report the results (only on the screen)
-	if(mpi_rank==0) {
-		cout<<endl
-		    <<">> "<<nconvAdjoint<<" converged ADJOINT eigen-pairs after "<<numIter<<" iterations"<<endl;
-		cout<<"   Result for each eigen-pair:"<<endl;
-		for(int i=0; i<std::min<int>(nevSlepc, nconvAdjoint); ++i)
-			printf("    %2d   REL_ERROR = %.5e   EVAL = %.5e + %.5ei  EVEC-RANGE = (real=%.3e~%.3e, imag=%.3e~%.3e)\n",
-					i, relError[i], adjointEvalsReal[i], adjointEvalsImag[i], minVal_Real[i], maxVal_Real[i], minVal_Imag[i], maxVal_Imag[i]);
-		if(nconvAdjoint == 0)
-			cout<<"    NOT AVAILABLE because # of converged eigenpairs = "<<nconvAdjoint<<endl;
-		cout<<endl;
 	}
 
 	// Check the difference of the direct global modes and the adjoint global modes

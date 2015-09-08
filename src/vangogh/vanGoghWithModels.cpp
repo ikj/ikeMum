@@ -270,7 +270,8 @@ void VanGoghWithModels::run() {
 				<<"> RUNNING THE "<<itest<<"TH PERTURBATION TEST"<<endl
 				<<endl;
 
-		step = 0;
+		if(!isAlreadyPerturbeRestart)
+			step = 0;
 
 		if(!firstItest) { // Note: We don't need to reinitialize the flow field for the first itest.
 			if(mpi_rank==0)
@@ -336,7 +337,8 @@ void VanGoghWithModels::run() {
 		sprintf(filenameResidual, "residHist.case%04d.csv", itest);
 		writeResidualOnFile(itest, filenameResidual, true);
 
-		writeData2(itest, 0); // Save each case on a different file
+		if(!isAlreadyPerturbeRestart)
+			writeData2(itest, 0, true); // Save each case on a different file
 
 		// write restart file
 		char restartInitFilename[40];
@@ -345,17 +347,16 @@ void VanGoghWithModels::run() {
 
 		// run solver
 		string tIntName = getStringParam("TIME_INTEGRATION");
-
 		{
-		if (tIntName == "FORWARD_EULER")                 runForwardEuler();
-		else if (tIntName == "RK")                       runRK();
-		else if (tIntName == "BACKWARD_EULER")           runBackwardEuler();
-		else if (tIntName == "BACKWARD_EULER_COUPLED")   runBackwardEulerCoupled();
-		else if (tIntName == "BDF2")                     runBDF2();
-		else {
-			cerr << "ERROR: wrong time integration scheme specified !" << endl;
-			cerr << "available integration schemes are: FORWARD_EULER, RK, BACKWARD_EULER, BDF2" << endl;
-		}
+			if (tIntName == "FORWARD_EULER")                 runForwardEuler();
+			else if (tIntName == "RK")                       runRK();
+			else if (tIntName == "BACKWARD_EULER")           runBackwardEuler();
+			else if (tIntName == "BACKWARD_EULER_COUPLED")   runBackwardEulerCoupled();
+			else if (tIntName == "BDF2")                     runBDF2();
+			else {
+				cerr << "ERROR: wrong time integration scheme specified !" << endl;
+				cerr << "available integration schemes are: FORWARD_EULER, RK, BACKWARD_EULER, BDF2" << endl;
+			}
 		}
 
 		// Post-processing
@@ -382,7 +383,7 @@ void VanGoghWithModels::run() {
 			writeOptimalMeticOnFile(itest, OPTIMAL_METRIC_FINAL_FILENAME, firstItest, metricNumer, metricDenom, nScal);
 		}
 		
-		writeData2(itest, step); // Save each case on a different file
+		writeData2(itest, step, true); // Save each case on a different file
 
 		char restartFilename[40];
 		sprintf(restartFilename, "Restart.test%04d.%06d.out", itest, step);
@@ -394,6 +395,78 @@ void VanGoghWithModels::run() {
 	
 	if(metricNumer != NULL) { delete [] metricNumer; 	metricNumer = NULL; }
 	if(metricDenom != NULL) { delete [] metricDenom; 	metricDenom = NULL; }
+}
+
+/*
+ * Method: temporalHook
+ * --------------------
+ *
+ */
+void VanGoghWithModels::temporalHook() {
+	// Write residual history on a file in every "CHECK_INTERVAL"
+	int check_interval = getIntParam("CHECK_INTERVAL", "1");
+	if(step > 0) {
+		if(step == 1 || step % check_interval == 0) {
+			char filenameResidual[40];
+			sprintf(filenameResidual, "residHist.case%04d.csv", itest);
+			writeResidualOnFile(itest, filenameResidual, false);
+		}
+	}
+
+	// Write Tecplot file in every "interval"
+	writeData2(itest, step);
+
+	// Write Flow history in every "WRITE_FLOWHISTORY_INTERVAL"
+	int writeFlowHistroy_interval = getIntParam("WRITE_FLOWHISTORY_INTERVAL");
+	if(step > 0) {
+		int nScal = scalarTranspEqVector.size();
+		double metricNumer[5+nScal];
+		double metricDenom[5+nScal];
+		for(int i=0; i<5+nScal; ++i) { metricNumer[i] = 0.0; 	metricDenom[i] = 0.0; }
+
+		if(perturbParams.calcOptimalMetric) {
+			if(step == 1 || step%writeFlowHistroy_interval == 0)
+				calcOptMetrics(metricNumer, metricDenom);
+		}
+
+		if(step == 1 || step%writeFlowHistroy_interval == 0) {
+			char flowHistoryFilename[60];
+			sprintf(flowHistoryFilename, "FlowHistory_test%04d.txt", itest);
+			bool rewrite = (step == 1);
+
+			writeFlowHistory(flowHistoryFilename, metricNumer, metricDenom, rewrite);
+		}
+	}
+
+	// Dump out restart file (and Tecplot file too) before the simulation is forced to quit due to timeout
+	double autosaveHours = getDoubleParam("AUTOSAVE_HOURS", "23.8");
+	static bool turnOnAutosave = true;
+	if(turnOnAutosave && step > 0) {
+		double wtime = MPI_Wtime();
+		double wtimeHour = (wtime - vanGogh_startWtime) / 3600;
+		if(wtimeHour > autosaveHours) {
+			if(mpi_rank == 0)
+				cout<<"> Autosave current result: AUTOSAVE_HOURS = "<<autosaveHours<<endl;
+
+			char restartFilename[40];
+			sprintf(restartFilename, "Restart.test%04d.%06d.out", itest, step);
+			writeRestart(restartFilename);
+
+			writeData2(itest, step, true);
+		}
+	}
+	turnOnAutosave = false;
+}
+
+/*
+ * Method: finalHook
+ * -----------------
+ *
+ */
+void VanGoghWithModels::finalHook() {
+	char filename[30];
+	sprintf(filename, "Q1_pt%04d.bin", itest);
+	writeJOEDataParallel(filename);
 }
 
 /****************************
@@ -1630,7 +1703,27 @@ void VanGoghWithModels::perturbFieldNS() {
  *           array_perturb[icv] = coeff * RANDOM_VARIABLE
  */
 double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_perturb, const double disturbRatio, const char varName[], const bool applyClipping) {
-	assert(array_perturb != NULL);
+	double rmsVal = calcRMS(scalarArray, false); // get RMS
+	double coeff = rmsVal * disturbRatio; // calculate the coefficient based on the RMS
+
+	perturbScalar(scalarArray, array_perturb, coeff, varName, applyClipping);
+
+	return coeff;
+}
+
+/*
+ * Method: perturbScalarArray
+ * --------------------------
+ * Perturb the initial field with random variables and apply filter to the perturbations
+ * Note: The array "array_perturb" is used only in this method, but sometimes the user may want to take a look at it.
+ *       Thus, it is given as an argument.
+ *
+ * Arguments: coeff = interval size for UNIFORM, std for GAUSSIAN
+ *
+ * Return: array_perturb[icv] = coeff * RANDOM_VARIABLE
+ */
+void VanGoghWithModels::perturbScalarArray(double* scalarArray, double* array_perturb, const double coeff, const char varName[], const bool applyClipping) {
+	assert(scalarArray != NULL && array_perturb != NULL);
 
 	// Smoothing: Some parameters for the hat-shaped function
 	//   f(x) = 1.0 - 0.5*(exp(-a*(x-xMin)) + exp(a*(x-xMax))), where a = ln(100)/edgeSize
@@ -1675,11 +1768,8 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
 	}
 
 	// ------------------------------
-	// Update the designated variable
+	// Update the designated variable (with clipping if necessary)
 	// ------------------------------
-	double rmsVal = calcRMS(scalarArray, false); // get RMS
-	double coeff = rmsVal * disturbRatio; // calculate the coefficient based on the RMS
-
 	int myCountClip = 0;
 	for(int icv=0; icv<ncv; ++icv) {
 		array_perturb[icv] *= coeff;
@@ -1734,8 +1824,6 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
 		if(countNegative > 0 && mpi_rank==0)
 			printf("    WARNING! %s still has negative value(s) even after clipping: count=%d, most negative value=%g\n", varName, countNegative, mostNegative);
 	}
-
-	return coeff;
 }
 
 /*
@@ -1750,7 +1838,27 @@ double VanGoghWithModels::perturbScalar(double* scalarArray, double* array_pertu
  *           array_perturb[icv] = coeff * RANDOM_VARIABLE
  */
 double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coord, double* array_perturb, const double disturbRatio, const char varName[], const bool applyClipping) {
-	assert(array_perturb != NULL);
+	double rmsVal = calcRMS3D(vectorArray, coord, false); // get RMS
+	double coeff = rmsVal * disturbRatio; // calculate the coefficient based on the RMS
+
+	perturbVectorArray(vectorArray, coord, array_perturb, coeff, varName, applyClipping);
+
+	return coeff;
+}
+
+/*
+ * Method: perturbVectorArray
+ * --------------------------
+ * Perturb the initial field with random variables and apply filter to the perturbations
+ * Note: The array "array_perturb" is used only in this method, but sometimes the user may want to take a look at it.
+ *       Thus, it is given as an argument.
+ *
+ * Arguments: coeff = interval size for UNIFORM, std for GAUSSIAN
+ *
+ * Return: array_perturb[icv] = coeff * RANDOM_VARIABLE
+ */
+void VanGoghWithModels::perturbVectorArray(double (*vectorArray)[3], const int coord, double* array_perturb, const double coeff, const char varName[], const bool applyClipping) {
+	assert(vectorArray != NULL && array_perturb != NULL);
 	assert(coord>=0 && coord<3);
 
 	// Smoothing: Some parameters for the hat-shaped function
@@ -1795,12 +1903,9 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 		delete [] tempFiltered;
 	}
 
-	// -----------------------------
-	// Update the designated variable
-	// -----------------------------
-	double rmsVal = calcRMS3D(vectorArray, coord, false); // get RMS
-	double coeff = rmsVal * disturbRatio; // calculate the coefficient based on the RMS
-
+	// ------------------------------
+	// Update the designated variable (with clipping if necessary)
+	// ------------------------------
 	int myCountClip = 0;
 	for(int icv=0; icv<ncv; ++icv) {
 		array_perturb[icv] *= coeff;
@@ -1835,8 +1940,6 @@ double VanGoghWithModels::perturbVector(double (*vectorArray)[3], const int coor
 				printf("    Perturb the %s field with Gaussian:  std = %.3e\n", varName, coeff);
 		}
 	}
-
-	return coeff;
 }
 
 /*
@@ -1960,7 +2063,7 @@ void VanGoghWithModels::writeOptimalMeticOnFile(const int itest, char filename[]
 			fprintf(fp, "ITEST,    METRIC_RHO, METRIC_RHOU-X, METRIC_RHOU-Y, METRIC_RHOU-Z,   METRIC_RHOE");
 			for(int i=0; i<nScal; ++i)
 				fprintf(fp, ", METRIC_SCAL-%d", i);
-			fprintf(fp, ",  TOT\n");
+			fprintf(fp, ",   METRIC_FLOW,  TOT\n");
 		} else
 			fp = fopen(filename, "a");
 
@@ -1974,11 +2077,18 @@ void VanGoghWithModels::writeOptimalMeticOnFile(const int itest, char filename[]
 		
 		double metricNumerSum = 0.0;
 		double metricDenomSum = 0.0;
-		for(int i=0; i<5+nScal; ++i) {
+
+		for(int i=0; i<5; ++i) {
 			metricNumerSum += metricNumer[i];
 			metricDenomSum += metricDenom[i];
 		}
-		fprintf(fp, ", %13.6e", metricNumerSum/metricDenomSum);
+		fprintf(fp, ", %13.6e", metricNumerSum/metricDenomSum); // Write flow metric
+
+		for(int iScal=0; iScal<nScal; ++iScal) {
+			metricNumerSum += metricNumer[5+iScal];
+			metricDenomSum += metricDenom[5+iScal];
+		}
+		fprintf(fp, ", %13.6e", metricNumerSum/metricDenomSum); // Write tot metric
 		
 		fprintf(fp, "\n");
 
@@ -2038,3 +2148,53 @@ void VanGoghWithModels::writeResidualOnFile(const int itest, char filename[], bo
 	MPI_Barrier(mpi_comm);
 }
 
+/*
+ * Method: writeFlowHistory
+ * --------------------------
+ * Write flow history (the optimal metric, other QoI's) on a file
+ * This is called by temporalHook() -- i.e. This can be called at each step in a test case.
+ * If the end-users want to add more QoI's, they should write their own writeFlowHistory().
+ */
+void VanGoghWithModels::writeFlowHistory(const char filename[], const double* metricNumer, const double* metricDenom, const bool rewrite) {
+	if(perturbParams.calcOptimalMetric) {
+		assert(metricNumer != NULL && metricDenom != NULL);
+	}
+
+	int nScal = scalarTranspEqVector.size();
+
+	// Calculate the optimal metric from the given numeriators and denomiators
+	double OptMetricFlow = 0.0, OptMetricTot = 0.0;
+	if(perturbParams.calcOptimalMetric) {
+		double metricNumerSum = 0.0;
+		double metricDenomSum = 0.0;
+
+		for(int i=0; i<5; ++i) {
+			metricNumerSum += metricNumer[i];
+			metricDenomSum += metricDenom[i];
+		}
+		OptMetricFlow = metricNumerSum / metricDenomSum;
+
+		for(int iScal=0; iScal<nScal; ++iScal) {
+			metricNumerSum += metricNumer[5+iScal];
+			metricDenomSum += metricDenom[5+iScal];
+		}
+		OptMetricTot = metricNumerSum / metricDenomSum;
+	}
+
+	if(mpi_rank==0) {
+		FILE *fp;
+		if(rewrite) {
+			fp = fopen(filename, "w");
+			fprintf(fp, "STEP,    METRIC_FLOW,     METRIC_TOT\n");
+		} else
+			fp = fopen(filename, "a");
+
+		fprintf(fp, "%5d", step);
+		fprintf(fp, ", %13.6e, %13.6e",
+				OptMetricFlow, OptMetricTot);
+
+		fprintf(fp, "\n");
+
+		fclose(fp);
+	}
+}

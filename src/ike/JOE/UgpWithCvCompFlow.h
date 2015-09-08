@@ -761,40 +761,39 @@ public:   // member functions
   void solveLinSysScalar(double *phi, double *Ap, double *rhs,
       const double zeroAbs, const double zeroRel, const int maxIter, char *scalarName)
   {
-    switch (linearSolverScalars)
-    {
-      case PETSC_GMRES:
+	  switch (linearSolverScalars)
+	  {
+	  case PETSC_GMRES:
+		  // on the first time, instantiate the petsc solver...
+		  if (petscSolverScalars == NULL)
+		  {
+			  if (nbocv_v_global == NULL)
+			  {
 
-        // on the first time, instantiate the petsc solver...
-        if (petscSolverScalars == NULL)
-        {
-          if (nbocv_v_global == NULL)
-          {
-        
-            nbocv_v_global = new int[ncv_g];
-            for (int icv = 0; icv < ncv; icv++)
-              nbocv_v_global[icv] = cvora[mpi_rank] + icv;
-              updateCvDataG1(nbocv_v_global, REPLACE_DATA);
-	
-          }
-          petscSolverScalars = new PetscSolver(cvora, nbocv_i, nbocv_v, 1);
-        }
+				  nbocv_v_global = new int[ncv_g];
+				  for (int icv = 0; icv < ncv; icv++)
+					  nbocv_v_global[icv] = cvora[mpi_rank] + icv;
+				  updateCvDataG1(nbocv_v_global, REPLACE_DATA);
 
-          petscSolverScalars->setTresholds(zeroAbs, zeroRel, maxIter);
-          petscSolverScalars->solveGMRES(Ap, phi, rhs, cvora, nbocv_i, nbocv_v, nbocv_v_global);
+			  }
+			  petscSolverScalars = new PetscSolver(cvora, nbocv_i, nbocv_v, 1);
+		  }
 
-        break;
+		  petscSolverScalars->setTresholds(zeroAbs, zeroRel, maxIter);
+		  petscSolverScalars->solveGMRES(Ap, phi, rhs, cvora, nbocv_i, nbocv_v, nbocv_v_global);
 
-      case BCGSTAB:
-        solveCvScalarBcgstab(phi, Ap, rhs, zeroAbs, zeroRel, maxIter, scalarName);
-        break;
+		  break;
 
-      default:
-        if (mpi_rank == 0)
-          cerr << "Error: unrecognized solver for scalars: " << linearSolverNS << endl;
-        throw(-1);
-        break;
-    }
+	  case BCGSTAB:
+		  solveCvScalarBcgstab(phi, Ap, rhs, zeroAbs, zeroRel, maxIter, scalarName);
+		  break;
+
+	  default:
+		  if (mpi_rank == 0)
+			  cerr << "Error: unrecognized solver for scalars: " << linearSolverNS << endl;
+		  throw(-1);
+		  break;
+	  }
 
 
   }

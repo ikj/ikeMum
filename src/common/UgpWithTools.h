@@ -1411,8 +1411,8 @@ public:
 	}
   }
 
-  void write2(const int caseNum, const int step, UgpWithTools1 * ugp) {
-//	if (step%interval==0) {
+  void write2(const int caseNum, const int step, UgpWithTools1 * ugp, const bool ignoreInterval = false) {
+	if (ignoreInterval || step%interval==0) {
 	  // set the data flags...
 	  ugp->clearDataFlags();
 	  for (list<string>::iterator var = varList.begin(); var!=varList.end(); var++) {
@@ -1430,7 +1430,7 @@ public:
 		sprintf(filename, "%s.case%04d.%06d.plt", name.c_str(), caseNum, step);
 		ugp->writeFlaggedCvsTecplot(filename);
 	  }
-//	}
+	}
   }
 };
 
@@ -2478,9 +2478,9 @@ public:
       wd->write(step, subStep, this);
   }
 
-  void writeData2(const int caseNum, const int step) {
+  void writeData2(const int caseNum, const int step, const bool ignoreInterval = false) {
     for (list<WriteData>::iterator wd = writeDataList.begin(); wd!=writeDataList.end(); wd++)
-      wd->write2(caseNum, step, this);
+      wd->write2(caseNum, step, this, ignoreInterval);
   }
 
   void initWriteData(ParamMap * params);
