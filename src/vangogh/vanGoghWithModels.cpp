@@ -297,13 +297,13 @@ void VanGoghWithModels::run() {
 		// Perturb the field with filtering
 		perturbFieldScalarRansTurbModel();
 		perturbFieldScalarRansCombModel();
-		perturbFieldNS();
+		for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
+			updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
 
+		perturbFieldNS();
 		updateCvDataG1G2(rho,  REPLACE_DATA);
 		updateCvDataG1G2(rhou, REPLACE_ROTATE_DATA);
 		updateCvDataG1G2(rhoE, REPLACE_DATA);
-		for (int iScal = 0; iScal < scalarTranspEqVector.size(); iScal++)
-			updateCvDataG1G2(scalarTranspEqVector[iScal].phi, REPLACE_DATA);
 
 		// -------------------------------------------------
 		// calculate the optimal metric

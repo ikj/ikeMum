@@ -659,8 +659,11 @@ void JoeWithModels::runBackwardEuler()
 {
   int nScal = scalarTranspEqVector.size();
 
+  assert(Residual == NULL);
   double *myResidual = new double[5+nScal];
   Residual           = new double[5+nScal];
+  for (int i = 0; i < 5+nScal; i++)
+    Residual[i] = 0.0;
 
   double *RHSrho = new double[ncv];
   double (*RHSrhou)[3] = new double[ncv][3];
