@@ -773,7 +773,7 @@ void IkeWithPsALC_AD::runPsALC() {
 			}
 
 			if(mpi_rank==0)
-				printf("Change arclength by %.2f percents: %.4e --> %.4e\n", factorReduceTangential*100, arclength, arclength*factorReduceTangential);
+				printf("Change arclength by %.6f percents: %.4e --> %.4e\n", factorReduceTangential*100, arclength, arclength*factorReduceTangential);
 
 			arclength *= factorReduceTangential;
 		} else
