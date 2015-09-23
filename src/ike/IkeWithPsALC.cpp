@@ -2985,6 +2985,9 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	if(debugLevel>0 && mpi_rank == 0)
 		printf("Newton solver converged after %5dth outer iter: residual = %12.5e \n", iterNewton-1, residNormTot);
 
+	// finalHookNewton()
+	finalHookNewton();
+
 	// Write the Jacobian matrix on a file for post-processing(eigen-decomposition)
 	if(writeJacOnFile) {
 		if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON) { // i.e., If the Jacobian matrix was modified in order not to have a singular matrix
@@ -7335,6 +7338,15 @@ void IkeWithPsALC_AD::initialHookNewton_firstCall() {
  */
 bool IkeWithPsALC_AD::temporalHookNewton(double *qVec, double *lambda, double *delQ, const double relaxation) {
 	return false;
+}
+
+/*
+ * Method: finalHookNewton
+ * -----------------------
+ *
+ */
+void IkeWithPsALC_AD::finalHookNewton() {
+	/* empty */
 }
 
 /*

@@ -867,6 +867,13 @@ public:
 	virtual bool temporalHookNewton(double *qVec, double *lambda, double *delQ, const double relaxation);
 
 	/*
+	 * Method: finalHookNewton
+	 * -----------------------
+	 *
+	 */
+	virtual void finalHookNewton();
+
+	/*
 	 * Method: checkBarrierParamNS
 	 * ---------------------------
 	 * Read parameters for N-S barrier functions and just return if the barrier functions will be used or not
