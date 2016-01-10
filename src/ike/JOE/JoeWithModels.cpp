@@ -1048,7 +1048,7 @@ void JoeWithModels::runBackwardEuler()
 //  writeRestart();
   writeData(step);
 
-
+  lastResidualRhoE = Residual[4];
 
   // ---------------------------------------------------------------------------------
   // delete memory
@@ -1606,6 +1606,9 @@ int JoeWithModels::calcRhs(double *rhs_rho, double (*rhs_rhou)[3], double *rhs_r
 		UgpWithCvCompFlow::calcArtifVisc(artifVisc_mag,
 				artifVisc_bulkViscOnly, artifVisc_shockOnly,
 				artifVisc_smoothstepThresh, artifVisc_type, artifVisc_coeff);
+
+		if(mpi_rank==0 && step%(10*check_interval) == 0)
+			cout<<std::setprecision(6)<<"artificial viscosity range : "<<artifViscMagMin<<" ~ "<<artifViscMagMax<<",  max ratio to molecular+turb visc = "<<maxRatioArtifToReal<<endl;
 	}
 	if (mu_ref > 0.0 || UgpWithCvCompFlow::turnOnArtifVisc)
 		calcViscousFluxNS(rhs_rho, rhs_rhou, rhs_rhoE, A, flagImplicit);

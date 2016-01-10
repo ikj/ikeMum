@@ -148,7 +148,7 @@ void YangWithModels::run() {
 			cout<<endl
 			    <<"---------------------------------"<<endl
 			    <<" YANG CALC FOR PT = "<<ipt<<endl
-			    <<"               LAMBDA = "<<lambda[0]<<endl
+			    <<"               LAMBDA = "<<std::setprecision(14)<<lambda[0]<<endl
 			    <<"---------------------------------"<<endl
 			    <<endl;
 		step = 0;
@@ -208,22 +208,15 @@ void YangWithModels::run() {
 
 		++ipt;
 
-		if(Residual[4] > resid_energ_th) {
+		if(lastResidualRhoE > resid_energ_th) {
 			if(mpi_rank == 0)
 				cerr<<"ERROR in "<<classID<<"::run(): Simulation cannot converged in "<<nsteps<<" steps: residual[4]="
 				    <<Residual[4]<<" > RESID_ENERG_TH="<<resid_energ_th<<endl;
-
-			if(Residual != NULL) {
-				delete [] Residual; 	Residual = NULL;
-			}
-
 			throw(YANG_ERROR_CODE);
 		}
-
-		// Free the memory
-		if(Residual != NULL) {
-			delete [] Residual; 	Residual = NULL;
-		}
+		if(lastResidualRhoE == 0.0 && mpi_rank == 0)
+			cout<<"WARNING in "<<classID<<"::run(): lastResidualRhoE is zero. Are you using an integration sheme other than Backward Euler?"<<endl
+			    <<"Please check if it is updated at the end of the integration scheme"<<endl;
 	}
 }
 

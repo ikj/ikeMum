@@ -2,7 +2,7 @@
 #define UGPWITHCVCOMPFLOWAD_H
 
 #define USE_MEM_SAVING_ADVAR
-#define USE_ARTIF_VISC_WITH_MEM_SAVING  // Use artificial viscosity near shocks -- currently compatible only with the mem-saving mode
+//#define USE_ARTIF_VISC_WITH_MEM_SAVING  // Use artificial viscosity near shocks -- currently compatible only with the mem-saving mode
 #ifdef USE_MEM_SAVING_ADVAR
 	#include "../../ADvar.h"
 //	#define USE_CONDASSIGN

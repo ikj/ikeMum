@@ -14,6 +14,9 @@ class JoeWithModels: virtual public UgpWithCvCompFlow
 {
 public:
 	double *Residual;
+	double lastResidualRhoE; // The value of Residual[4] at the end of an integration scheme
+	                         // Even though Residual is freed at the end of the integration scheme,
+	                         // This value can last.
 
 	double totResid_dq;
 	double totResid_rhs; // The calculation of Residual is dependent on the time-integration scheme.
@@ -114,6 +117,8 @@ public:
   {
     if (mpi_rank == 0)
       cout << "JoeWithModels virtual init()"<< endl;
+
+    lastResidualRhoE = 0.0;
   }
 
   virtual ~JoeWithModels() {}

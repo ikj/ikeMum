@@ -21,7 +21,7 @@ using namespace logging;
 
 #define MAX_WARNING_MESSAGES_UGP 50
 
-#define USE_ARTIF_VISC
+//#define USE_ARTIF_VISC
 
 //#define temp_reconstruction   // determine whether temperature or pressure reconstruction is used at faces
 //#define alpha_limiter         // determine if rho*Phi is limited based on rho or rho*Phi
@@ -622,6 +622,7 @@ public:   // member variables
   // Statistics for artificial viscosity
   double artifViscMagMin;
   double artifViscMagMax;
+  double maxRatioArtifToReal;
 #endif
 
   // ---------------------
@@ -1830,6 +1831,7 @@ public:   // member functions
 	  MPI_Allreduce(&myArtifViscMagMax, &artifViscMagMax, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
 
 	  // Interpolate artifVisc_mag on the faces
+	  double myMaxRatioArtifToReal = 0.0;
 	  if(!artifVisc_bulkViscOnly) { // If the user DOES NOT want to add the artificial viscosity only on the bulk viscosity
 		  // internal faces
 		  for (int ifa = nfa_b; ifa < nfa; ifa++) {
@@ -1845,13 +1847,43 @@ public:   // member functions
 			  if(mu_ref == 0)
 				  mul_fa[ifa] = 0.0;  // Make sure that the baseline viscosity is equal to zero for inviscid calculations
 
-			  mul_fa[ifa] += (w1*artifVisc_mag[icv0] + w0*artifVisc_mag[icv1]) / (w0+w1);
+			  double artifVisc_fa = (w1*artifVisc_mag[icv0] + w0*artifVisc_mag[icv1]) / (w0+w1);
+			  myMaxRatioArtifToReal = max( myMaxRatioArtifToReal, calcRatioArtifAndRealVisc(mul_fa[ifa], artifVisc_fa, ifa) );
+			  mul_fa[ifa] += artifVisc_fa;
 		  }
 
 		  // boundary faces computed next in setBC
+	  } else { // Just calculate the ratio between the aritifical bulk visc. to molecular+turb visc.
+		  // internal faces
+		  for (int ifa = nfa_b; ifa < nfa; ifa++) {
+			  int icv0 = cvofa[ifa][0];
+			  int icv1 = cvofa[ifa][1];
+
+			  double dx0[3] = {0.0, 0.0, 0.0}, dx1[3] = {0.0, 0.0, 0.0};
+			  vecMinVec3d(dx0, x_fa[ifa], x_cv[icv0]);
+			  vecMinVec3d(dx1, x_fa[ifa], x_cv[icv1]);
+			  double w0 = sqrt(vecDotVec3d(dx0, dx0));
+			  double w1 = sqrt(vecDotVec3d(dx1, dx1));
+
+			  double artifVisc_fa = (w1*artifVisc_mag[icv0] + w0*artifVisc_mag[icv1]) / (w0+w1);
+			  myMaxRatioArtifToReal = max( myMaxRatioArtifToReal, calcRatioArtifAndRealVisc(mul_fa[ifa], artifVisc_fa, ifa) );
+		  }
+	  }
+	  MPI_Allreduce(&myMaxRatioArtifToReal, &maxRatioArtifToReal, 1, MPI_DOUBLE, MPI_MAX, mpi_comm);
+
+	  if(artifViscMagMin < 0.0) {
+		  if(mpi_rank == 0)
+			  cout<<"ERROR calcArtifVisc(): artifViscMagMin = "<<artifViscMagMin<<" is less than zero"<<endl;
+		  throw(-1);
 	  }
 
 	  firstCall = false;
+  }
+
+  // \ Calculation of the ratio of the local artificial viscosity to the local viscosity (molecular + turbulent).
+  virtual double calcRatioArtifAndRealVisc(const double local_mul_fa, const double local_artif_visc, const int ifa) {
+	  double local_muT = 0.0;
+	  return local_artif_visc / (local_mul_fa + local_muT + 1.0e-15);
   }
 #endif
   

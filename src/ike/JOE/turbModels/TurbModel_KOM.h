@@ -50,9 +50,18 @@ public:   // constructors
     eq->lowerBound = 1.0e-4;
     eq->upperBound = 1.0e15;
 
+#ifdef USE_ARTIF_VISC
+    if(!turnOnArtifVisc) { // If artifical viscosity is turned on, strMag and diverg are alloated
+                           // in UgpWithCvCompFlow::init().
+    	if(strMag != NULL)	registerScalar(strMag, "strMag", CV_DATA);
+    	if(diverg != NULL)  registerScalar(diverg, "diverg", CV_DATA);
+    }
+#else
     strMag   = NULL;       registerScalar(strMag, "strMag", CV_DATA);
-    vortMag  = NULL;       registerScalar(vortMag, "vortMag", CV_DATA);
     diverg   = NULL;       registerScalar(diverg, "diverg", CV_DATA);
+#endif
+
+    vortMag  = NULL;       registerScalar(vortMag, "vortMag", CV_DATA);
     muT      = NULL;       registerScalar(muT, "muT", CV_DATA);
     wallDist = NULL;       registerScalar(wallDist, "wallDist",  CV_DATA);
   }
@@ -343,12 +352,7 @@ public:   // member functions
         }
       }
     }
-
-
-
-
   }
-
 
   virtual void sourceHookRansTurbCoupled(double **rhs, double ***A, int nScal, int flagImplicit)
   {
@@ -420,11 +424,7 @@ public:   // member functions
         }
       }
     }
-
-
-
   }
-
 
   virtual void boundaryHookScalarRansTurb(double *phi, FaZone *zone, const string &name)
   {
@@ -445,6 +445,10 @@ public:   // member functions
           }
         }
     }
+  }
+
+  double calcRatioArtifAndRealVisc(const double local_mul_fa, const double local_artif_visc, const int ifa) {
+	  return local_artif_visc / (local_mul_fa + muT[ifa] + 1.0e-15);
   }
 
 };

@@ -2113,6 +2113,8 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 	if(newtonParam.stabilizationMethodType != NO_STAB_NEWTON) // Apply diagonal scaled by CFL and local volume
 		alpha_stab_newton = newtonParam.stabilizationAlpha;
 
+	int iterNewton_stab_newton = iterNewton; // This is used in the stabilized Newton's method to increase "alpha" in the diagonal.
+
 	while(!done) {
 		/******
 		 ** Check iterations and report error
@@ -2959,23 +2961,30 @@ void IkeWithPsALC_AD::getSteadySolnByNewton(double *q, double* rhs, const int ma
 			double incAlpha    = newtonParam.stabilizationAlphaRamp_incAlpha;
 			double targetAlpha = newtonParam.stabilizationAlphaRamp_targetAlpha;
 
-			if ((iterNewton > startIncAlpha) && (iterNewton%intervalIncAlpha == 0)) {
+//			if ((iterNewton > startIncAlpha) && (iterNewton%intervalIncAlpha == 0)) {
+			if ((iterNewton_stab_newton > startIncAlpha) && (iterNewton_stab_newton%intervalIncAlpha == 0)) {
 				if(incAlpha>1.0 && alpha_stab_newton<targetAlpha) {
 					if(relaxation > incAlpha-1.0) {
-						int exponent = int(abs(iterNewton - startIncAlpha) / std::max<int>(intervalIncAlpha, 1));
+//						int exponent = int(abs(iterNewton - startIncAlpha) / std::max<int>(intervalIncAlpha, 1));
+						int exponent = int(abs(iterNewton_stab_newton - startIncAlpha) / std::max<int>(intervalIncAlpha, 1));
 						alpha_stab_newton = min(newtonParam.stabilizationAlpha * pow(incAlpha, double(exponent)), targetAlpha);
+						++iterNewton_stab_newton;
 					} else {
 						if(mpi_rank==0) printf("           >> Note: Doesn't increase alpha_stab_newton because relaxation(=%g) <= FACTOR_INC-1.0(=%g)\n", relaxation, incAlpha-1.0);
 					}
 				}
 				if(incAlpha<1.0 && alpha_stab_newton>targetAlpha) {
 					if(relaxation > incAlpha) {
-						int exponent = int(abs(iterNewton - startIncAlpha) / std::max<int>(intervalIncAlpha, 1));
+//						int exponent = int(abs(iterNewton - startIncAlpha) / std::max<int>(intervalIncAlpha, 1));
+						int exponent = int(abs(iterNewton_stab_newton - startIncAlpha) / std::max<int>(intervalIncAlpha, 1));
 						alpha_stab_newton = max(newtonParam.stabilizationAlpha * pow(incAlpha, double(exponent)), targetAlpha);
+						++iterNewton_stab_newton;
 					} else {
 						if(mpi_rank==0) printf("           >> Note: Doesn't decrease alpha_stab_newton because relaxation(=%g) <= FACTOR_INC(=%g)\n", relaxation, incAlpha);
 					}
 				}
+			} else {
+				++iterNewton_stab_newton;
 			}
 		}
 ////IKJ
